@@ -9,14 +9,25 @@ import time
 PLOTLY_CONFIG = {
     "displaylogo": False,
     "scrollZoom": True,
-    "doubleClick": "reset"
+    "doubleClick": "reset",
+    "modeBarButtonsToAdd": [
+        "zoom2d",
+        "pan2d",
+        "autoScale2d",
+        "resetScale2d"
+    ],
+    "modeBarButtonsToRemove": [
+        "lasso2d",
+        "select2d"
+    ]
 }
 
 
-def render_interactive_chart(fig):
+def render_interactive_chart(fig, caption="Use the toolbar to zoom, pan, or reset (double-click)."):
     """Render a Plotly figure with consistent interactive controls."""
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-    st.caption("Use the toolbar above each chart to zoom, pan, or reset the view (double-click).")
+    if caption:
+        st.caption(caption)
 
 # Page configuration
 st.set_page_config(
@@ -329,26 +340,25 @@ def create_football_pitch():
                              showlegend=False, hoverinfo='skip'))
     
     fig.update_layout(
-        width=900,
-        height=600,
+        autosize=True,
+        margin=dict(l=10, r=10, t=30, b=10),
         xaxis=dict(
             range=[0, pitch_width],
             showgrid=False,
             zeroline=False,
-            fixedrange=False
+            constrain='domain'
         ),
         yaxis=dict(
             range=[0, pitch_height],
             showgrid=False,
             zeroline=False,
-            scaleanchor="x",
-            fixedrange=False
+            scaleanchor='x',
+            scaleratio=1
         ),
         plot_bgcolor='lightgreen',
         showlegend=True,
         hovermode='closest',
-        dragmode='pan',
-        uirevision='pitch-interactive'
+        dragmode='zoom'
     )
     
     return fig
@@ -432,14 +442,13 @@ def create_tennis_court():
     y_margin = 4.0  # 4 meters behind each baseline 
     
     fig.update_layout(
-        width=400,
-        height=1100,
+        autosize=True,
+        margin=dict(l=10, r=10, t=30, b=10),
         xaxis=dict(
             range=[-x_margin, doubles_width + x_margin],
             showgrid=False,
             zeroline=False,
             title="Court Width (m)",
-            fixedrange=False,
             constrain='domain'
         ),
         yaxis=dict(
@@ -447,7 +456,6 @@ def create_tennis_court():
             showgrid=False,
             zeroline=False,
             title="Court Length (m)",
-            fixedrange=False,
             scaleanchor="x",
             scaleratio=1,
             constrain='domain'
@@ -455,8 +463,7 @@ def create_tennis_court():
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest',
-        dragmode='pan',
-        uirevision='court-interactive'
+        dragmode='zoom'
     )
     
     return fig
