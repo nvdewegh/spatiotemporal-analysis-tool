@@ -398,10 +398,24 @@ def create_tennis_court():
     fig.update_layout(
         width=400,
         height=1100,
-        xaxis=dict(range=[-x_margin, doubles_width + x_margin], showgrid=False, zeroline=False, 
-                   title="Court Width (m)", fixedrange=True),
-        yaxis=dict(range=[-y_margin, court_length + y_margin], showgrid=False, zeroline=False, 
-                   title="Court Length (m)", fixedrange=True),
+        xaxis=dict(
+            range=[-x_margin, doubles_width + x_margin], 
+            showgrid=False, 
+            zeroline=False, 
+            title="Court Width (m)", 
+            fixedrange=True,
+            constrain='domain'
+        ),
+        yaxis=dict(
+            range=[-y_margin, court_length + y_margin], 
+            showgrid=False, 
+            zeroline=False, 
+            title="Court Length (m)", 
+            fixedrange=True,
+            scaleanchor="x",
+            scaleratio=1,
+            constrain='domain'
+        ),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest'
@@ -621,7 +635,15 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         hovertemplate=f'Object {obj_id}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                     ))
         
-        frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
+        # Create frame with layout that matches initial figure to prevent jumping
+        frames.append(go.Frame(
+            data=frame_data, 
+            name=str(frame_idx),
+            layout={
+                'xaxis.range': list(fig.layout.xaxis.range),
+                'yaxis.range': list(fig.layout.yaxis.range)
+            }
+        ))
     
     # Add initial frame data to figure
     if frames:
