@@ -260,7 +260,7 @@ def load_data(uploaded_file, update_state=True, show_success=True):
         return None
 
 # Draw soccer pitch
-def create_football_pitch():
+def create_football_pitch(allow_zoom=False):
     """Create a Plotly figure with soccer pitch markings"""
     fig = go.Figure()
     
@@ -318,17 +318,32 @@ def create_football_pitch():
     fig.update_layout(
         width=900,
         height=600,
-        xaxis=dict(range=[0, pitch_width], showgrid=False, zeroline=False),
-        yaxis=dict(range=[0, pitch_height], showgrid=False, zeroline=False, scaleanchor="x"),
+        xaxis=dict(
+            range=[0, pitch_width],
+            showgrid=False,
+            zeroline=False,
+            fixedrange=not allow_zoom
+        ),
+        yaxis=dict(
+            range=[0, pitch_height],
+            showgrid=False,
+            zeroline=False,
+            scaleanchor="x",
+            fixedrange=not allow_zoom
+        ),
         plot_bgcolor='lightgreen',
         showlegend=True,
-        hovermode='closest'
+        hovermode='closest',
+        dragmode='zoom' if allow_zoom else 'pan'
     )
+
+    if allow_zoom:
+        fig.update_layout(uirevision='zoomable')
     
     return fig
 
 # Draw tennis court
-def create_tennis_court():
+def create_tennis_court(allow_zoom=False):
     """Create a Plotly figure with tennis court markings"""
     fig = go.Figure()
     
@@ -409,39 +424,41 @@ def create_tennis_court():
         width=400,
         height=1100,
         xaxis=dict(
-            range=[-x_margin, doubles_width + x_margin], 
-            showgrid=False, 
-            zeroline=False, 
-            title="Court Width (m)", 
-            fixedrange=True,
+            range=[-x_margin, doubles_width + x_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Court Width (m)",
+            fixedrange=not allow_zoom,
             constrain='domain'
         ),
         yaxis=dict(
-            range=[-y_margin, court_length + y_margin], 
-            showgrid=False, 
-            zeroline=False, 
-            title="Court Length (m)", 
-            fixedrange=True,
+            range=[-y_margin, court_length + y_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Court Length (m)",
+            fixedrange=not allow_zoom,
             scaleanchor="x",
             scaleratio=1,
             constrain='domain'
         ),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
-        hovermode='closest'
+        hovermode='closest',
+        dragmode='zoom' if allow_zoom else 'pan'
     )
-    
-    return fig
+
+    if allow_zoom:
+        fig.update_layout(uirevision='zoomable')
     
     return fig
 
 # Unified function to create pitch based on court type
-def create_pitch_figure(court_type='Football'):
+def create_pitch_figure(court_type='Football', allow_zoom=False):
     """Create a Plotly figure with pitch markings based on court type"""
     if court_type == 'Tennis':
-        return create_tennis_court()
+        return create_tennis_court(allow_zoom=allow_zoom)
     else:
-        return create_football_pitch()
+        return create_football_pitch(allow_zoom=allow_zoom)
 
 # Get court dimensions based on type
 def get_court_dimensions(court_type='Football'):
@@ -503,9 +520,10 @@ def aggregate_points(points, aggregation_type, temporal_resolution):
 
 # Visualize static trajectories
 def visualize_static(df, selected_configs, selected_objects, start_time, end_time, 
-                     aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football'):
+                     aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football',
+                     allow_zoom=False):
     """Create static trajectory visualization"""
-    fig = create_pitch_figure(court_type)
+    fig = create_pitch_figure(court_type, allow_zoom=allow_zoom)
     court_dims = get_court_dimensions(court_type)
     
     center_x = court_dims['width'] / 2
@@ -584,7 +602,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
 
 # Create animated visualization with Plotly frames
 def visualize_animated(df, selected_configs, selected_objects, start_time, end_time, 
-                       aggregation_type, temporal_resolution, court_type='Football'):
+                       aggregation_type, temporal_resolution, court_type='Football', allow_zoom=False):
     """Create smooth animation using Plotly's built-in animation"""
     
     # Get unique time steps from the data
@@ -598,7 +616,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     frames = []
     
     # Create initial figure with fixed court dimensions
-    fig = create_pitch_figure(court_type)
+    fig = create_pitch_figure(court_type, allow_zoom=allow_zoom)
     
     # Prepare data for all objects at all times
     for frame_idx, current_time in enumerate(time_steps):
@@ -646,13 +664,16 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                     ))
         
         # Create frame with layout that matches initial figure to prevent jumping
-        frames.append(go.Frame(
-            data=frame_data, 
-            name=str(frame_idx),
-            layout={
+        frame_layout = {}
+        if not allow_zoom:
+            frame_layout = {
                 'xaxis.range': list(fig.layout.xaxis.range),
                 'yaxis.range': list(fig.layout.yaxis.range)
             }
+        frames.append(go.Frame(
+            data=frame_data,
+            name=str(frame_idx),
+            layout=frame_layout
         ))
     
     # Add initial frame data to figure
@@ -719,9 +740,9 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
 
 # Visualize at specific time
 def visualize_at_time(df, selected_configs, selected_objects, current_time, 
-                      start_time, aggregation_type, temporal_resolution, court_type='Football'):
+                      start_time, aggregation_type, temporal_resolution, court_type='Football', allow_zoom=False):
     """Create visualization at specific time point"""
-    fig = create_pitch_figure(court_type)
+    fig = create_pitch_figure(court_type, allow_zoom=allow_zoom)
     
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -769,9 +790,10 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
     return fig
 
 # Calculate average position
-def visualize_average_position(df, selected_configs, selected_objects, start_time, end_time, court_type='Football'):
+def visualize_average_position(df, selected_configs, selected_objects, start_time, end_time, court_type='Football',
+                               allow_zoom=False):
     """Calculate and visualize average positions"""
-    fig = create_pitch_figure(court_type)
+    fig = create_pitch_figure(court_type, allow_zoom=allow_zoom)
     
     all_avg_x = []
     all_avg_y = []
@@ -1037,10 +1059,13 @@ def main():
                     translate_to_center = True
                 else:
                     translate_to_center = False
+            with col3:
+                enable_zoom = st.checkbox("Enable zoom & pan", value=False)
             
             fig = visualize_static(df, selected_configs, selected_objects, 
                                  start_time, end_time, 'Skip frames', 
-                                 temporal_resolution, translate_to_center, court_type)
+                                 temporal_resolution, translate_to_center, court_type,
+                                 allow_zoom=enable_zoom)
             st.plotly_chart(fig, use_container_width=True)
         
         else:  # Visual Exploration (IMO)
@@ -1073,16 +1098,20 @@ def main():
                 ["Static", "Animation", "Average Position"],
                 horizontal=True
             )
+
+            enable_zoom = st.checkbox("Enable zoom & pan", value=False)
             
             if viz_mode == "Static":
                 fig = visualize_static(df, selected_configs, selected_objects, 
                                      start_time, end_time, aggregation_type, 
-                                     temporal_resolution, False, court_type)
+                                     temporal_resolution, False, court_type,
+                                     allow_zoom=enable_zoom)
                 st.plotly_chart(fig, use_container_width=True)
             
             elif viz_mode == "Average Position":
                 fig = visualize_average_position(df, selected_configs, selected_objects, 
-                                                start_time, end_time, court_type)
+                                                start_time, end_time, court_type,
+                                                allow_zoom=enable_zoom)
                 st.plotly_chart(fig, use_container_width=True)
             
             else:  # Animation
@@ -1091,7 +1120,8 @@ def main():
                 
                 fig = visualize_animated(df, selected_configs, selected_objects, 
                                         start_time, end_time, aggregation_type, 
-                                        temporal_resolution, court_type)
+                                        temporal_resolution, court_type,
+                                        allow_zoom=enable_zoom)
                 
                 st.plotly_chart(fig, use_container_width=True)
 
