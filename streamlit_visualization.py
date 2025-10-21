@@ -340,25 +340,29 @@ def create_football_pitch():
                              showlegend=False, hoverinfo='skip'))
     
     fig.update_layout(
-        autosize=True,
-        margin=dict(l=10, r=10, t=30, b=10),
+        width=900,
+        height=600,
+        margin=dict(l=20, r=20, t=40, b=20),
         xaxis=dict(
             range=[0, pitch_width],
             showgrid=False,
             zeroline=False,
-            constrain='domain'
+            constrain='domain',
+            fixedrange=False
         ),
         yaxis=dict(
             range=[0, pitch_height],
             showgrid=False,
             zeroline=False,
             scaleanchor='x',
-            scaleratio=1
+            scaleratio=1,
+            fixedrange=False
         ),
         plot_bgcolor='lightgreen',
         showlegend=True,
         hovermode='closest',
-        dragmode='zoom'
+        dragmode='pan',
+        uirevision='football-pitch'
     )
     
     return fig
@@ -442,14 +446,16 @@ def create_tennis_court():
     y_margin = 4.0  # 4 meters behind each baseline 
     
     fig.update_layout(
-        autosize=True,
-        margin=dict(l=10, r=10, t=30, b=10),
+        width=500,
+        height=900,
+        margin=dict(l=20, r=20, t=40, b=20),
         xaxis=dict(
             range=[-x_margin, doubles_width + x_margin],
             showgrid=False,
             zeroline=False,
             title="Court Width (m)",
-            constrain='domain'
+            constrain='domain',
+            fixedrange=False
         ),
         yaxis=dict(
             range=[-y_margin, court_length + y_margin],
@@ -458,12 +464,14 @@ def create_tennis_court():
             title="Court Length (m)",
             scaleanchor="x",
             scaleratio=1,
-            constrain='domain'
+            constrain='domain',
+            fixedrange=False
         ),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest',
-        dragmode='zoom'
+        dragmode='pan',
+        uirevision='tennis-court'
     )
     
     return fig
