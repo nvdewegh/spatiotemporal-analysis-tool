@@ -859,7 +859,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
         fig.add_trace(go.Scatter(
             x=[overall_avg_x], y=[overall_avg_y],
             mode='markers+text',
-            marker=dict(size=20, color='blue', symbol='star'),
+            marker=dict(size=20, color='black', symbol='star'),
             text=['Overall Avg'],
             textposition="top center",
             name='Overall Average',
