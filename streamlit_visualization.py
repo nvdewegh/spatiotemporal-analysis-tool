@@ -374,13 +374,16 @@ def create_tennis_court():
         width=400,
         height=1100,
         xaxis=dict(range=[-x_margin, doubles_width + x_margin], showgrid=False, zeroline=False, 
-                   title="Court Width (m)"),
+                   title="Court Width (m)", constrain='domain'),
         yaxis=dict(range=[-y_margin, court_length + y_margin], showgrid=False, zeroline=False, 
-                   scaleanchor="x", title="Court Length (m)"),
+                   scaleanchor="x", title="Court Length (m)", constrain='domain'),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest'
     )
+    
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
     
     return fig
 
