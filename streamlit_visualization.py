@@ -399,16 +399,15 @@ def create_tennis_court():
         width=400,
         height=1100,
         xaxis=dict(range=[-x_margin, doubles_width + x_margin], showgrid=False, zeroline=False, 
-                   title="Court Width (m)", constrain='domain'),
+                   title="Court Width (m)", fixedrange=True),
         yaxis=dict(range=[-y_margin, court_length + y_margin], showgrid=False, zeroline=False, 
-                   scaleanchor="x", title="Court Length (m)", constrain='domain'),
+                   title="Court Length (m)", fixedrange=True),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest'
     )
     
-    fig.update_xaxes(fixedrange=True)
-    fig.update_yaxes(fixedrange=True)
+    return fig
     
     return fig
 
@@ -577,19 +576,6 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Create initial figure with fixed court dimensions
     fig = create_pitch_figure(court_type)
     
-    # Get court dimensions to ensure consistent axis ranges
-    court_dims = get_court_dimensions(court_type)
-    
-    # Set fixed axis ranges to prevent jumping
-    if court_type == 'Tennis':
-        x_margin = 3.0
-        y_margin = 4.0
-        fig.update_xaxes(range=[-x_margin, court_dims['width'] + x_margin], fixedrange=True)
-        fig.update_yaxes(range=[-y_margin, court_dims['height'] + y_margin], fixedrange=True)
-    else:  # Football
-        fig.update_xaxes(range=[0, court_dims['width']], fixedrange=True)
-        fig.update_yaxes(range=[0, court_dims['height']], fixedrange=True)
-    
     # Prepare data for all objects at all times
     for frame_idx, current_time in enumerate(time_steps):
         frame_data = []
@@ -635,14 +621,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         hovertemplate=f'Object {obj_id}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                     ))
         
-        frames.append(go.Frame(
-            data=frame_data, 
-            name=str(frame_idx),
-            layout=go.Layout(
-                xaxis={'range': fig.layout.xaxis.range, 'fixedrange': True},
-                yaxis={'range': fig.layout.yaxis.range, 'fixedrange': True}
-            )
-        ))
+        frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
     
     # Add initial frame data to figure
     if frames:
@@ -651,7 +630,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Add frames to figure
     fig.frames = frames
     
-    # Add animation controls with layout preservation
+    # Add animation controls
     fig.update_layout(
         updatemenus=[{
             'type': 'buttons',
@@ -661,7 +640,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                     'label': '▶ Play',
                     'method': 'animate',
                     'args': [None, {
-                        'frame': {'duration': 200, 'redraw': True},
+                        'frame': {'duration': 200, 'redraw': False},
                         'fromcurrent': True,
                         'mode': 'immediate',
                         'transition': {'duration': 0}
