@@ -373,53 +373,62 @@ def create_tennis_court():
     fig = go.Figure()
     
     # Court dimensions (in meters)
-    court_width = 8.23  # Singles court width (full width is 10.97m with doubles alleys)
+    court_width = 8.23  # Singles court width
     court_length = 23.77
     
     # Doubles court dimensions
     doubles_width = 10.97
+    doubles_alley_width = (doubles_width - court_width) / 2  # 1.37m on each side
     
     # Service box and other measurements
     service_line_distance = 6.40  # Distance from net to service line
     center_service_line_start = 11.88  # Distance from baseline
     net_position = court_length / 2  # 11.885m
     
-    # Outer boundary (doubles court)
-    fig.add_shape(type="rect", x0=0, y0=0, x1=doubles_width, y1=court_length,
+    # Origin is at bottom-left of SINGLES court
+    # Doubles alleys extend into negative x (left) and beyond court_width (right)
+    
+    # Outer boundary (doubles court) - extends from -1.37 to 10.97-1.37=9.60
+    fig.add_shape(type="rect", 
+                  x0=-doubles_alley_width, y0=0, 
+                  x1=court_width + doubles_alley_width, y1=court_length,
                   line=dict(color="white", width=3))
     
-    # Singles sidelines
-    singles_left = (doubles_width - court_width) / 2  # 1.37m from edge
-    singles_right = singles_left + court_width
-    
-    fig.add_shape(type="line", x0=singles_left, y0=0, x1=singles_left, y1=court_length,
+    # Singles sidelines (at x=0 and x=8.23)
+    fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=court_length,
                   line=dict(color="white", width=2))
-    fig.add_shape(type="line", x0=singles_right, y0=0, x1=singles_right, y1=court_length,
+    fig.add_shape(type="line", x0=court_width, y0=0, x1=court_width, y1=court_length,
                   line=dict(color="white", width=2))
     
-    # Baselines (already part of outer boundary, but emphasize)
-    fig.add_shape(type="line", x0=0, y0=0, x1=doubles_width, y1=0,
+    # Baselines (full width including doubles alleys)
+    fig.add_shape(type="line", 
+                  x0=-doubles_alley_width, y0=0, 
+                  x1=court_width + doubles_alley_width, y1=0,
                   line=dict(color="white", width=3))
-    fig.add_shape(type="line", x0=0, y0=court_length, x1=doubles_width, y1=court_length,
+    fig.add_shape(type="line", 
+                  x0=-doubles_alley_width, y0=court_length, 
+                  x1=court_width + doubles_alley_width, y1=court_length,
                   line=dict(color="white", width=3))
     
-    # Net (center line)
-    fig.add_shape(type="line", x0=0, y0=net_position, x1=doubles_width, y1=net_position,
+    # Net (center line) - full width including doubles alleys
+    fig.add_shape(type="line", 
+                  x0=-doubles_alley_width, y0=net_position, 
+                  x1=court_width + doubles_alley_width, y1=net_position,
                   line=dict(color="white", width=2))
     
-    # Service lines (6.40m from net on each side)
+    # Service lines (6.40m from net on each side) - only within singles court
     service_line_bottom = net_position - service_line_distance
     service_line_top = net_position + service_line_distance
     
-    fig.add_shape(type="line", x0=singles_left, y0=service_line_bottom, 
-                  x1=singles_right, y1=service_line_bottom,
+    fig.add_shape(type="line", x0=0, y0=service_line_bottom, 
+                  x1=court_width, y1=service_line_bottom,
                   line=dict(color="white", width=2))
-    fig.add_shape(type="line", x0=singles_left, y0=service_line_top, 
-                  x1=singles_right, y1=service_line_top,
+    fig.add_shape(type="line", x0=0, y0=service_line_top, 
+                  x1=court_width, y1=service_line_top,
                   line=dict(color="white", width=2))
     
-    # Center service line (divides service boxes)
-    center_x = doubles_width / 2
+    # Center service line (divides service boxes) - center of singles court
+    center_x = court_width / 2  # 4.115m
     fig.add_shape(type="line", x0=center_x, y0=service_line_bottom, 
                   x1=center_x, y1=service_line_top,
                   line=dict(color="white", width=2))
@@ -433,9 +442,9 @@ def create_tennis_court():
                   x1=center_x, y1=court_length,
                   line=dict(color="white", width=2))
     
-    # Net posts (singles)
+    # Net posts (singles) - at edges of singles court
     post_diameter = 0.15
-    fig.add_trace(go.Scatter(x=[singles_left, singles_right], 
+    fig.add_trace(go.Scatter(x=[0, court_width], 
                              y=[net_position, net_position],
                              mode='markers', 
                              marker=dict(size=8, color='white', symbol='square'),
@@ -450,7 +459,7 @@ def create_tennis_court():
         height=900,
         margin=dict(l=20, r=20, t=40, b=20),
         xaxis=dict(
-            range=[-x_margin, doubles_width + x_margin],
+            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
             showgrid=False,
             zeroline=False,
             title="Court Width (m)",
@@ -489,7 +498,7 @@ def get_court_dimensions(court_type='Football'):
     """Return court dimensions based on type"""
     if court_type == 'Tennis':
         return {
-            'width': 10.97,  # Doubles court width
+            'width': 8.23,  # Singles court width (origin at singles court)
             'height': 23.77,  # Court length
             'aspect_width': 400,
             'aspect_height': 1100
