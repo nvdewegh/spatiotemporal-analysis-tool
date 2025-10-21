@@ -500,7 +500,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             
             color = get_color(obj_id)
             
-            # Draw trajectory
+            # Draw trajectory with arrow at the end
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines+markers',
@@ -510,19 +510,27 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                 hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
             ))
             
-            # Add arrow at the end
+            # Add arrow at the end as a separate trace with the same legend group
             if len(x_coords) >= 2:
-                fig.add_annotation(
-                    x=x_coords[-1], y=y_coords[-1],
-                    ax=x_coords[-2], ay=y_coords[-2],
-                    xref="x", yref="y",
-                    axref="x", ayref="y",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=2,
-                    arrowcolor=color
-                )
+                # Calculate arrow direction
+                dx = x_coords[-1] - x_coords[-2]
+                dy = y_coords[-1] - y_coords[-2]
+                
+                fig.add_trace(go.Scatter(
+                    x=[x_coords[-1]], 
+                    y=[y_coords[-1]],
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color=color,
+                        symbol='arrow',
+                        angle=np.degrees(np.arctan2(dy, dx)),
+                        line=dict(width=0)
+                    ),
+                    showlegend=False,
+                    legendgroup=f'Config {config}, Obj {obj_id}',
+                    hoverinfo='skip'
+                ))
     
     return fig
 
