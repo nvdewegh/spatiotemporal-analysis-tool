@@ -559,6 +559,129 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
     
     return fig
 
+# Create animated visualization with Plotly frames
+def visualize_animated(df, selected_configs, selected_objects, start_time, end_time, 
+                       aggregation_type, temporal_resolution, court_type='Football', num_frames=50):
+    """Create smooth animation using Plotly's built-in animation"""
+    
+    # Create time steps
+    time_steps = np.linspace(start_time, end_time, num_frames)
+    
+    # Initialize frames list
+    frames = []
+    
+    # Create initial figure
+    fig = create_pitch_figure(court_type)
+    
+    # Prepare data for all objects at all times
+    for frame_idx, current_time in enumerate(time_steps):
+        frame_data = []
+        
+        for config in selected_configs:
+            config_data = df[df['con'] == config]
+            
+            for obj_id in selected_objects:
+                obj_data = config_data[config_data['obj'] == obj_id]
+                obj_data = obj_data[(obj_data['tst'] >= start_time) & (obj_data['tst'] <= current_time)]
+                obj_data = obj_data.sort_values('tst')
+                
+                if len(obj_data) == 0:
+                    continue
+                
+                points = obj_data[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
+                points = aggregate_points(points, aggregation_type, temporal_resolution)
+                
+                if len(points) == 0:
+                    continue
+                
+                x_coords = [p['x'] for p in points]
+                y_coords = [p['y'] for p in points]
+                color = get_color(obj_id)
+                
+                # Add trajectory trace
+                frame_data.append(go.Scatter(
+                    x=x_coords, y=y_coords,
+                    mode='lines',
+                    name=f'Config {config}, Obj {obj_id}',
+                    line=dict(color=color, width=2),
+                    showlegend=(frame_idx == 0)
+                ))
+                
+                # Add current position marker
+                if points:
+                    current_point = points[-1]
+                    frame_data.append(go.Scatter(
+                        x=[current_point['x']], y=[current_point['y']],
+                        mode='markers',
+                        marker=dict(size=10, color=color),
+                        showlegend=False,
+                        hovertemplate=f'Object {obj_id}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                    ))
+        
+        frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
+    
+    # Add initial frame data to figure
+    if frames:
+        fig.add_traces(frames[0].data)
+    
+    # Add frames to figure
+    fig.frames = frames
+    
+    # Add animation controls
+    fig.update_layout(
+        updatemenus=[{
+            'type': 'buttons',
+            'showactive': False,
+            'buttons': [
+                {
+                    'label': '▶ Play',
+                    'method': 'animate',
+                    'args': [None, {
+                        'frame': {'duration': 200, 'redraw': True},
+                        'fromcurrent': True,
+                        'mode': 'immediate',
+                        'transition': {'duration': 0}
+                    }]
+                },
+                {
+                    'label': '⏸ Pause',
+                    'method': 'animate',
+                    'args': [[None], {
+                        'frame': {'duration': 0, 'redraw': False},
+                        'mode': 'immediate',
+                        'transition': {'duration': 0}
+                    }]
+                }
+            ],
+            'x': 0.1,
+            'y': 1.15,
+            'xanchor': 'left',
+            'yanchor': 'top'
+        }],
+        sliders=[{
+            'active': 0,
+            'steps': [
+                {
+                    'args': [[f.name], {
+                        'frame': {'duration': 0, 'redraw': True},
+                        'mode': 'immediate',
+                        'transition': {'duration': 0}
+                    }],
+                    'label': f'{time_steps[i]:.1f}',
+                    'method': 'animate'
+                }
+                for i, f in enumerate(frames)
+            ],
+            'x': 0.1,
+            'len': 0.85,
+            'xanchor': 'left',
+            'y': 0,
+            'yanchor': 'top'
+        }]
+    )
+    
+    return fig
+
 # Visualize at specific time
 def visualize_at_time(df, selected_configs, selected_objects, current_time, 
                       start_time, aggregation_type, temporal_resolution, court_type='Football'):
@@ -890,59 +1013,19 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             else:  # Animation
-                # Initialize animation time in session state
-                if 'animation_time' not in st.session_state:
-                    st.session_state.animation_time = start_time
+                # Use Plotly's built-in animation for smooth playback
+                st.info("📹 Use the ▶ Play button and slider below the chart to control the animation")
                 
-                # Create columns for controls
-                col1, col2, col3 = st.columns([1, 1, 3])
-                
-                with col1:
-                    play_button = st.button("▶️ Play")
-                    if play_button:
-                        st.session_state.is_playing = True
-                        st.session_state.animation_time = start_time
-                
-                with col2:
-                    pause_button = st.button("⏸️ Pause")
-                    if pause_button:
-                        st.session_state.is_playing = False
-                
-                # Slider updates the animation time
-                st.session_state.animation_time = st.slider(
-                    "Current time",
-                    min_value=start_time,
-                    max_value=end_time,
-                    value=st.session_state.animation_time,
-                    step=(end_time - start_time) / 100,
-                    key='time_slider'
+                num_frames = st.slider(
+                    "Number of animation frames (more frames = smoother but slower to load)",
+                    min_value=20, max_value=100, value=50, step=10
                 )
                 
-                # Create the visualization
-                fig = visualize_at_time(df, selected_configs, selected_objects, 
-                                      st.session_state.animation_time, start_time, 
-                                      aggregation_type, temporal_resolution, court_type)
+                fig = visualize_animated(df, selected_configs, selected_objects, 
+                                        start_time, end_time, aggregation_type, 
+                                        temporal_resolution, court_type, num_frames)
                 
-                chart_container = st.container()
-                with chart_container:
-                    st.plotly_chart(fig, use_container_width=True, key='animation_chart')
-                
-                # Handle animation playback
-                if st.session_state.is_playing:
-                    time_range = end_time - start_time
-                    step_size = time_range / 50
-                    sleep_time = animation_duration / 50
-                    
-                    if st.session_state.animation_time < end_time:
-                        st.session_state.animation_time = min(
-                            st.session_state.animation_time + step_size, 
-                            end_time
-                        )
-                        time.sleep(sleep_time)
-                        st.rerun()
-                    else:
-                        st.session_state.is_playing = False
-                        st.session_state.animation_time = start_time
+                st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
