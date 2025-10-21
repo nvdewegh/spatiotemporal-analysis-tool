@@ -12,6 +12,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Add custom CSS to prevent scroll jumping
+st.markdown("""
+    <style>
+    /* Prevent auto-scroll during updates */
+    .main {
+        scroll-behavior: auto;
+    }
+    </style>
+    <script>
+    // Save and restore scroll position
+    window.addEventListener('beforeunload', function() {
+        sessionStorage.setItem('scrollPos', window.scrollY);
+    });
+    window.addEventListener('load', function() {
+        const scrollPos = sessionStorage.getItem('scrollPos');
+        if (scrollPos) {
+            window.scrollTo(0, parseInt(scrollPos));
+        }
+    });
+    </script>
+""", unsafe_allow_html=True)
+
 # Password protection
 def check_password():
     """Returns `True` if the user had the correct password."""
@@ -868,8 +890,13 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             else:  # Animation
-                # Animation placeholder - create it first to maintain scroll position
-                chart_placeholder = st.empty()
+                col1, col2 = st.columns([1, 4])
+                
+                with col1:
+                    if st.button("▶️ Play"):
+                        st.session_state.is_playing = True
+                    if st.button("⏸️ Pause"):
+                        st.session_state.is_playing = False
                 
                 current_time = st.slider(
                     "Current time",
@@ -879,13 +906,8 @@ def main():
                     step=(end_time - start_time) / 100
                 )
                 
-                col1, col2 = st.columns([1, 4])
-                
-                with col1:
-                    if st.button("▶️ Play"):
-                        st.session_state.is_playing = True
-                    if st.button("⏸️ Pause"):
-                        st.session_state.is_playing = False
+                # Animation placeholder
+                chart_placeholder = st.empty()
                 
                 if st.session_state.is_playing:
                     time_range = end_time - start_time
@@ -897,8 +919,7 @@ def main():
                         fig = visualize_at_time(df, selected_configs, selected_objects, 
                                               current_time, start_time, aggregation_type, 
                                               temporal_resolution, court_type)
-                        with chart_placeholder.container():
-                            st.plotly_chart(fig, use_container_width=True, key=f'anim_{i}')
+                        chart_placeholder.plotly_chart(fig, use_container_width=True)
                         time.sleep(animation_duration / steps)
                         
                         if not st.session_state.is_playing:
@@ -909,8 +930,7 @@ def main():
                     fig = visualize_at_time(df, selected_configs, selected_objects, 
                                           current_time, start_time, aggregation_type, 
                                           temporal_resolution, court_type)
-                    with chart_placeholder.container():
-                        st.plotly_chart(fig, use_container_width=True)
+                    chart_placeholder.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
