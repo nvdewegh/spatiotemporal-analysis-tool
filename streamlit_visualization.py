@@ -868,6 +868,9 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             else:  # Animation
+                # Animation placeholder - create it first to maintain scroll position
+                chart_placeholder = st.empty()
+                
                 current_time = st.slider(
                     "Current time",
                     min_value=start_time,
@@ -884,9 +887,6 @@ def main():
                     if st.button("⏸️ Pause"):
                         st.session_state.is_playing = False
                 
-                # Animation placeholder
-                chart_placeholder = st.empty()
-                
                 if st.session_state.is_playing:
                     time_range = end_time - start_time
                     steps = 50
@@ -897,7 +897,8 @@ def main():
                         fig = visualize_at_time(df, selected_configs, selected_objects, 
                                               current_time, start_time, aggregation_type, 
                                               temporal_resolution, court_type)
-                        chart_placeholder.plotly_chart(fig, use_container_width=True)
+                        with chart_placeholder.container():
+                            st.plotly_chart(fig, use_container_width=True, key=f'anim_{i}')
                         time.sleep(animation_duration / steps)
                         
                         if not st.session_state.is_playing:
@@ -908,7 +909,8 @@ def main():
                     fig = visualize_at_time(df, selected_configs, selected_objects, 
                                           current_time, start_time, aggregation_type, 
                                           temporal_resolution, court_type)
-                    chart_placeholder.plotly_chart(fig, use_container_width=True)
+                    with chart_placeholder.container():
+                        st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
