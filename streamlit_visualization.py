@@ -82,6 +82,8 @@ if 'filename' not in st.session_state:
     st.session_state.filename = None
 if 'court_type' not in st.session_state:
     st.session_state.court_type = 'Tennis'
+if 'uploaded_filenames' not in st.session_state:
+    st.session_state.uploaded_filenames = []
 
 # Color mapping function
 def get_color(obj_id):
@@ -169,7 +171,7 @@ def douglas_peucker_spatiotemporal(points, tolerance):
         return [start, end]
 
 # Load and parse CSV data
-def load_data(uploaded_file):
+def load_data(uploaded_file, update_state=True, show_success=True):
     """Load and parse CSV file"""
     try:
         # Try to read with header first
@@ -237,11 +239,16 @@ def load_data(uploaded_file):
             st.warning(f"Removed {initial_rows - len(df)} rows with invalid data. {len(df)} rows remaining.")
         
         # Store data without constraining coordinates - let court type determine limits
-        st.session_state.data = df
-        st.session_state.max_time = df['tst'].max()
-        st.session_state.filename = uploaded_file.name
+        file_name = getattr(uploaded_file, 'name', 'uploaded data')
         
-        st.success(f"✅ Loaded {len(df)} data points successfully!")
+        if update_state:
+            st.session_state.data = df
+            st.session_state.max_time = df['tst'].max()
+            st.session_state.filename = file_name
+            st.session_state.uploaded_filenames = [file_name]
+        
+        if show_success:
+            st.success(f"✅ Loaded {len(df)} data points from {file_name} successfully!")
         
         return df
         
@@ -846,24 +853,51 @@ def main():
     st.title("📊 Spatiotemporal Analysis and Modeling")
     st.caption("Version 2.0 - Updated October 21, 2025")
     
+    df = st.session_state.data
+    uploaded_files = None
+    
     # Sidebar
     with st.sidebar:
         st.header("📁 File Management")
-        uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
+        uploaded_files = st.file_uploader(
+            "Upload CSV file(s)", type=['csv'], accept_multiple_files=True
+        )
         
-        if uploaded_file is not None:
-            if st.session_state.filename != uploaded_file.name:
-                df = load_data(uploaded_file)
-                st.success(f"Loaded: {uploaded_file.name}")
+        if uploaded_files is not None and len(uploaded_files) == 0:
+            # User cleared the uploader
+            if st.session_state.data is not None:
+                st.session_state.data = None
+                st.session_state.filename = None
+                st.session_state.max_time = 0
+                st.session_state.uploaded_filenames = []
+            df = None
+        elif uploaded_files:
+            uploaded_names = [file.name for file in uploaded_files]
+            combined_frames = []
+            for file in uploaded_files:
+                single_df = load_data(file, update_state=False, show_success=False)
+                if single_df is not None:
+                    single_df = single_df.copy()
+                    single_df['source_file'] = file.name
+                    combined_frames.append(single_df)
+            if combined_frames:
+                df = pd.concat(combined_frames, ignore_index=True)
+                st.session_state.data = df
+                st.session_state.max_time = df['tst'].max()
+                st.session_state.filename = ", ".join(uploaded_names)
+                if uploaded_names != st.session_state.uploaded_filenames:
+                    st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
+                st.session_state.uploaded_filenames = uploaded_names
             else:
-                df = st.session_state.data
+                st.error("No valid data found in the uploaded file(s). Please verify the format.")
+                df = None
         else:
             df = st.session_state.data
         
         if df is not None:
-            st.info(f"📊 Current file: {st.session_state.filename}")
+            st.info(f"📊 Current file(s): {st.session_state.filename}")
             
-            st.header("�️ Court Type")
+            st.header("Court Type")
             court_type = st.radio(
                 "Select court type",
                 ["Football", "Tennis"],
@@ -871,7 +905,7 @@ def main():
             )
             st.session_state.court_type = court_type
             
-            st.header("�🎯 Analysis Method")
+            st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
                 ["Visual Exploration (IMO)", "2SA Method", "Heat Maps"]
@@ -916,12 +950,17 @@ def main():
     if analysis_method == "Heat Maps":
         st.header("🔥 Heat Maps")
         try:
-            # Try to read as heatmap data
-            heatmap_df = pd.read_csv(uploaded_file) if uploaded_file else None
+            heatmap_df = None
+            if uploaded_files:
+                first_file = uploaded_files[0]
+                first_file.seek(0)
+                heatmap_df = pd.read_csv(first_file)
             if heatmap_df is not None:
                 fig = create_heatmap(heatmap_df)
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Upload at least one CSV file containing sender and receiver identifiers to generate a heat map.")
         except Exception as e:
             st.error(f"Error creating heatmap: {str(e)}")
     
