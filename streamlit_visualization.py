@@ -367,8 +367,8 @@ def create_tennis_court():
                              showlegend=False, hoverinfo='skip'))
     
     # Add margin around court for player movement
-    x_margin = 1.5  # 1.5 meters on each side
-    y_margin = 4.0  # 4 meters behind each baseline
+    x_margin = 0.5  # 0.5 meters on each side
+    y_margin = 2.0  # 2 meters behind each baseline
     
     fig.update_layout(
         width=400,
