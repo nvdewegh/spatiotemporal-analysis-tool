@@ -688,7 +688,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
             'steps': [
                 {
                     'args': [[f.name], {
-                        'frame': {'duration': 0, 'redraw': True},
+                        'frame': {'duration': 0, 'redraw': False},
                         'mode': 'immediate',
                         'transition': {'duration': 0}
                     }],
