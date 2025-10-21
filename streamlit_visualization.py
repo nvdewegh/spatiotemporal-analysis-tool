@@ -146,60 +146,83 @@ def douglas_peucker_spatiotemporal(points, tolerance):
 # Load and parse CSV data
 def load_data(uploaded_file):
     """Load and parse CSV file"""
-    # Try to read with header first
-    df_test = pd.read_csv(uploaded_file, nrows=5)
-    uploaded_file.seek(0)  # Reset file pointer
-    
-    # Check if first row looks like a header
-    has_header = False
-    if len(df_test.columns) >= 5:
-        first_col = str(df_test.columns[0]).lower()
-        if 'con' in first_col or 'constant' in first_col or 'timestamp' in str(df_test.columns[1]).lower():
-            has_header = True
-    
-    # Read the CSV
-    if has_header:
-        df = pd.read_csv(uploaded_file)
-        # Map common column names to our standard names
-        column_mapping = {
-            'constant': 'con',
-            'timestamp': 'tst',
-            'ID': 'obj',
-            'id': 'obj',
-            'con': 'con',
-            'tst': 'tst',
-            'obj': 'obj',
-            'x': 'x',
-            'y': 'y'
-        }
-        # Rename columns if they match known names
-        for old_name, new_name in column_mapping.items():
-            if old_name in df.columns:
-                df = df.rename(columns={old_name: new_name})
-    else:
-        # No header, read as before
-        df = pd.read_csv(uploaded_file, header=None, names=['con', 'tst', 'obj', 'x', 'y'])
-    
-    # Keep only the columns we need
-    required_cols = ['con', 'tst', 'obj', 'x', 'y']
-    df = df[required_cols]
-    
-    # Convert columns to numeric types
-    df['con'] = pd.to_numeric(df['con'], errors='coerce')
-    df['tst'] = pd.to_numeric(df['tst'], errors='coerce')
-    df['obj'] = pd.to_numeric(df['obj'], errors='coerce')
-    df['x'] = pd.to_numeric(df['x'], errors='coerce')
-    df['y'] = pd.to_numeric(df['y'], errors='coerce')
-    
-    # Remove any rows with NaN values
-    df = df.dropna()
-    
-    # Store data without constraining coordinates - let court type determine limits
-    st.session_state.data = df
-    st.session_state.max_time = df['tst'].max()
-    st.session_state.filename = uploaded_file.name
-    
-    return df
+    try:
+        # Try to read with header first
+        df_test = pd.read_csv(uploaded_file, nrows=5)
+        uploaded_file.seek(0)  # Reset file pointer
+        
+        # Check if first row looks like a header
+        has_header = False
+        if len(df_test.columns) >= 5:
+            first_col = str(df_test.columns[0]).lower()
+            if 'con' in first_col or 'constant' in first_col or 'timestamp' in str(df_test.columns[1]).lower():
+                has_header = True
+        
+        # Read the CSV
+        if has_header:
+            df = pd.read_csv(uploaded_file)
+            # Map common column names to our standard names
+            column_mapping = {
+                'constant': 'con',
+                'timestamp': 'tst',
+                'ID': 'obj',
+                'id': 'obj',
+                'con': 'con',
+                'tst': 'tst',
+                'obj': 'obj',
+                'x': 'x',
+                'y': 'y'
+            }
+            # Rename columns if they match known names
+            for old_name, new_name in column_mapping.items():
+                if old_name in df.columns:
+                    df = df.rename(columns={old_name: new_name})
+        else:
+            # No header, read as before
+            df = pd.read_csv(uploaded_file, header=None, names=['con', 'tst', 'obj', 'x', 'y'])
+        
+        # Keep only the columns we need
+        required_cols = ['con', 'tst', 'obj', 'x', 'y']
+        
+        # Check if all required columns exist
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.error(f"Missing required columns: {', '.join(missing_cols)}")
+            st.error(f"Found columns: {', '.join(df.columns.tolist())}")
+            return None
+        
+        df = df[required_cols]
+        
+        # Convert columns to numeric types
+        df['con'] = pd.to_numeric(df['con'], errors='coerce')
+        df['tst'] = pd.to_numeric(df['tst'], errors='coerce')
+        df['obj'] = pd.to_numeric(df['obj'], errors='coerce')
+        df['x'] = pd.to_numeric(df['x'], errors='coerce')
+        df['y'] = pd.to_numeric(df['y'], errors='coerce')
+        
+        # Remove any rows with NaN values
+        initial_rows = len(df)
+        df = df.dropna()
+        
+        if len(df) == 0:
+            st.error(f"No valid data rows found. All {initial_rows} rows had invalid or missing values.")
+            return None
+        
+        if len(df) < initial_rows:
+            st.warning(f"Removed {initial_rows - len(df)} rows with invalid data. {len(df)} rows remaining.")
+        
+        # Store data without constraining coordinates - let court type determine limits
+        st.session_state.data = df
+        st.session_state.max_time = df['tst'].max()
+        st.session_state.filename = uploaded_file.name
+        
+        st.success(f"✅ Loaded {len(df)} data points successfully!")
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+        return None
 
 # Draw soccer pitch
 def create_football_pitch():
@@ -714,6 +737,19 @@ def main():
         configs = sorted(df['con'].unique())
         objects = sorted(df['obj'].unique())
         
+        # Get time range with safety checks
+        try:
+            min_time = float(df['tst'].min())
+            max_time = float(df['tst'].max())
+            
+            if pd.isna(min_time) or pd.isna(max_time):
+                st.error("Invalid time values in data. Please check your CSV file.")
+                return
+                
+        except (ValueError, TypeError) as e:
+            st.error(f"Error processing time values: {str(e)}")
+            return
+        
         # Controls
         col1, col2 = st.columns(2)
         
@@ -735,16 +771,16 @@ def main():
             st.subheader("⏱️ Time Range")
             start_time = st.number_input(
                 "Start time",
-                min_value=float(df['tst'].min()),
-                max_value=float(df['tst'].max()),
-                value=float(df['tst'].min())
+                min_value=min_time,
+                max_value=max_time,
+                value=min_time
             )
             
             end_time = st.number_input(
                 "End time",
                 min_value=start_time,
-                max_value=float(df['tst'].max()),
-                value=float(df['tst'].max())
+                max_value=max_time,
+                value=max_time
             )
         
         # Method-specific controls
