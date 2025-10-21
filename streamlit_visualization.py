@@ -890,47 +890,59 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
             
             else:  # Animation
-                col1, col2 = st.columns([1, 4])
+                # Initialize animation time in session state
+                if 'animation_time' not in st.session_state:
+                    st.session_state.animation_time = start_time
+                
+                # Create columns for controls
+                col1, col2, col3 = st.columns([1, 1, 3])
                 
                 with col1:
-                    if st.button("▶️ Play"):
+                    play_button = st.button("▶️ Play")
+                    if play_button:
                         st.session_state.is_playing = True
-                    if st.button("⏸️ Pause"):
+                        st.session_state.animation_time = start_time
+                
+                with col2:
+                    pause_button = st.button("⏸️ Pause")
+                    if pause_button:
                         st.session_state.is_playing = False
                 
-                current_time = st.slider(
+                # Slider updates the animation time
+                st.session_state.animation_time = st.slider(
                     "Current time",
                     min_value=start_time,
                     max_value=end_time,
-                    value=start_time,
-                    step=(end_time - start_time) / 100
+                    value=st.session_state.animation_time,
+                    step=(end_time - start_time) / 100,
+                    key='time_slider'
                 )
                 
-                # Animation placeholder
-                chart_placeholder = st.empty()
+                # Create the visualization
+                fig = visualize_at_time(df, selected_configs, selected_objects, 
+                                      st.session_state.animation_time, start_time, 
+                                      aggregation_type, temporal_resolution, court_type)
                 
+                chart_container = st.container()
+                with chart_container:
+                    st.plotly_chart(fig, use_container_width=True, key='animation_chart')
+                
+                # Handle animation playback
                 if st.session_state.is_playing:
                     time_range = end_time - start_time
-                    steps = 50
-                    step_size = time_range / steps
+                    step_size = time_range / 50
+                    sleep_time = animation_duration / 50
                     
-                    for i in range(steps):
-                        current_time = start_time + (i * step_size)
-                        fig = visualize_at_time(df, selected_configs, selected_objects, 
-                                              current_time, start_time, aggregation_type, 
-                                              temporal_resolution, court_type)
-                        chart_placeholder.plotly_chart(fig, use_container_width=True)
-                        time.sleep(animation_duration / steps)
-                        
-                        if not st.session_state.is_playing:
-                            break
-                    
-                    st.session_state.is_playing = False
-                else:
-                    fig = visualize_at_time(df, selected_configs, selected_objects, 
-                                          current_time, start_time, aggregation_type, 
-                                          temporal_resolution, court_type)
-                    chart_placeholder.plotly_chart(fig, use_container_width=True)
+                    if st.session_state.animation_time < end_time:
+                        st.session_state.animation_time = min(
+                            st.session_state.animation_time + step_size, 
+                            end_time
+                        )
+                        time.sleep(sleep_time)
+                        st.rerun()
+                    else:
+                        st.session_state.is_playing = False
+                        st.session_state.animation_time = start_time
 
 if __name__ == "__main__":
     main()
