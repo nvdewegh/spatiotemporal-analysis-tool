@@ -366,13 +366,14 @@ def create_tennis_court():
                              marker=dict(size=8, color='white', symbol='square'),
                              showlegend=False, hoverinfo='skip'))
     
-    # Add margin behind baselines for player movement (e.g., during serve)
-    y_margin = 5.0  # 5 meters behind each baseline
+    # Add margin around court for player movement (e.g., during serve)
+    x_margin = 4.0  # 4 meters on each side
+    y_margin = 4.0  # 4 meters behind each baseline
     
     fig.update_layout(
         width=400,
         height=1100,
-        xaxis=dict(range=[0, doubles_width], showgrid=False, zeroline=False, 
+        xaxis=dict(range=[-x_margin, doubles_width + x_margin], showgrid=False, zeroline=False, 
                    title="Court Width (m)"),
         yaxis=dict(range=[-y_margin, court_length + y_margin], showgrid=False, zeroline=False, 
                    scaleanchor="x", title="Court Length (m)"),
