@@ -635,7 +635,14 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         hovertemplate=f'Object {obj_id}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                     ))
         
-        frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
+        frames.append(go.Frame(
+            data=frame_data, 
+            name=str(frame_idx),
+            layout=go.Layout(
+                xaxis={'range': fig.layout.xaxis.range, 'fixedrange': True},
+                yaxis={'range': fig.layout.yaxis.range, 'fixedrange': True}
+            )
+        ))
     
     # Add initial frame data to figure
     if frames:
@@ -644,7 +651,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Add frames to figure
     fig.frames = frames
     
-    # Add animation controls
+    # Add animation controls with layout preservation
     fig.update_layout(
         updatemenus=[{
             'type': 'buttons',
