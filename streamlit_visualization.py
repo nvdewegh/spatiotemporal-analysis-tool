@@ -619,10 +619,10 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                     y=[y_coords[-1]],
                     mode='markers',
                     marker=dict(
-                        size=10,
+                        size=15,  # Increased size
                         color=color,
                         symbol='arrow',
-                        angle=np.degrees(np.arctan2(dy, dx)),
+                        angle=np.degrees(np.arctan2(dy, dx)) + 180,  # Corrected angle
                         line=dict(width=0)
                     ),
                     showlegend=False,
