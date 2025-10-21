@@ -148,6 +148,16 @@ def load_data(uploaded_file):
     """Load and parse CSV file"""
     df = pd.read_csv(uploaded_file, header=None, names=['con', 'tst', 'obj', 'x', 'y'])
     
+    # Convert columns to numeric types
+    df['con'] = pd.to_numeric(df['con'], errors='coerce')
+    df['tst'] = pd.to_numeric(df['tst'], errors='coerce')
+    df['obj'] = pd.to_numeric(df['obj'], errors='coerce')
+    df['x'] = pd.to_numeric(df['x'], errors='coerce')
+    df['y'] = pd.to_numeric(df['y'], errors='coerce')
+    
+    # Remove any rows with NaN values
+    df = df.dropna()
+    
     # Store data without constraining coordinates - let court type determine limits
     st.session_state.data = df
     st.session_state.max_time = df['tst'].max()
