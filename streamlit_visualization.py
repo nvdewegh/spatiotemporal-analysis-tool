@@ -84,6 +84,8 @@ if 'court_type' not in st.session_state:
     st.session_state.court_type = 'Tennis'
 if 'uploaded_filenames' not in st.session_state:
     st.session_state.uploaded_filenames = []
+if 'config_sources' not in st.session_state:
+    st.session_state.config_sources = []
 
 # Color mapping function
 def get_color(obj_id):
@@ -219,6 +221,8 @@ def load_data(uploaded_file, update_state=True, show_success=True):
             return None
         
         df = df[required_cols]
+        file_name = getattr(uploaded_file, 'name', 'uploaded data')
+        df['config_source'] = file_name
         
         # Convert columns to numeric types
         df['con'] = pd.to_numeric(df['con'], errors='coerce')
@@ -239,13 +243,12 @@ def load_data(uploaded_file, update_state=True, show_success=True):
             st.warning(f"Removed {initial_rows - len(df)} rows with invalid data. {len(df)} rows remaining.")
         
         # Store data without constraining coordinates - let court type determine limits
-        file_name = getattr(uploaded_file, 'name', 'uploaded data')
-        
         if update_state:
             st.session_state.data = df
             st.session_state.max_time = df['tst'].max()
             st.session_state.filename = file_name
             st.session_state.uploaded_filenames = [file_name]
+            st.session_state.config_sources = [file_name]
         
         if show_success:
             st.success(f"✅ Loaded {len(df)} data points from {file_name} successfully!")
@@ -509,7 +512,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
     center_y = court_dims['height'] / 2
     
     for config in selected_configs:
-        config_data = df[df['con'] == config]
+        config_data = df[df['config_source'] == config]
         
         for obj_id in selected_objects:
             obj_data = config_data[config_data['obj'] == obj_id]
@@ -542,13 +545,13 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             color = get_color(obj_id)
             
             # Create legend group name
-            legend_group = f'Config {config}, Obj {obj_id}'
+            legend_group = f'{config} | Obj {obj_id}'
             
             # Draw trajectory with arrow at the end
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines+markers',
-                name=legend_group,
+                name=f'{config} - Obj {obj_id}',
                 legendgroup=legend_group,
                 line=dict(color=color, width=2),
                 marker=dict(size=4, color=color),
@@ -602,7 +605,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
         frame_data = []
         
         for config in selected_configs:
-            config_data = df[df['con'] == config]
+            config_data = df[df['config_source'] == config]
             
             for obj_id in selected_objects:
                 obj_data = config_data[config_data['obj'] == obj_id]
@@ -626,7 +629,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                 frame_data.append(go.Scatter(
                     x=x_coords, y=y_coords,
                     mode='lines',
-                    name=f'Config {config}, Obj {obj_id}',
+                    name=f'{config} - Obj {obj_id}',
                     line=dict(color=color, width=2),
                     showlegend=(frame_idx == 0)
                 ))
@@ -639,7 +642,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         mode='markers',
                         marker=dict(size=10, color=color),
                         showlegend=False,
-                        hovertemplate=f'Object {obj_id}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                        hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                     ))
         
         # Create frame with layout that matches initial figure to prevent jumping
@@ -721,7 +724,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
     fig = create_pitch_figure(court_type)
     
     for config in selected_configs:
-        config_data = df[df['con'] == config]
+        config_data = df[df['config_source'] == config]
         
         for obj_id in selected_objects:
             obj_data = config_data[config_data['obj'] == obj_id]
@@ -746,7 +749,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines',
-                name=f'Config {config}, Obj {obj_id}',
+                name=f'{config} - Obj {obj_id}',
                 line=dict(color=color, width=2),
                 showlegend=True
             ))
@@ -760,7 +763,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
                     marker=dict(size=10, color=color),
                     name=f'Current Obj {obj_id}',
                     showlegend=False,
-                    hovertemplate=f'Object {obj_id}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
     
     return fig
@@ -774,7 +777,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
     all_avg_y = []
     
     for config in selected_configs:
-        config_data = df[df['con'] == config]
+        config_data = df[df['config_source'] == config]
         
         for obj_id in selected_objects:
             obj_data = config_data[config_data['obj'] == obj_id]
@@ -795,8 +798,11 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                     marker=dict(size=15, color=color),
                     text=[f'Obj {obj_id}'],
                     textposition="top center",
-                    name=f'Avg Obj {obj_id}',
-                    hovertemplate=f'Avg Object {obj_id}<br>x: {avg_x:.2f}m<br>y: {avg_y:.2f}m<extra></extra>'
+                    name=f'{config} - Obj {obj_id} Avg',
+                    hovertemplate=(
+                        f'Avg Object {obj_id}<br>Config: {config}<br>'
+                        f'x: {avg_x:.2f}m<br>y: {avg_y:.2f}m<extra></extra>'
+                    )
                 ))
     
     # Overall average
@@ -870,6 +876,7 @@ def main():
                 st.session_state.filename = None
                 st.session_state.max_time = 0
                 st.session_state.uploaded_filenames = []
+                st.session_state.config_sources = []
             df = None
         elif uploaded_files:
             uploaded_names = [file.name for file in uploaded_files]
@@ -877,9 +884,7 @@ def main():
             for file in uploaded_files:
                 single_df = load_data(file, update_state=False, show_success=False)
                 if single_df is not None:
-                    single_df = single_df.copy()
-                    single_df['source_file'] = file.name
-                    combined_frames.append(single_df)
+                    combined_frames.append(single_df.copy())
             if combined_frames:
                 df = pd.concat(combined_frames, ignore_index=True)
                 st.session_state.data = df
@@ -888,6 +893,7 @@ def main():
                 if uploaded_names != st.session_state.uploaded_filenames:
                     st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
                 st.session_state.uploaded_filenames = uploaded_names
+                st.session_state.config_sources = df['config_source'].drop_duplicates().tolist()
             else:
                 st.error("No valid data found in the uploaded file(s). Please verify the format.")
                 df = None
@@ -966,7 +972,10 @@ def main():
     
     else:
         # Get unique configurations and objects
-        configs = sorted(df['con'].unique())
+        config_sources = df['config_source'].drop_duplicates().tolist()
+        if not config_sources:
+            st.warning("No configurations found in the uploaded data. Please check your files.")
+            return
         objects = sorted(df['obj'].unique())
         
         # Get time range with safety checks
@@ -989,8 +998,8 @@ def main():
             st.subheader("📋 Selection")
             selected_configs = st.multiselect(
                 "Select configuration(s)",
-                configs,
-                default=configs[:min(3, len(configs))]
+                config_sources,
+                default=config_sources
             )
             
             selected_objects = st.multiselect(
