@@ -373,7 +373,7 @@ def create_tennis_court():
                    title="Court Width (m)"),
         yaxis=dict(range=[0, court_length], showgrid=False, zeroline=False, 
                    scaleanchor="x", title="Court Length (m)"),
-        plot_bgcolor='#D2691E',  # Clay court color (can be changed to blue/green)
+        plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
         hovermode='closest'
     )
@@ -652,6 +652,7 @@ def create_heatmap(df):
 # Main app
 def main():
     st.title("⚽ Spatiotemporal Analysis and Modeling")
+    st.caption("Version 2.0 - Updated October 21, 2025")
     
     # Sidebar
     with st.sidebar:
