@@ -60,7 +60,7 @@ if 'max_time' not in st.session_state:
 if 'filename' not in st.session_state:
     st.session_state.filename = None
 if 'court_type' not in st.session_state:
-    st.session_state.court_type = 'Football'
+    st.session_state.court_type = 'Tennis'
 
 # Color mapping function
 def get_color(obj_id):
