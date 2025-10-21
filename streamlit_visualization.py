@@ -8,7 +8,7 @@ import time
 # Page configuration
 st.set_page_config(
     page_title="Spatiotemporal Analysis and Modeling",
-    page_icon="⚽",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -27,7 +27,7 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         # First run, show input for password.
-        st.title("⚽ Spatiotemporal Analysis and Modeling")
+        st.title("📊 Spatiotemporal Analysis and Modeling")
         st.text_input(
             "Password", type="password", on_change=password_entered, key="password"
         )
@@ -35,7 +35,7 @@ def check_password():
         return False
     elif not st.session_state["password_correct"]:
         # Password not correct, show input + error.
-        st.title("⚽ Spatiotemporal Analysis and Modeling")
+        st.title("📊 Spatiotemporal Analysis and Modeling")
         st.text_input(
             "Password", type="password", on_change=password_entered, key="password"
         )
@@ -674,7 +674,7 @@ def create_heatmap(df):
 
 # Main app
 def main():
-    st.title("⚽ Spatiotemporal Analysis and Modeling")
+    st.title("📊 Spatiotemporal Analysis and Modeling")
     st.caption("Version 2.0 - Updated October 21, 2025")
     
     # Sidebar
