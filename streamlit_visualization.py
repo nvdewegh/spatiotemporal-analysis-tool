@@ -67,8 +67,12 @@ def get_color(obj_id):
     """Get color based on object ID"""
     try:
         obj_id = int(obj_id)
-        if 1 <= obj_id <= 11:
-            return 'red'  # Team 1
+        if obj_id == 1:
+            return 'blue'  # Object 1
+        elif obj_id == 2:
+            return 'red'  # Object 2
+        elif 3 <= obj_id <= 11:
+            return 'green'  # Other objects
         elif 12 <= obj_id <= 22:
             return 'black'  # Team 2
         elif obj_id == 0:
