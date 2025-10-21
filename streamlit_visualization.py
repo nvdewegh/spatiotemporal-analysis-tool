@@ -561,11 +561,15 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
 
 # Create animated visualization with Plotly frames
 def visualize_animated(df, selected_configs, selected_objects, start_time, end_time, 
-                       aggregation_type, temporal_resolution, court_type='Football', num_frames=50):
+                       aggregation_type, temporal_resolution, court_type='Football'):
     """Create smooth animation using Plotly's built-in animation"""
     
-    # Create time steps
-    time_steps = np.linspace(start_time, end_time, num_frames)
+    # Get unique time steps from the data
+    time_steps = sorted(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
+    
+    if len(time_steps) == 0:
+        # Fallback to linspace if no data
+        time_steps = np.linspace(start_time, end_time, 50)
     
     # Initialize frames list
     frames = []
@@ -615,7 +619,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         mode='markers',
                         marker=dict(size=10, color=color),
                         showlegend=False,
-                        hovertemplate=f'Object {obj_id}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                        hovertemplate=f'Object {obj_id}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                     ))
         
         frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
@@ -667,7 +671,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         'mode': 'immediate',
                         'transition': {'duration': 0}
                     }],
-                    'label': f'{time_steps[i]:.1f}',
+                    'label': f't={int(time_steps[i])}' if time_steps[i] == int(time_steps[i]) else f't={time_steps[i]:.1f}',
                     'method': 'animate'
                 }
                 for i, f in enumerate(frames)
@@ -1014,16 +1018,11 @@ def main():
             
             else:  # Animation
                 # Use Plotly's built-in animation for smooth playback
-                st.info("📹 Use the ▶ Play button and slider below the chart to control the animation")
-                
-                num_frames = st.slider(
-                    "Number of animation frames (more frames = smoother but slower to load)",
-                    min_value=20, max_value=100, value=50, step=10
-                )
+                st.info("📹 Use the ▶ Play button and slider below the chart to control the animation. The slider shows actual time steps from your data.")
                 
                 fig = visualize_animated(df, selected_configs, selected_objects, 
                                         start_time, end_time, aggregation_type, 
-                                        temporal_resolution, court_type, num_frames)
+                                        temporal_resolution, court_type)
                 
                 st.plotly_chart(fig, use_container_width=True)
 
