@@ -574,8 +574,21 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Initialize frames list
     frames = []
     
-    # Create initial figure
+    # Create initial figure with fixed court dimensions
     fig = create_pitch_figure(court_type)
+    
+    # Get court dimensions to ensure consistent axis ranges
+    court_dims = get_court_dimensions(court_type)
+    
+    # Set fixed axis ranges to prevent jumping
+    if court_type == 'Tennis':
+        x_margin = 3.0
+        y_margin = 4.0
+        fig.update_xaxes(range=[-x_margin, court_dims['width'] + x_margin], fixedrange=True)
+        fig.update_yaxes(range=[-y_margin, court_dims['height'] + y_margin], fixedrange=True)
+    else:  # Football
+        fig.update_xaxes(range=[0, court_dims['width']], fixedrange=True)
+        fig.update_yaxes(range=[0, court_dims['height']], fixedrange=True)
     
     # Prepare data for all objects at all times
     for frame_idx, current_time in enumerate(time_steps):
