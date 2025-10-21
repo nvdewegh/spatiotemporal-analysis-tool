@@ -146,7 +146,43 @@ def douglas_peucker_spatiotemporal(points, tolerance):
 # Load and parse CSV data
 def load_data(uploaded_file):
     """Load and parse CSV file"""
-    df = pd.read_csv(uploaded_file, header=None, names=['con', 'tst', 'obj', 'x', 'y'])
+    # Try to read with header first
+    df_test = pd.read_csv(uploaded_file, nrows=5)
+    uploaded_file.seek(0)  # Reset file pointer
+    
+    # Check if first row looks like a header
+    has_header = False
+    if len(df_test.columns) >= 5:
+        first_col = str(df_test.columns[0]).lower()
+        if 'con' in first_col or 'constant' in first_col or 'timestamp' in str(df_test.columns[1]).lower():
+            has_header = True
+    
+    # Read the CSV
+    if has_header:
+        df = pd.read_csv(uploaded_file)
+        # Map common column names to our standard names
+        column_mapping = {
+            'constant': 'con',
+            'timestamp': 'tst',
+            'ID': 'obj',
+            'id': 'obj',
+            'con': 'con',
+            'tst': 'tst',
+            'obj': 'obj',
+            'x': 'x',
+            'y': 'y'
+        }
+        # Rename columns if they match known names
+        for old_name, new_name in column_mapping.items():
+            if old_name in df.columns:
+                df = df.rename(columns={old_name: new_name})
+    else:
+        # No header, read as before
+        df = pd.read_csv(uploaded_file, header=None, names=['con', 'tst', 'obj', 'x', 'y'])
+    
+    # Keep only the columns we need
+    required_cols = ['con', 'tst', 'obj', 'x', 'y']
+    df = df[required_cols]
     
     # Convert columns to numeric types
     df['con'] = pd.to_numeric(df['con'], errors='coerce')
@@ -631,22 +667,27 @@ def main():
         st.markdown("""
         ### Expected CSV Format
         
-        **For trajectory visualization:**
+        **For trajectory visualization (Option 1 - with header):**
+        ```csv
+        constant,timestamp,ID,x,y
+        0,0,0,4.79,0.23
+        0,1,0,3.76,17.73
+        ...
         ```
-        con,tst,obj,x,y
+        
+        **For trajectory visualization (Option 2 - no header):**
+        ```csv
         0,0,0,64.78,18.53
         0,1,0,54.26,20.68
         ...
         ```
-        - `con`: Configuration ID
-        - `tst`: Timestamp
-        - `obj`: Object ID
-        - `x,y`: Coordinates
+        - Columns: Configuration, Timestamp, Object ID, x, y
+        - Coordinates:
           - **Football**: 0-110m × 0-72m
           - **Tennis**: 0-10.97m × 0-23.77m
         
         **For heat maps:**
-        ```
+        ```csv
         pass_id,sender_id,receiver_id
         0,13,17
         1,17,18
