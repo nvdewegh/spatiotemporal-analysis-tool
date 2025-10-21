@@ -367,7 +367,7 @@ def create_tennis_court():
                              showlegend=False, hoverinfo='skip'))
     
     # Add margin behind baselines for player movement (e.g., during serve)
-    y_margin = 3.0  # 3 meters behind each baseline
+    y_margin = 5.0  # 5 meters behind each baseline
     
     fig.update_layout(
         width=400,
