@@ -500,11 +500,15 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             
             color = get_color(obj_id)
             
+            # Create legend group name
+            legend_group = f'Config {config}, Obj {obj_id}'
+            
             # Draw trajectory with arrow at the end
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines+markers',
-                name=f'Config {config}, Obj {obj_id}',
+                name=legend_group,
+                legendgroup=legend_group,
                 line=dict(color=color, width=2),
                 marker=dict(size=4, color=color),
                 hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
@@ -528,7 +532,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                         line=dict(width=0)
                     ),
                     showlegend=False,
-                    legendgroup=f'Config {config}, Obj {obj_id}',
+                    legendgroup=legend_group,
                     hoverinfo='skip'
                 ))
     
