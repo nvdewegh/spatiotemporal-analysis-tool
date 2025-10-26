@@ -4,6 +4,11 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist, euclidean
+from scipy.cluster.hierarchy import dendrogram, linkage
+import plotly.express as px
 
 # Common Plotly configuration for interactive charts
 PLOTLY_CONFIG = {
@@ -552,6 +557,7 @@ def aggregate_points(points, aggregation_type, temporal_resolution):
     return points
 
 # Visualize static trajectories
+# Visualize static trajectories
 def visualize_static(df, selected_configs, selected_objects, start_time, end_time, 
                      aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football'):
     """Create static trajectory visualization"""
@@ -597,33 +603,118 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
             
-            # Draw trajectory with arrow at the end
+            # Draw trajectory line and markers, but hide the last marker
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines+markers',
                 name=f'{config} - Obj {obj_id}',
                 legendgroup=legend_group,
                 line=dict(color=color, width=2),
-                marker=dict(size=4, color=color),
+                marker=dict(
+                    size=[4] * (len(x_coords) - 1) + [0],  # Hide the last marker
+                    color=color
+                ),
                 hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
             ))
-            
-            # Add arrow at the end as a separate trace with the same legend group
+
+            # Add arrow at the end using a separate scatter trace
             if len(x_coords) >= 2:
-                # Calculate arrow direction
                 dx = x_coords[-1] - x_coords[-2]
                 dy = y_coords[-1] - y_coords[-2]
-                
+                # Swapping dx and dy in arctan2 rotates the coordinate system by 90 degrees,
+                # aligning the calculation's 0-degree reference (east) with the arrow's default orientation (north).
+                angle = np.degrees(np.arctan2(dx, dy))
+
                 fig.add_trace(go.Scatter(
-                    x=[x_coords[-1]], 
+                    x=[x_coords[-1]],
                     y=[y_coords[-1]],
                     mode='markers',
                     marker=dict(
-                        size=15,  # Increased size
-                        color=color,
                         symbol='arrow',
-                        angle=np.degrees(np.arctan2(dy, dx)) + 180,  # Corrected angle
-                        line=dict(width=0)
+                        color=color,
+                        size=15,
+                        angle=angle
+                    ),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+    
+    # Preserve zoom state on redraw
+    fig.update_layout(uirevision='constant')
+    
+    return fig
+    """Create static trajectory visualization"""
+    fig = create_pitch_figure(court_type)
+    court_dims = get_court_dimensions(court_type)
+    
+    center_x = court_dims['width'] / 2
+    center_y = court_dims['height'] / 2
+    
+    for config in selected_configs:
+        config_data = df[df['config_source'] == config]
+        
+        for obj_id in selected_objects:
+            obj_data = config_data[config_data['obj'] == obj_id]
+            obj_data = obj_data[(obj_data['tst'] >= start_time) & (obj_data['tst'] <= end_time)]
+            obj_data = obj_data.sort_values('tst')
+            
+            if len(obj_data) == 0:
+                continue
+            
+            # Convert to list of dicts
+            points = obj_data[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
+            
+            # Translate to center if in 2SA mode
+            if translate_to_center and points:
+                start_point = points[0]
+                delta_x = center_x - start_point['x']
+                delta_y = center_y - start_point['y']
+                points = [{'x': p['x'] + delta_x, 'y': p['y'] + delta_y, 
+                          'timestamp': p['timestamp']} for p in points]
+            
+            # Apply aggregation
+            points = aggregate_points(points, aggregation_type, temporal_resolution)
+            
+            if len(points) < 2:
+                continue
+            
+            x_coords = [p['x'] for p in points]
+            y_coords = [p['y'] for p in points]
+            
+            color = get_color(obj_id)
+            
+            # Create legend group name
+            legend_group = f'{config} | Obj {obj_id}'
+            
+            # Draw trajectory line and markers, but exclude the last marker
+            fig.add_trace(go.Scatter(
+                x=x_coords, y=y_coords,
+                mode='lines+markers',
+                name=f'{config} - Obj {obj_id}',
+                legendgroup=legend_group,
+                line=dict(color=color, width=2),
+                marker=dict(
+                    size=[4] * (len(x_coords) - 1) + [0],  # Hide the last marker
+                    color=color
+                ),
+                hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
+            ))
+
+            # Add arrow at the end as a separate trace with a correctly oriented symbol
+            if len(x_coords) >= 2:
+                dx = x_coords[-1] - x_coords[-2]
+                dy = y_coords[-1] - y_coords[-2]
+                angle = np.degrees(np.arctan2(dy, dx))
+
+                fig.add_trace(go.Scatter(
+                    x=[x_coords[-1]],
+                    y=[y_coords[-1]],
+                    mode='markers',
+                    marker=dict(
+                        symbol='arrow',
+                        color=color,
+                        size=15,
+                        angle=angle
                     ),
                     showlegend=False,
                     legendgroup=legend_group,
@@ -868,6 +959,265 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
     
     return fig
 
+# ============================================================================
+# CLUSTERING FUNCTIONS
+# ============================================================================
+
+def extract_trajectory_features(df, obj_id, config, start_time, end_time):
+    """Extract general properties features from a trajectory"""
+    obj_data = df[(df['obj'] == obj_id) & 
+                  (df['config_source'] == config) &
+                  (df['tst'] >= start_time) & 
+                  (df['tst'] <= end_time)].sort_values('tst')
+    
+    if len(obj_data) < 2:
+        return None
+    
+    # Calculate features
+    coords = obj_data[['x', 'y']].values
+    times = obj_data['tst'].values
+    
+    # Distance traveled
+    distances = np.sqrt(np.sum(np.diff(coords, axis=0)**2, axis=1))
+    total_distance = np.sum(distances)
+    
+    # Duration
+    duration = times[-1] - times[0]
+    
+    # Average speed
+    avg_speed = total_distance / duration if duration > 0 else 0
+    
+    # Max speed
+    time_diffs = np.diff(times)
+    speeds = distances / time_diffs
+    speeds = speeds[time_diffs > 0]
+    max_speed = np.max(speeds) if len(speeds) > 0 else 0
+    
+    # Displacement (straight line from start to end)
+    displacement = np.sqrt((coords[-1][0] - coords[0][0])**2 + 
+                          (coords[-1][1] - coords[0][1])**2)
+    
+    # Sinuosity (how curved the path is)
+    sinuosity = total_distance / displacement if displacement > 0 else 1
+    
+    # Bounding box area
+    x_range = coords[:, 0].max() - coords[:, 0].min()
+    y_range = coords[:, 1].max() - coords[:, 1].min()
+    bbox_area = x_range * y_range
+    
+    # Direction (overall bearing from start to end)
+    # Calculate angle in degrees (0° = East, 90° = North, 180° = West, 270° = South)
+    dx = coords[-1][0] - coords[0][0]
+    dy = coords[-1][1] - coords[0][1]
+    direction = np.degrees(np.arctan2(dy, dx))  # Range: -180 to 180
+    # Normalize to 0-360 range
+    if direction < 0:
+        direction += 360
+    
+    # Start and end positions
+    start_x, start_y = coords[0]
+    end_x, end_y = coords[-1]
+    
+    return {
+        'obj_id': obj_id,
+        'config': config,
+        'total_distance': total_distance,
+        'duration': duration,
+        'avg_speed': avg_speed,
+        'max_speed': max_speed,
+        'displacement': displacement,
+        'sinuosity': sinuosity,
+        'bbox_area': bbox_area,
+        'direction': direction,
+        'start_x': start_x,
+        'start_y': start_y,
+        'end_x': end_x,
+        'end_y': end_y,
+        'num_points': len(obj_data)
+    }
+
+def dtw_distance(traj1, traj2):
+    """Calculate Dynamic Time Warping distance between two trajectories"""
+    n, m = len(traj1), len(traj2)
+    dtw = np.full((n + 1, m + 1), np.inf)
+    dtw[0, 0] = 0
+    
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = euclidean(traj1[i-1], traj2[j-1])
+            dtw[i, j] = cost + min(dtw[i-1, j], dtw[i, j-1], dtw[i-1, j-1])
+    
+    return dtw[n, m]
+
+def hausdorff_distance(traj1, traj2):
+    """Calculate Hausdorff distance between two trajectories"""
+    distances1 = cdist(traj1, traj2, 'euclidean')
+    distances2 = cdist(traj2, traj1, 'euclidean')
+    
+    max_min1 = np.max(np.min(distances1, axis=1))
+    max_min2 = np.max(np.min(distances2, axis=1))
+    
+    return max(max_min1, max_min2)
+
+def chamfer_distance(traj1, traj2):
+    """
+    Calculate Chamfer distance (average symmetric distance) between two trajectories.
+    This is a simple, intuitive measure: for each point in one trajectory, 
+    find the nearest point in the other trajectory, then average all these distances.
+    Much more robust to outliers than Hausdorff distance.
+    """
+    distances1 = cdist(traj1, traj2, 'euclidean')
+    distances2 = cdist(traj2, traj1, 'euclidean')
+    
+    # For each point in traj1, find nearest point in traj2
+    avg_dist1 = np.mean(np.min(distances1, axis=1))
+    
+    # For each point in traj2, find nearest point in traj1
+    avg_dist2 = np.mean(np.min(distances2, axis=1))
+    
+    # Symmetric average
+    return (avg_dist1 + avg_dist2) / 2
+
+def get_trajectory_coords(df, obj_id, config, start_time, end_time):
+    """Get trajectory coordinates for a specific object"""
+    obj_data = df[(df['obj'] == obj_id) & 
+                  (df['config_source'] == config) &
+                  (df['tst'] >= start_time) & 
+                  (df['tst'] <= end_time)].sort_values('tst')
+    
+    if len(obj_data) < 2:
+        return None
+    
+    return obj_data[['x', 'y']].values
+
+def find_moving_flocks(df, selected_configs, selected_objects, start_time, end_time, 
+                       distance_threshold, min_duration):
+    """Find groups of objects moving together (flocking behavior)"""
+    time_steps = sorted(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
+    
+    flocks = []
+    current_flocks = {}
+    
+    for t in time_steps:
+        # Get positions of all objects at this time
+        positions = {}
+        for config in selected_configs:
+            for obj_id in selected_objects:
+                obj_data = df[(df['obj'] == obj_id) & 
+                            (df['config_source'] == config) & 
+                            (df['tst'] == t)]
+                if len(obj_data) > 0:
+                    positions[(config, obj_id)] = obj_data[['x', 'y']].values[0]
+        
+        if len(positions) < 2:
+            continue
+        
+        # Find clusters at this time step using distance threshold
+        obj_keys = list(positions.keys())
+        coords = np.array([positions[k] for k in obj_keys])
+        
+        # Simple distance-based clustering
+        groups = []
+        used = set()
+        
+        for i, key1 in enumerate(obj_keys):
+            if key1 in used:
+                continue
+            group = [key1]
+            used.add(key1)
+            
+            for j, key2 in enumerate(obj_keys[i+1:], i+1):
+                if key2 in used:
+                    continue
+                dist = euclidean(coords[i], coords[j])
+                if dist <= distance_threshold:
+                    group.append(key2)
+                    used.add(key2)
+            
+            if len(group) >= 2:
+                groups.append((t, frozenset(group)))
+        
+        # Track persistent groups
+        for t, group in groups:
+            group_id = None
+            # Check if this group continues from a previous flock
+            for flock_id, flock_data in current_flocks.items():
+                if group == flock_data['members']:
+                    group_id = flock_id
+                    flock_data['end_time'] = t
+                    break
+            
+            if group_id is None:
+                # New flock
+                flock_id = len(flocks)
+                current_flocks[flock_id] = {
+                    'members': group,
+                    'start_time': t,
+                    'end_time': t
+                }
+    
+    # Filter flocks by minimum duration
+    valid_flocks = []
+    for flock_data in current_flocks.values():
+        duration = flock_data['end_time'] - flock_data['start_time']
+        if duration >= min_duration:
+            valid_flocks.append(flock_data)
+    
+    return valid_flocks
+
+def calculate_speed_trajectory(df, obj_id, config, start_time, end_time):
+    """Calculate speed at each point in a trajectory"""
+    obj_data = df[(df['obj'] == obj_id) & 
+                  (df['config_source'] == config) &
+                  (df['tst'] >= start_time) & 
+                  (df['tst'] <= end_time)].sort_values('tst')
+    
+    if len(obj_data) < 2:
+        return None
+    
+    coords = obj_data[['x', 'y']].values
+    times = obj_data['tst'].values
+    
+    distances = np.sqrt(np.sum(np.diff(coords, axis=0)**2, axis=1))
+    time_diffs = np.diff(times)
+    
+    speeds = np.zeros(len(obj_data))
+    speeds[1:] = distances / time_diffs
+    
+    return speeds
+
+def grid_based_clustering(df, selected_configs, selected_objects, start_time, end_time, grid_size):
+    """Cluster trajectories based on which grid cells they pass through"""
+    from collections import defaultdict
+    
+    # Determine grid bounds
+    x_min, x_max = df['x'].min(), df['x'].max()
+    y_min, y_max = df['y'].min(), df['y'].max()
+    
+    # Create grid
+    trajectory_grids = {}
+    
+    for config in selected_configs:
+        for obj_id in selected_objects:
+            obj_data = df[(df['obj'] == obj_id) & 
+                        (df['config_source'] == config) &
+                        (df['tst'] >= start_time) & 
+                        (df['tst'] <= end_time)]
+            
+            if len(obj_data) < 2:
+                continue
+            
+            # Determine which cells this trajectory passes through
+            cells = set()
+            for _, row in obj_data.iterrows():
+                cell_x = int((row['x'] - x_min) / grid_size)
+                cell_y = int((row['y'] - y_min) / grid_size)
+                cells.add((cell_x, cell_y))
+            
+            trajectory_grids[(config, obj_id)] = cells
+    
+    return trajectory_grids
+
 # Create heatmap
 def create_heatmap(df):
     """Create pass heatmap using sender_id and receiver_id"""
@@ -960,7 +1310,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration (IMO)", "2SA Method", "Heat Maps"]
+                ["Visual Exploration (IMO)", "2SA Method", "Heat Maps", "Clustering"]
             )
     
     # Main content
@@ -1016,6 +1366,1284 @@ def main():
         except Exception as e:
             st.error(f"Error creating heatmap: {str(e)}")
     
+    elif analysis_method == "Clustering":
+        st.header("🔍 Clustering Methods")
+        
+        clustering_methods = [
+            "Similarities of general properties",
+            "Similarities of general movements",
+            "Spatial constraints",
+            "Spatiotemporal constraints (moving flocks)",
+            "Attribute trajectories",
+            "Heat map animations",
+            "PDP",
+            "QTC"
+        ]
+        
+        selected_clustering_method = st.selectbox(
+            "Select a clustering method:",
+            clustering_methods
+        )
+        
+        st.divider()
+        
+        # Get common parameters for clustering
+        config_sources = df['config_source'].drop_duplicates().tolist()
+        objects = sorted(df['obj'].unique())
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_configs = st.multiselect(
+                "Select configuration(s)",
+                config_sources,
+                default=config_sources,
+                key="clustering_configs"
+            )
+        with col2:
+            selected_objects = st.multiselect(
+                "Select object(s)",
+                objects,
+                default=objects[:min(5, len(objects))],
+                key="clustering_objects"
+            )
+        
+        # Time range
+        min_time = float(df['tst'].min())
+        max_time = float(df['tst'].max())
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_time = st.number_input(
+                "Start time",
+                min_value=min_time,
+                max_value=max_time,
+                value=min_time,
+                step=0.01,
+                format="%.2f",
+                key="clustering_start"
+            )
+        with col2:
+            end_time = st.number_input(
+                "End time",
+                min_value=start_time,
+                max_value=max_time,
+                value=max_time,
+                step=0.01,
+                format="%.2f",
+                key="clustering_end"
+            )
+        
+        st.divider()
+        
+        # Display method-specific information and controls
+        if selected_clustering_method == "Similarities of general properties":
+            st.subheader("📊 Similarities of General Properties")
+            st.info("This method clusters trajectories based on similar general properties such as length, duration, average speed, etc.")
+            
+            # Feature selection
+            st.subheader("Select Features for Clustering")
+            all_features = {
+                'total_distance': 'Total Distance',
+                'duration': 'Duration',
+                'avg_speed': 'Average Speed',
+                'max_speed': 'Maximum Speed',
+                'displacement': 'Displacement (Start-to-End Distance)',
+                'sinuosity': 'Sinuosity (Path Curvature)',
+                'bbox_area': 'Bounding Box Area',
+                'direction': 'Direction (Bearing)'
+            }
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_features_left = st.multiselect(
+                    "Movement characteristics",
+                    options=['total_distance', 'displacement', 'sinuosity', 'direction'],
+                    default=['total_distance', 'displacement', 'sinuosity'],
+                    format_func=lambda x: all_features[x],
+                    key="features_left"
+                )
+            with col2:
+                selected_features_right = st.multiselect(
+                    "Speed and spatial metrics",
+                    options=['duration', 'avg_speed', 'max_speed', 'bbox_area'],
+                    default=['avg_speed', 'max_speed'],
+                    format_func=lambda x: all_features[x],
+                    key="features_right"
+                )
+            
+            selected_feature_cols = selected_features_left + selected_features_right
+            
+            if len(selected_feature_cols) == 0:
+                st.warning("⚠️ Please select at least one feature for clustering.")
+            else:
+                st.success(f"✓ Selected {len(selected_feature_cols)} feature(s): {', '.join([all_features[f] for f in selected_feature_cols])}")
+            
+            # Clustering parameters
+            st.subheader("Clustering Parameters")
+            
+            clustering_algo = st.selectbox(
+                "Clustering algorithm",
+                ["K-Means", "Hierarchical", "DBSCAN"],
+                key="prop_algo"
+            )
+            
+            # Show appropriate parameters based on algorithm
+            if clustering_algo == "DBSCAN":
+                col1, col2 = st.columns(2)
+                with col1:
+                    eps = st.slider("EPS (neighborhood radius)", 0.1, 5.0, 0.5, step=0.1, key="dbscan_eps")
+                with col2:
+                    min_samples = st.slider("Min samples (core point threshold)", 2, 10, 2, key="dbscan_min_samples")
+                st.info("💡 DBSCAN automatically determines the number of clusters based on data density. Points labeled as -1 are outliers.")
+            else:
+                n_clusters = st.slider("Number of clusters", 2, 10, 3, key="prop_clusters")
+            
+            if st.button("Run Clustering", key="run_prop_clustering", disabled=len(selected_feature_cols) == 0):
+                with st.spinner("Extracting features and clustering..."):
+                    # Extract features for all trajectories
+                    features_list = []
+                    traj_ids = []
+                    
+                    for config in selected_configs:
+                        for obj_id in selected_objects:
+                            features = extract_trajectory_features(df, obj_id, config, start_time, end_time)
+                            if features is not None:
+                                features_list.append(features)
+                                traj_ids.append(f"{config}-Obj{obj_id}")
+                    
+                    if len(features_list) < 2:
+                        st.error("Not enough trajectories to cluster. Please select more objects or check your data.")
+                    else:
+                        # Create feature matrix with selected features
+                        features_df = pd.DataFrame(features_list)
+                        
+                        # Check if all selected features exist in the data
+                        missing_features = [f for f in selected_feature_cols if f not in features_df.columns]
+                        if missing_features:
+                            st.error(f"Missing features in data: {', '.join(missing_features)}")
+                        else:
+                            X = features_df[selected_feature_cols].values
+                            
+                            # Normalize features
+                            scaler = StandardScaler()
+                            X_scaled = scaler.fit_transform(X)
+                            
+                            # Perform clustering
+                            if clustering_algo == "K-Means":
+                                clusterer = KMeans(n_clusters=n_clusters, random_state=42)
+                                labels = clusterer.fit_predict(X_scaled)
+                            elif clustering_algo == "Hierarchical":
+                                # Create linkage matrix for dendrogram
+                                linkage_matrix = linkage(X_scaled, method='ward')
+                                
+                                # Display dendrogram
+                                st.subheader("📊 Dendrogram")
+                                st.info("The dendrogram shows how trajectories are grouped hierarchically. Taller branches indicate larger distances between clusters.")
+                                
+                                # Create dendrogram figure
+                                fig_dend = go.Figure()
+                                
+                                # Compute dendrogram data
+                                dend_data = dendrogram(linkage_matrix, labels=traj_ids, no_plot=True)
+                                
+                                # Extract x and y coordinates for dendrogram lines
+                                icoord = np.array(dend_data['icoord'])
+                                dcoord = np.array(dend_data['dcoord'])
+                                
+                                # Plot dendrogram branches
+                                for i in range(len(icoord)):
+                                    fig_dend.add_trace(go.Scatter(
+                                        x=icoord[i],
+                                        y=dcoord[i],
+                                        mode='lines',
+                                        line=dict(color='rgb(100,100,100)', width=1.5),
+                                        hoverinfo='skip',
+                                        showlegend=False
+                                    ))
+                                
+                                # Get the order of leaves (trajectories) in the dendrogram
+                                leaves_order = dend_data['leaves']
+                                
+                                # Add trajectory labels
+                                fig_dend.update_layout(
+                                    title="Hierarchical Clustering Dendrogram",
+                                    xaxis=dict(
+                                        title="Trajectory",
+                                        tickmode='array',
+                                        tickvals=[(i + 0.5) * 10 for i in range(len(leaves_order))],
+                                        ticktext=[traj_ids[i] for i in leaves_order],
+                                        tickangle=-45
+                                    ),
+                                    yaxis=dict(title="Distance"),
+                                    height=500,
+                                    showlegend=False
+                                )
+                                
+                                render_interactive_chart(fig_dend, "Dendrogram showing hierarchical clustering structure")
+                                
+                                # Perform clustering with specified number of clusters
+                                clusterer = AgglomerativeClustering(n_clusters=n_clusters)
+                                labels = clusterer.fit_predict(X_scaled)
+                            else:  # DBSCAN
+                                clusterer = DBSCAN(eps=eps, min_samples=min_samples)
+                                labels = clusterer.fit_predict(X_scaled)
+                            
+                            features_df['cluster'] = labels
+                            features_df['trajectory_id'] = traj_ids
+                            
+                            # Display results
+                            n_clusters_found = len(set(labels)) - (1 if -1 in labels else 0)
+                            n_outliers = list(labels).count(-1)
+                            
+                            if clustering_algo == "DBSCAN":
+                                st.success(f"✅ Found {n_clusters_found} cluster(s) and {n_outliers} outlier(s)!")
+                            else:
+                                st.success(f"✅ Found {n_clusters_found} clusters!")
+                            
+                            # Show cluster assignments
+                            st.subheader("Cluster Assignments")
+                            for cluster_id in sorted(set(labels)):
+                                cluster_trajs = features_df[features_df['cluster'] == cluster_id]['trajectory_id'].tolist()
+                                if cluster_id == -1:
+                                    st.write(f"**Outliers (noise):** {', '.join(cluster_trajs)}")
+                                else:
+                                    st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                        
+                            # Visualize clusters on court
+                            st.subheader("Cluster Visualization")
+                            fig = create_pitch_figure(court_type)
+                            
+                            colors = px.colors.qualitative.Plotly
+                            for idx, row in features_df.iterrows():
+                                config = row['config']
+                                obj_id = row['obj_id']
+                                cluster_id = row['cluster']
+                                
+                                # Use gray for outliers (-1), otherwise use color palette
+                                if cluster_id == -1:
+                                    color = 'gray'
+                                    label = f"Outlier: {config}-Obj{obj_id}"
+                                else:
+                                    color = colors[cluster_id % len(colors)]
+                                    label = f"C{cluster_id}: {config}-Obj{obj_id}"
+                                
+                                # Get trajectory
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) > 0:
+                                    fig.add_trace(go.Scatter(
+                                        x=obj_data['x'], y=obj_data['y'],
+                                        mode='lines',
+                                        name=label,
+                                    line=dict(color=color, width=2),
+                                    legendgroup=f"cluster_{cluster_id}"
+                                ))
+                            
+                            render_interactive_chart(fig, "Trajectories colored by cluster")
+                            
+                            # Feature comparison
+                            st.subheader("Feature Statistics by Cluster")
+                            
+                            # Create feature statistics with units
+                            feature_stats = features_df.groupby('cluster')[selected_feature_cols].mean()
+                            
+                            # Define units for each feature
+                            feature_units = {
+                                'total_distance': 'Total Distance (m)',
+                                'duration': 'Duration (s)',
+                                'avg_speed': 'Average Speed (m/s)',
+                                'max_speed': 'Maximum Speed (m/s)',
+                                'displacement': 'Displacement (m)',
+                                'sinuosity': 'Sinuosity (ratio)',
+                                'bbox_area': 'Bounding Box Area (m²)',
+                                'direction': 'Direction (°)'
+                            }
+                            
+                            # Rename index for outliers
+                            feature_stats.index = ['Outliers' if idx == -1 else f'Cluster {idx}' for idx in feature_stats.index]
+                            
+                            # Rename columns with units
+                            feature_stats.columns = [feature_units.get(col, col) for col in feature_stats.columns]
+                            
+                            # Format all values to 2 decimal places
+                            feature_stats_formatted = feature_stats.apply(lambda x: x.map('{:.2f}'.format))
+                        
+                        # Display with optimized column width
+                        st.dataframe(
+                            feature_stats_formatted,
+                            use_container_width=False,
+                            column_config={
+                                col: st.column_config.TextColumn(
+                                    col,
+                                    width="medium"
+                                ) for col in feature_stats_formatted.columns
+                            }
+                        )
+            
+        elif selected_clustering_method == "Similarities of general movements":
+            st.subheader("🔄 Similarities of General Movements")
+            st.info("This method clusters trajectories based on similar movement patterns using distance metrics like DTW or Hausdorff distance.")
+            
+            # Distance metric selection
+            distance_metric = st.selectbox(
+                "Distance metric",
+                ["Dynamic Time Warping (DTW)", "Hausdorff Distance"],
+                key="movement_metric"
+            )
+            
+            n_clusters = st.slider("Number of clusters", 2, 10, 3, key="movement_clusters")
+            
+            if st.button("Run Clustering", key="run_movement_clustering"):
+                with st.spinner(f"Calculating {distance_metric} distances..."):
+                    # Get all trajectories
+                    trajectories = []
+                    traj_ids = []
+                    
+                    for config in selected_configs:
+                        for obj_id in selected_objects:
+                            coords = get_trajectory_coords(df, obj_id, config, start_time, end_time)
+                            if coords is not None:
+                                trajectories.append(coords)
+                                traj_ids.append(f"{config}-Obj{obj_id}")
+                    
+                    if len(trajectories) < 2:
+                        st.error("Not enough trajectories to cluster.")
+                    else:
+                        # Calculate distance matrix
+                        n = len(trajectories)
+                        dist_matrix = np.zeros((n, n))
+                        
+                        progress_bar = st.progress(0)
+                        total_pairs = n * (n - 1) // 2
+                        completed = 0
+                        
+                        for i in range(n):
+                            for j in range(i + 1, n):
+                                if distance_metric == "Dynamic Time Warping (DTW)":
+                                    dist = dtw_distance(trajectories[i], trajectories[j])
+                                else:  # Hausdorff
+                                    dist = hausdorff_distance(trajectories[i], trajectories[j])
+                                
+                                dist_matrix[i, j] = dist
+                                dist_matrix[j, i] = dist
+                                completed += 1
+                                progress_bar.progress(completed / total_pairs)
+                        
+                        progress_bar.empty()
+                        
+                        # Perform hierarchical clustering
+                        clusterer = AgglomerativeClustering(
+                            n_clusters=n_clusters,
+                            metric='precomputed',
+                            linkage='average'
+                        )
+                        labels = clusterer.fit_predict(dist_matrix)
+                        
+                        # Display results
+                        st.success(f"✅ Found {n_clusters} clusters!")
+                        
+                        # Show cluster assignments
+                        st.subheader("Cluster Assignments")
+                        cluster_df = pd.DataFrame({
+                            'Trajectory': traj_ids,
+                            'Cluster': labels
+                        })
+                        
+                        for cluster_id in range(n_clusters):
+                            cluster_trajs = cluster_df[cluster_df['Cluster'] == cluster_id]['Trajectory'].tolist()
+                            st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                        
+                        # Visualize clusters
+                        st.subheader("Cluster Visualization")
+                        fig = create_pitch_figure(court_type)
+                        
+                        colors = px.colors.qualitative.Plotly
+                        for idx, traj_id in enumerate(traj_ids):
+                            cluster_id = labels[idx]
+                            color = colors[cluster_id % len(colors)]
+                            
+                            config, obj_part = traj_id.split('-Obj')
+                            obj_id = int(float(obj_part))
+                            
+                            obj_data = df[(df['obj'] == obj_id) & 
+                                        (df['config_source'] == config) &
+                                        (df['tst'] >= start_time) & 
+                                        (df['tst'] <= end_time)].sort_values('tst')
+                            
+                            if len(obj_data) > 0:
+                                fig.add_trace(go.Scatter(
+                                    x=obj_data['x'], y=obj_data['y'],
+                                    mode='lines',
+                                    name=f"C{cluster_id}: {traj_id}",
+                                    line=dict(color=color, width=2),
+                                    legendgroup=f"cluster_{cluster_id}"
+                                ))
+                        
+                        render_interactive_chart(fig, "Trajectories colored by movement similarity")
+                        
+                        # Distance matrix heatmap
+                        st.subheader("Distance Matrix")
+                        fig_dist = go.Figure(data=go.Heatmap(
+                            z=dist_matrix,
+                            x=traj_ids,
+                            y=traj_ids,
+                            colorscale='Viridis',
+                            hovertemplate='%{x} to %{y}: %{z:.2f}<extra></extra>'
+                        ))
+                        fig_dist.update_layout(
+                            title=f'{distance_metric} Distance Matrix',
+                            height=600,
+                            xaxis={'tickangle': 45}
+                        )
+                        st.plotly_chart(fig_dist, use_container_width=True)
+            
+        elif selected_clustering_method == "Spatial constraints":
+            st.subheader("📍 Spatial Constraints")
+            st.info("This method clusters trajectories based on spatial proximity and location constraints.")
+            
+            method = st.radio(
+                "Clustering method",
+                ["Chamfer Distance", "Grid-based", "Start/End Point", "Spatial Zone"],
+                key="spatial_method"
+            )
+            
+            if method == "Chamfer Distance":
+                st.info("💡 Chamfer distance calculates the average distance from each point in one trajectory to its nearest point in another trajectory. It's simple, intuitive, and robust to outliers - perfect for finding trajectories that follow similar routes.")
+                
+                n_clusters = st.slider("Number of clusters", 2, 10, 3, key="chamfer_clusters")
+                
+                if st.button("Run Clustering", key="run_chamfer_clustering"):
+                    with st.spinner("Calculating Chamfer distances..."):
+                        # Get all trajectories
+                        trajectories = []
+                        traj_ids = []
+                        
+                        for config in selected_configs:
+                            for obj_id in selected_objects:
+                                coords = get_trajectory_coords(df, obj_id, config, start_time, end_time)
+                                if coords is not None:
+                                    trajectories.append(coords)
+                                    traj_ids.append(f"{config}-Obj{obj_id}")
+                        
+                        if len(trajectories) < 2:
+                            st.error("Not enough trajectories to cluster.")
+                        else:
+                            # Calculate Chamfer distance matrix
+                            n = len(trajectories)
+                            dist_matrix = np.zeros((n, n))
+                            
+                            progress_bar = st.progress(0)
+                            total_pairs = n * (n - 1) // 2
+                            completed = 0
+                            
+                            for i in range(n):
+                                for j in range(i + 1, n):
+                                    dist = chamfer_distance(trajectories[i], trajectories[j])
+                                    dist_matrix[i, j] = dist
+                                    dist_matrix[j, i] = dist
+                                    completed += 1
+                                    progress_bar.progress(completed / total_pairs)
+                            
+                            progress_bar.empty()
+                            
+                            # Perform hierarchical clustering
+                            clusterer = AgglomerativeClustering(
+                                n_clusters=n_clusters,
+                                metric='precomputed',
+                                linkage='average'
+                            )
+                            labels = clusterer.fit_predict(dist_matrix)
+                            
+                            # Display results
+                            st.success(f"✅ Found {n_clusters} clusters based on route similarity!")
+                            
+                            # Show cluster assignments
+                            st.subheader("Cluster Assignments")
+                            cluster_df = pd.DataFrame({
+                                'Trajectory': traj_ids,
+                                'Cluster': labels
+                            })
+                            
+                            for cluster_id in range(n_clusters):
+                                cluster_trajs = cluster_df[cluster_df['Cluster'] == cluster_id]['Trajectory'].tolist()
+                                st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                            
+                            # Visualize clusters
+                            st.subheader("Cluster Visualization")
+                            fig = create_pitch_figure(court_type)
+                            
+                            colors = px.colors.qualitative.Plotly
+                            for idx, traj_id in enumerate(traj_ids):
+                                cluster_id = labels[idx]
+                                color = colors[cluster_id % len(colors)]
+                                
+                                config, obj_part = traj_id.split('-Obj')
+                                obj_id = int(float(obj_part))
+                                
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) > 0:
+                                    fig.add_trace(go.Scatter(
+                                        x=obj_data['x'], y=obj_data['y'],
+                                        mode='lines',
+                                        name=f"C{cluster_id}: {traj_id}",
+                                        line=dict(color=color, width=2),
+                                        legendgroup=f"cluster_{cluster_id}"
+                                    ))
+                            
+                            render_interactive_chart(fig, "Trajectories colored by route similarity")
+                            
+                            # Distance matrix heatmap
+                            st.subheader("Chamfer Distance Matrix")
+                            st.info("Lower values (darker) indicate more similar routes. This shows the average distance between trajectories.")
+                            
+                            fig_dist = go.Figure(data=go.Heatmap(
+                                z=dist_matrix,
+                                x=traj_ids,
+                                y=traj_ids,
+                                colorscale='Viridis',
+                                hovertemplate='%{x} to %{y}: %{z:.2f}m<extra></extra>'
+                            ))
+                            fig_dist.update_layout(
+                                title='Chamfer Distance Matrix (meters)',
+                                height=600,
+                                xaxis={'tickangle': 45}
+                            )
+                            st.plotly_chart(fig_dist, use_container_width=True)
+            
+            elif method == "Grid-based":
+                grid_size = st.slider("Grid cell size (meters)", 1.0, 10.0, 3.0, step=0.5, key="grid_size")
+                
+                if st.button("Run Clustering", key="run_spatial_grid"):
+                    with st.spinner("Analyzing spatial patterns..."):
+                        trajectory_grids = grid_based_clustering(
+                            df, selected_configs, selected_objects,
+                            start_time, end_time, grid_size
+                        )
+                        
+                        if len(trajectory_grids) < 2:
+                            st.error("Not enough trajectories to cluster.")
+                        else:
+                            # Calculate similarity based on Jaccard index
+                            traj_ids = list(trajectory_grids.keys())
+                            n = len(traj_ids)
+                            similarity_matrix = np.zeros((n, n))
+                            
+                            for i in range(n):
+                                for j in range(n):
+                                    set1 = trajectory_grids[traj_ids[i]]
+                                    set2 = trajectory_grids[traj_ids[j]]
+                                    intersection = len(set1 & set2)
+                                    union = len(set1 | set2)
+                                    similarity_matrix[i, j] = intersection / union if union > 0 else 0
+                            
+                            # Convert to distance
+                            dist_matrix = 1 - similarity_matrix
+                            
+                            # Cluster
+                            n_clusters = st.slider("Number of clusters", 2, min(10, n), 3, key="spatial_n_clusters")
+                            clusterer = AgglomerativeClustering(
+                                n_clusters=n_clusters,
+                                metric='precomputed',
+                                linkage='average'
+                            )
+                            labels = clusterer.fit_predict(dist_matrix)
+                            
+                            # Display results
+                            st.success(f"✅ Found {n_clusters} clusters based on spatial patterns!")
+                            
+                            st.subheader("Cluster Assignments")
+                            for cluster_id in range(n_clusters):
+                                cluster_trajs = [f"{c}-Obj{o}" for (c, o), lbl in zip(traj_ids, labels) if lbl == cluster_id]
+                                st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                            
+                            # Visualize
+                            fig = create_pitch_figure(court_type)
+                            colors = px.colors.qualitative.Plotly
+                            
+                            for idx, (config, obj_id) in enumerate(traj_ids):
+                                cluster_id = labels[idx]
+                                color = colors[cluster_id % len(colors)]
+                                
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) > 0:
+                                    fig.add_trace(go.Scatter(
+                                        x=obj_data['x'], y=obj_data['y'],
+                                        mode='lines',
+                                        name=f"C{cluster_id}: {config}-Obj{obj_id}",
+                                        line=dict(color=color, width=2)
+                                    ))
+                            
+                            render_interactive_chart(fig, "Trajectories colored by spatial patterns")
+            
+            elif method == "Start/End Point":
+                if st.button("Run Clustering", key="run_spatial_endpoints"):
+                    with st.spinner("Clustering by start/end points..."):
+                        # Extract start and end points
+                        start_points = []
+                        end_points = []
+                        traj_ids = []
+                        
+                        for config in selected_configs:
+                            for obj_id in selected_objects:
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) >= 2:
+                                    start_points.append([obj_data.iloc[0]['x'], obj_data.iloc[0]['y']])
+                                    end_points.append([obj_data.iloc[-1]['x'], obj_data.iloc[-1]['y']])
+                                    traj_ids.append(f"{config}-Obj{obj_id}")
+                        
+                        if len(start_points) < 2:
+                            st.error("Not enough trajectories.")
+                        else:
+                            # Combine start and end points as features
+                            X = np.hstack([np.array(start_points), np.array(end_points)])
+                            
+                            n_clusters = st.slider("Number of clusters", 2, min(10, len(X)), 3, key="endpoint_clusters")
+                            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                            labels = kmeans.fit_predict(X)
+                            
+                            st.success(f"✅ Clustered by start/end points!")
+                            
+                            st.subheader("Cluster Assignments")
+                            for cluster_id in range(n_clusters):
+                                cluster_trajs = [traj_ids[i] for i in range(len(traj_ids)) if labels[i] == cluster_id]
+                                st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                            
+                            # Visualize
+                            fig = create_pitch_figure(court_type)
+                            colors = px.colors.qualitative.Plotly
+                            
+                            for idx, traj_id in enumerate(traj_ids):
+                                cluster_id = labels[idx]
+                                color = colors[cluster_id % len(colors)]
+                                
+                                config, obj_part = traj_id.split('-Obj')
+                                obj_id = int(float(obj_part))
+                                
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) > 0:
+                                    fig.add_trace(go.Scatter(
+                                        x=obj_data['x'], y=obj_data['y'],
+                                        mode='lines+markers',
+                                        name=f"C{cluster_id}: {traj_id}",
+                                        line=dict(color=color, width=2),
+                                        marker=dict(
+                                            size=[10] + [4]*(len(obj_data)-2) + [10],
+                                            color=color,
+                                            symbol=['circle'] + ['circle']*(len(obj_data)-2) + ['square']
+                                        )
+                                    ))
+                            
+                            render_interactive_chart(fig, "Trajectories colored by start/end point clusters")
+            
+            else:  # Spatial Zone
+                st.info("Draw a zone on the field and cluster trajectories that pass through it vs. those that don't.")
+                st.warning("⚠️ Interactive zone drawing coming soon. For now, use grid-based clustering.")
+            
+        elif selected_clustering_method == "Spatiotemporal constraints (moving flocks)":
+            st.subheader("🐦 Spatiotemporal Constraints (Moving Flocks)")
+            st.info("This method identifies groups of objects moving together in space and time (flocking behavior).")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                distance_threshold = st.slider(
+                    "Distance threshold (meters)",
+                    1.0, 20.0, 5.0, step=0.5,
+                    key="flock_distance",
+                    help="Maximum distance between objects to be considered part of the same flock"
+                )
+            with col2:
+                min_duration = st.slider(
+                    "Minimum duration (time steps)",
+                    1, 50, 5,
+                    key="flock_duration",
+                    help="Minimum number of consecutive time steps for a valid flock"
+                )
+            
+            if st.button("Detect Flocks", key="run_flock_detection"):
+                with st.spinner("Detecting moving flocks..."):
+                    flocks = find_moving_flocks(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        distance_threshold, min_duration
+                    )
+                    
+                    if len(flocks) == 0:
+                        st.warning("No flocks detected with these parameters. Try increasing the distance threshold or decreasing the minimum duration.")
+                    else:
+                        st.success(f"✅ Detected {len(flocks)} flock(s)!")
+                        
+                        # Display flock details
+                        st.subheader("Detected Flocks")
+                        for idx, flock in enumerate(flocks):
+                            members = list(flock['members'])
+                            member_names = [f"{c}-Obj{o}" for c, o in members]
+                            duration = flock['end_time'] - flock['start_time']
+                            
+                            with st.expander(f"Flock {idx + 1}: {len(members)} members, duration {duration:.0f}"):
+                                st.write(f"**Members:** {', '.join(member_names)}")
+                                st.write(f"**Time range:** {flock['start_time']:.0f} to {flock['end_time']:.0f}")
+                                st.write(f"**Duration:** {duration:.0f} time steps")
+                        
+                        # Visualize flocks
+                        st.subheader("Flock Visualization")
+                        fig = create_pitch_figure(court_type)
+                        colors = px.colors.qualitative.Set1
+                        
+                        # Assign each trajectory to a flock color
+                        traj_to_flock = {}
+                        for idx, flock in enumerate(flocks):
+                            for member in flock['members']:
+                                traj_to_flock[member] = idx
+                        
+                        # Plot all trajectories
+                        for config in selected_configs:
+                            for obj_id in selected_objects:
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) > 0:
+                                    key = (config, obj_id)
+                                    if key in traj_to_flock:
+                                        flock_id = traj_to_flock[key]
+                                        color = colors[flock_id % len(colors)]
+                                        name = f"Flock {flock_id + 1}: {config}-Obj{obj_id}"
+                                        width = 3
+                                    else:
+                                        color = 'lightgray'
+                                        name = f"No flock: {config}-Obj{obj_id}"
+                                        width = 1
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=obj_data['x'], y=obj_data['y'],
+                                        mode='lines',
+                                        name=name,
+                                        line=dict(color=color, width=width)
+                                    ))
+                        
+                        render_interactive_chart(fig, "Trajectories colored by flock membership (gray = no flock)")
+            
+        elif selected_clustering_method == "Attribute trajectories":
+            st.subheader("📈 Attribute Trajectories")
+            st.info("This method clusters trajectories based on temporal patterns of attributes like speed or acceleration.")
+            
+            attribute = st.selectbox(
+                "Select attribute",
+                ["Speed", "Acceleration"],
+                key="attribute_type"
+            )
+            
+            n_clusters = st.slider("Number of clusters", 2, 10, 3, key="attribute_clusters")
+            
+            if st.button("Run Clustering", key="run_attribute_clustering"):
+                with st.spinner(f"Analyzing {attribute.lower()} patterns..."):
+                    # Calculate attribute trajectories
+                    speed_trajectories = []
+                    traj_ids = []
+                    
+                    for config in selected_configs:
+                        for obj_id in selected_objects:
+                            speeds = calculate_speed_trajectory(df, obj_id, config, start_time, end_time)
+                            if speeds is not None and len(speeds) > 2:
+                                speed_trajectories.append(speeds)
+                                traj_ids.append(f"{config}-Obj{obj_id}")
+                    
+                    if len(speed_trajectories) < 2:
+                        st.error("Not enough trajectories to cluster.")
+                    else:
+                        # Pad/interpolate to same length for comparison
+                        max_len = max(len(s) for s in speed_trajectories)
+                        
+                        # Simple linear interpolation to common length
+                        normalized_speeds = []
+                        for speeds in speed_trajectories:
+                            if len(speeds) < max_len:
+                                x_old = np.linspace(0, 1, len(speeds))
+                                x_new = np.linspace(0, 1, max_len)
+                                speeds_interp = np.interp(x_new, x_old, speeds)
+                                normalized_speeds.append(speeds_interp)
+                            else:
+                                normalized_speeds.append(speeds[:max_len])
+                        
+                        X = np.array(normalized_speeds)
+                        
+                        # Calculate acceleration if needed
+                        if attribute == "Acceleration":
+                            X = np.diff(X, axis=1)
+                        
+                        # Cluster using K-means
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                        labels = kmeans.fit_predict(X)
+                        
+                        st.success(f"✅ Clustered by {attribute.lower()} patterns!")
+                        
+                        # Display cluster assignments
+                        st.subheader("Cluster Assignments")
+                        for cluster_id in range(n_clusters):
+                            cluster_trajs = [traj_ids[i] for i in range(len(traj_ids)) if labels[i] == cluster_id]
+                            st.write(f"**Cluster {cluster_id}:** {', '.join(cluster_trajs)}")
+                        
+                        # Plot attribute patterns by cluster
+                        st.subheader(f"{attribute} Patterns by Cluster")
+                        fig = go.Figure()
+                        colors = px.colors.qualitative.Plotly
+                        
+                        for idx, (speeds, traj_id) in enumerate(zip(normalized_speeds, traj_ids)):
+                            cluster_id = labels[idx]
+                            color = colors[cluster_id % len(colors)]
+                            
+                            data = speeds if attribute == "Speed" else np.diff(speeds)
+                            
+                            fig.add_trace(go.Scatter(
+                                y=data,
+                                mode='lines',
+                                name=f"C{cluster_id}: {traj_id}",
+                                line=dict(color=color),
+                                legendgroup=f"cluster_{cluster_id}"
+                            ))
+                        
+                        fig.update_layout(
+                            title=f"{attribute} Over Time",
+                            xaxis_title="Time Step",
+                            yaxis_title=f"{attribute} (m/s)" if attribute == "Speed" else f"{attribute} (m/s²)",
+                            height=500
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Visualize trajectories colored by cluster
+                        st.subheader("Spatial Trajectories")
+                        fig_spatial = create_pitch_figure(court_type)
+                        
+                        for idx, traj_id in enumerate(traj_ids):
+                            cluster_id = labels[idx]
+                            color = colors[cluster_id % len(colors)]
+                            
+                            config, obj_part = traj_id.split('-Obj')
+                            obj_id = int(float(obj_part))
+                            
+                            obj_data = df[(df['obj'] == obj_id) & 
+                                        (df['config_source'] == config) &
+                                        (df['tst'] >= start_time) & 
+                                        (df['tst'] <= end_time)].sort_values('tst')
+                            
+                            if len(obj_data) > 0:
+                                fig_spatial.add_trace(go.Scatter(
+                                    x=obj_data['x'], y=obj_data['y'],
+                                    mode='lines',
+                                    name=f"C{cluster_id}: {traj_id}",
+                                    line=dict(color=color, width=2)
+                                ))
+                        
+                        render_interactive_chart(fig_spatial, f"Trajectories colored by {attribute.lower()} pattern cluster")
+            
+        elif selected_clustering_method == "Heat map animations":
+            st.subheader("🔥 Heat Map Animations")
+            st.info("This method creates animated heat maps showing density patterns over time.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                grid_resolution = st.slider("Grid resolution", 10, 100, 30, key="heatmap_resolution")
+            with col2:
+                time_window = st.slider("Time window size", 5, 50, 10, key="heatmap_window")
+            
+            if st.button("Generate Heat Map Animation", key="run_heatmap_animation"):
+                with st.spinner("Generating heat map animation..."):
+                    court_dims = get_court_dimensions(court_type)
+                    
+                    # Create grid
+                    x_edges = np.linspace(0, court_dims['width'], grid_resolution)
+                    y_edges = np.linspace(0, court_dims['height'], grid_resolution)
+                    
+                    # Get time steps
+                    filtered_df = df[
+                        (df['config_source'].isin(selected_configs)) &
+                        (df['obj'].isin(selected_objects)) &
+                        (df['tst'] >= start_time) &
+                        (df['tst'] <= end_time)
+                    ]
+                    
+                    time_steps = sorted(filtered_df['tst'].unique())
+                    
+                    if len(time_steps) == 0:
+                        st.error("No data in selected time range.")
+                    else:
+                        # Create frames for animation
+                        frames = []
+                        
+                        for i in range(0, len(time_steps), time_window):
+                            window_times = time_steps[i:i+time_window]
+                            window_data = filtered_df[filtered_df['tst'].isin(window_times)]
+                            
+                            # Create 2D histogram
+                            heatmap, _, _ = np.histogram2d(
+                                window_data['x'],
+                                window_data['y'],
+                                bins=[x_edges, y_edges]
+                            )
+                            
+                            frames.append(heatmap.T)
+                        
+                        if len(frames) == 0:
+                            st.error("Not enough data to create animation.")
+                        else:
+                            # Create initial figure
+                            fig = create_pitch_figure(court_type)
+                            
+                            # Add heatmap
+                            fig.add_trace(go.Heatmap(
+                                z=frames[0],
+                                x=x_edges,
+                                y=y_edges,
+                                colorscale='Hot',
+                                opacity=0.6,
+                                showscale=True,
+                                hovertemplate='x: %{x:.1f}<br>y: %{y:.1f}<br>density: %{z}<extra></extra>'
+                            ))
+                            
+                            # Create animation frames
+                            plot_frames = [
+                                go.Frame(
+                                    data=[go.Heatmap(
+                                        z=frame,
+                                        x=x_edges,
+                                        y=y_edges,
+                                        colorscale='Hot',
+                                        opacity=0.6,
+                                        showscale=True
+                                    )],
+                                    name=str(idx)
+                                )
+                                for idx, frame in enumerate(frames)
+                            ]
+                            
+                            fig.frames = plot_frames
+                            
+                            # Add play button
+                            fig.update_layout(
+                                updatemenus=[{
+                                    'type': 'buttons',
+                                    'showactive': False,
+                                    'buttons': [
+                                        {
+                                            'label': '▶ Play',
+                                            'method': 'animate',
+                                            'args': [None, {
+                                                'frame': {'duration': 200, 'redraw': True},
+                                                'fromcurrent': True,
+                                                'mode': 'immediate'
+                                            }]
+                                        },
+                                        {
+                                            'label': '⏸ Pause',
+                                            'method': 'animate',
+                                            'args': [[None], {
+                                                'frame': {'duration': 0, 'redraw': False},
+                                                'mode': 'immediate'
+                                            }]
+                                        }
+                                    ],
+                                    'x': 0.1,
+                                    'y': 1.15
+                                }],
+                                sliders=[{
+                                    'steps': [
+                                        {
+                                            'args': [[f.name], {
+                                                'frame': {'duration': 0, 'redraw': True},
+                                                'mode': 'immediate'
+                                            }],
+                                            'label': f'Frame {i}',
+                                            'method': 'animate'
+                                        }
+                                        for i, f in enumerate(plot_frames)
+                                    ],
+                                    'x': 0.1,
+                                    'len': 0.85,
+                                    'y': 0
+                                }]
+                            )
+                            
+                            render_interactive_chart(fig, "Animated density heat map")
+                            
+                            # Static aggregate heatmap
+                            st.subheader("Aggregate Heat Map")
+                            aggregate_heatmap, _, _ = np.histogram2d(
+                                filtered_df['x'],
+                                filtered_df['y'],
+                                bins=[x_edges, y_edges]
+                            )
+                            
+                            fig_static = create_pitch_figure(court_type)
+                            fig_static.add_trace(go.Heatmap(
+                                z=aggregate_heatmap.T,
+                                x=x_edges,
+                                y=y_edges,
+                                colorscale='Hot',
+                                opacity=0.6,
+                                showscale=True,
+                                hovertemplate='x: %{x:.1f}<br>y: %{y:.1f}<br>density: %{z}<extra></extra>'
+                            ))
+                            
+                            render_interactive_chart(fig_static, "Overall density across entire time period")
+            
+        elif selected_clustering_method == "PDP":
+            st.subheader("📐 PDP (Pairwise Distance Profile)")
+            st.info("This method analyzes pairwise distances between trajectories over time.")
+            
+            if st.button("Calculate PDP", key="run_pdp"):
+                with st.spinner("Calculating pairwise distance profiles..."):
+                    # Get trajectories with time information
+                    trajectories = []
+                    traj_ids = []
+                    
+                    for config in selected_configs:
+                        for obj_id in selected_objects:
+                            obj_data = df[(df['obj'] == obj_id) & 
+                                        (df['config_source'] == config) &
+                                        (df['tst'] >= start_time) & 
+                                        (df['tst'] <= end_time)].sort_values('tst')
+                            
+                            if len(obj_data) >= 2:
+                                trajectories.append(obj_data[['tst', 'x', 'y']].values)
+                                traj_ids.append(f"{config}-Obj{obj_id}")
+                    
+                    if len(trajectories) < 2:
+                        st.error("Need at least 2 trajectories for PDP analysis.")
+                    else:
+                        # Find common time steps
+                        all_times = sorted(set().union(*[set(traj[:, 0]) for traj in trajectories]))
+                        
+                        # Calculate pairwise distances at each time step
+                        n_trajs = len(trajectories)
+                        pdp_data = {f"{traj_ids[i]} - {traj_ids[j]}": [] 
+                                   for i in range(n_trajs) for j in range(i+1, n_trajs)}
+                        
+                        for t in all_times:
+                            positions = {}
+                            for idx, traj in enumerate(trajectories):
+                                # Find position at time t (or closest)
+                                time_diffs = np.abs(traj[:, 0] - t)
+                                closest_idx = np.argmin(time_diffs)
+                                if time_diffs[closest_idx] < 5:  # Within 5 time units
+                                    positions[idx] = traj[closest_idx, 1:3]
+                            
+                            # Calculate pairwise distances
+                            for i in range(n_trajs):
+                                for j in range(i+1, n_trajs):
+                                    if i in positions and j in positions:
+                                        dist = euclidean(positions[i], positions[j])
+                                        pdp_data[f"{traj_ids[i]} - {traj_ids[j]}"].append((t, dist))
+                        
+                        # Plot PDP
+                        st.subheader("Pairwise Distance Profile")
+                        fig = go.Figure()
+                        
+                        for pair_name, distances in pdp_data.items():
+                            if distances:
+                                times, dists = zip(*distances)
+                                fig.add_trace(go.Scatter(
+                                    x=times,
+                                    y=dists,
+                                    mode='lines',
+                                    name=pair_name
+                                ))
+                        
+                        fig.update_layout(
+                            title="Distance Between Trajectory Pairs Over Time",
+                            xaxis_title="Time",
+                            yaxis_title="Distance (meters)",
+                            height=600
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Statistics
+                        st.subheader("Distance Statistics")
+                        stats_data = []
+                        for pair_name, distances in pdp_data.items():
+                            if distances:
+                                dists = [d[1] for d in distances]
+                                stats_data.append({
+                                    'Pair': pair_name,
+                                    'Mean Distance': np.mean(dists),
+                                    'Min Distance': np.min(dists),
+                                    'Max Distance': np.max(dists),
+                                    'Std Dev': np.std(dists)
+                                })
+                        
+                        if stats_data:
+                            st.dataframe(pd.DataFrame(stats_data).round(2))
+            
+        elif selected_clustering_method == "QTC":
+            st.subheader("🔢 QTC (Qualitative Trajectory Calculus)")
+            st.info("This method uses qualitative representations to characterize trajectory relationships.")
+            
+            if len(selected_objects) < 2:
+                st.warning("QTC requires at least 2 objects. Please select more objects.")
+            else:
+                if st.button("Calculate QTC", key="run_qtc"):
+                    with st.spinner("Calculating qualitative trajectory calculus..."):
+                        # Get first two trajectories for demonstration
+                        traj_data = []
+                        traj_ids = []
+                        
+                        for config in selected_configs[:1]:  # Use first config
+                            for obj_id in selected_objects[:2]:  # Use first two objects
+                                obj_data = df[(df['obj'] == obj_id) & 
+                                            (df['config_source'] == config) &
+                                            (df['tst'] >= start_time) & 
+                                            (df['tst'] <= end_time)].sort_values('tst')
+                                
+                                if len(obj_data) >= 2:
+                                    traj_data.append(obj_data[['tst', 'x', 'y']].values)
+                                    traj_ids.append(f"{config}-Obj{obj_id}")
+                        
+                        if len(traj_data) < 2:
+                            st.error("Need at least 2 valid trajectories.")
+                        else:
+                            st.info(f"Analyzing QTC between {traj_ids[0]} and {traj_ids[1]}")
+                            
+                            # Find common time steps
+                            times1 = set(traj_data[0][:, 0])
+                            times2 = set(traj_data[1][:, 0])
+                            common_times = sorted(times1 & times2)
+                            
+                            if len(common_times) < 2:
+                                st.error("Trajectories don't overlap in time.")
+                            else:
+                                # Calculate QTC values
+                                qtc_values = []
+                                
+                                for i in range(len(common_times) - 1):
+                                    t1 = common_times[i]
+                                    t2 = common_times[i + 1]
+                                    
+                                    # Get positions at both times
+                                    idx1_t1 = np.where(traj_data[0][:, 0] == t1)[0][0]
+                                    idx1_t2 = np.where(traj_data[0][:, 0] == t2)[0][0]
+                                    idx2_t1 = np.where(traj_data[1][:, 0] == t1)[0][0]
+                                    idx2_t2 = np.where(traj_data[1][:, 0] == t2)[0][0]
+                                    
+                                    pos1_t1 = traj_data[0][idx1_t1, 1:3]
+                                    pos1_t2 = traj_data[0][idx1_t2, 1:3]
+                                    pos2_t1 = traj_data[1][idx2_t1, 1:3]
+                                    pos2_t2 = traj_data[1][idx2_t2, 1:3]
+                                    
+                                    # Calculate distance at both times
+                                    dist_t1 = euclidean(pos1_t1, pos2_t1)
+                                    dist_t2 = euclidean(pos1_t2, pos2_t2)
+                                    
+                                    # QTC Basic: are objects getting closer (-), staying same (0), or moving apart (+)
+                                    threshold = 0.5  # meters
+                                    if dist_t2 < dist_t1 - threshold:
+                                        qtc = "-"  # Getting closer
+                                    elif dist_t2 > dist_t1 + threshold:
+                                        qtc = "+"  # Moving apart
+                                    else:
+                                        qtc = "0"  # Stable distance
+                                    
+                                    qtc_values.append({
+                                        'time': t1,
+                                        'distance_t1': dist_t1,
+                                        'distance_t2': dist_t2,
+                                        'qtc': qtc
+                                    })
+                                
+                                # Display QTC sequence
+                                st.subheader("QTC Sequence")
+                                qtc_sequence = ''.join([v['qtc'] for v in qtc_values])
+                                st.code(qtc_sequence)
+                                
+                                st.write("**Legend:**")
+                                st.write("- `-`: Objects getting closer")
+                                st.write("- `0`: Distance stable")
+                                st.write("- `+`: Objects moving apart")
+                                
+                                # Plot distance over time
+                                st.subheader("Distance Over Time")
+                                fig = go.Figure()
+                                
+                                times = [v['time'] for v in qtc_values]
+                                dists = [v['distance_t1'] for v in qtc_values]
+                                qtcs = [v['qtc'] for v in qtc_values]
+                                
+                                # Color points by QTC value
+                                colors = ['red' if q == '-' else 'gray' if q == '0' else 'blue' 
+                                         for q in qtcs]
+                                
+                                fig.add_trace(go.Scatter(
+                                    x=times,
+                                    y=dists,
+                                    mode='lines+markers',
+                                    marker=dict(color=colors, size=8),
+                                    line=dict(color='lightgray'),
+                                    name='Distance',
+                                    hovertemplate='Time: %{x}<br>Distance: %{y:.2f}m<extra></extra>'
+                                ))
+                                
+                                fig.update_layout(
+                                    title=f"Distance between {traj_ids[0]} and {traj_ids[1]}",
+                                    xaxis_title="Time",
+                                    yaxis_title="Distance (meters)",
+                                    height=500
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # QTC statistics
+                                st.subheader("QTC Statistics")
+                                qtc_counts = pd.Series(qtcs).value_counts()
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Getting Closer", qtc_counts.get('-', 0))
+                                with col2:
+                                    st.metric("Stable", qtc_counts.get('0', 0))
+                                with col3:
+                                    st.metric("Moving Apart", qtc_counts.get('+', 0))
+                                
+                                # Visualize trajectories
+                                st.subheader("Trajectory Visualization")
+                                fig_traj = create_pitch_figure(court_type)
+                                
+                                for idx, traj_id in enumerate(traj_ids[:2]):
+                                    config, obj_part = traj_id.split('-Obj')
+                                    obj_id = int(float(obj_part))
+                                    
+                                    obj_data = df[(df['obj'] == obj_id) & 
+                                                (df['config_source'] == config) &
+                                                (df['tst'] >= start_time) & 
+                                                (df['tst'] <= end_time)].sort_values('tst')
+                                    
+                                    color = ['blue', 'red'][idx]
+                                    fig_traj.add_trace(go.Scatter(
+                                        x=obj_data['x'],
+                                        y=obj_data['y'],
+                                        mode='lines+markers',
+                                        name=traj_id,
+                                        line=dict(color=color, width=2),
+                                        marker=dict(size=4, color=color)
+                                    ))
+                                
+                                render_interactive_chart(fig_traj, "Trajectories analyzed with QTC")
+    
     else:
         # Get unique configurations and objects
         config_sources = df['config_source'].drop_duplicates().tolist()
@@ -1060,14 +2688,18 @@ def main():
                 "Start time",
                 min_value=min_time,
                 max_value=max_time,
-                value=min_time
+                value=min_time,
+                step=0.01,
+                format="%.2f"
             )
             
             end_time = st.number_input(
                 "End time",
                 min_value=start_time,
                 max_value=max_time,
-                value=max_time
+                value=max_time,
+                step=0.01,
+                format="%.2f"
             )
         
         # Method-specific controls
