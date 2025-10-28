@@ -1924,7 +1924,336 @@ def main():
         return
     
     # Analysis-specific interface
-    if analysis_method == "Heat Maps":
+    if analysis_method == "Visual Exploration (IMO)":
+        st.header("👁️ Visual Exploration")
+        
+        st.info("""
+        **Explore your trajectory data visually with interactive plots:**
+        - **Static Trajectories:** View complete trajectory paths
+        - **Animated Trajectories:** Watch movement over time
+        - **Time Point View:** Examine trajectories at specific moments
+        - **Average Positions:** Calculate and visualize mean positions
+        """)
+        
+        # Get available configurations and objects
+        config_sources = df['config_source'].drop_duplicates().tolist()
+        objects = sorted(df['obj'].unique())
+        
+        # Time range
+        min_time = df['tst'].min()
+        max_time = df['tst'].max()
+        
+        st.markdown("---")
+        st.subheader("📊 Visualization Settings")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_configs = st.multiselect(
+                "Select configuration(s)",
+                config_sources,
+                default=config_sources[:min(3, len(config_sources))],
+                key="visual_configs"
+            )
+        
+        with col2:
+            selected_objects = st.multiselect(
+                "Select object(s)",
+                objects,
+                default=objects[:min(5, len(objects))],
+                key="visual_objects"
+            )
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            start_time = st.number_input(
+                "Start time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(min_time),
+                key="visual_start"
+            )
+        
+        with col4:
+            end_time = st.number_input(
+                "End time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(max_time),
+                key="visual_end"
+            )
+        
+        # Aggregation settings
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            aggregation_type = st.selectbox(
+                "Aggregation type",
+                ["none", "mean", "median"],
+                key="visual_agg_type"
+            )
+        
+        with col6:
+            temporal_resolution = st.number_input(
+                "Temporal resolution (s)",
+                min_value=0.1,
+                value=1.0,
+                step=0.1,
+                key="visual_temp_res"
+            )
+        
+        if not selected_configs or not selected_objects:
+            st.warning("⚠️ Please select at least one configuration and one object.")
+        else:
+            st.markdown("---")
+            st.subheader("📈 Visualization Types")
+            
+            # Create tabs for different visualization types
+            viz_tabs = st.tabs(["Static Trajectories", "Animated Trajectories", "Time Point View", "Average Positions"])
+            
+            with viz_tabs[0]:
+                st.markdown("### Static Trajectory View")
+                st.info("Shows complete trajectory paths for selected objects and configurations.")
+                
+                translate_to_center = st.checkbox(
+                    "Translate to center",
+                    value=False,
+                    key="visual_translate"
+                )
+                
+                try:
+                    fig = visualize_static(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        aggregation_type, temporal_resolution,
+                        translate_to_center, court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating static visualization: {str(e)}")
+            
+            with viz_tabs[1]:
+                st.markdown("### Animated Trajectory View")
+                st.info("Watch trajectories evolve over time with smooth animation.")
+                
+                try:
+                    fig = visualize_animated(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        aggregation_type, temporal_resolution,
+                        court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating animated visualization: {str(e)}")
+            
+            with viz_tabs[2]:
+                st.markdown("### Time Point View")
+                st.info("Examine trajectories up to a specific point in time.")
+                
+                current_time = st.slider(
+                    "Select time point",
+                    min_value=float(start_time),
+                    max_value=float(end_time),
+                    value=float((start_time + end_time) / 2),
+                    key="visual_current_time"
+                )
+                
+                try:
+                    fig = visualize_at_time(
+                        df, selected_configs, selected_objects,
+                        current_time, start_time,
+                        aggregation_type, temporal_resolution,
+                        court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating time point visualization: {str(e)}")
+            
+            with viz_tabs[3]:
+                st.markdown("### Average Position View")
+                st.info("Calculate and visualize the mean position for each object across the selected time range.")
+                
+                try:
+                    fig = visualize_average_position(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating average position visualization: {str(e)}")
+    
+    elif analysis_method == "2SA Method":
+        st.header("📐 2SA Method - Two-Step Spatial Alignment")
+        
+        st.info("""
+        **2SA (Two-Step Spatial Alignment) Method:**
+        
+        This method aligns trajectories to a common reference point, allowing you to compare 
+        movement patterns independently of their absolute spatial location.
+        
+        **Key Feature:** Trajectories are translated so they all start at the center of the court,
+        making it easier to identify similar movement patterns.
+        
+        **Use Cases:**
+        - Compare player movements from different starting positions
+        - Identify common tactical patterns
+        - Analyze relative movement independent of field position
+        """)
+        
+        # Get available configurations and objects
+        config_sources = df['config_source'].drop_duplicates().tolist()
+        objects = sorted(df['obj'].unique())
+        
+        # Time range
+        min_time = df['tst'].min()
+        max_time = df['tst'].max()
+        
+        st.markdown("---")
+        st.subheader("📊 Settings")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_configs = st.multiselect(
+                "Select configuration(s)",
+                config_sources,
+                default=config_sources[:min(3, len(config_sources))],
+                key="2sa_configs"
+            )
+        
+        with col2:
+            selected_objects = st.multiselect(
+                "Select object(s)",
+                objects,
+                default=objects[:min(5, len(objects))],
+                key="2sa_objects"
+            )
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            start_time = st.number_input(
+                "Start time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(min_time),
+                key="2sa_start"
+            )
+        
+        with col4:
+            end_time = st.number_input(
+                "End time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(max_time),
+                key="2sa_end"
+            )
+        
+        # Aggregation settings
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            aggregation_type = st.selectbox(
+                "Aggregation type",
+                ["none", "mean", "median"],
+                key="2sa_agg_type"
+            )
+        
+        with col6:
+            temporal_resolution = st.number_input(
+                "Temporal resolution (s)",
+                min_value=0.1,
+                value=1.0,
+                step=0.1,
+                key="2sa_temp_res"
+            )
+        
+        if not selected_configs or not selected_objects:
+            st.warning("⚠️ Please select at least one configuration and one object.")
+        else:
+            st.markdown("---")
+            st.subheader("📈 Aligned Trajectories")
+            
+            # Create comparison tabs
+            alignment_tabs = st.tabs(["Aligned View", "Original View", "Side-by-Side Comparison"])
+            
+            with alignment_tabs[0]:
+                st.markdown("### Center-Aligned Trajectories")
+                st.info("All trajectories translated to start at the court center. This view highlights movement patterns.")
+                
+                try:
+                    fig = visualize_static(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        aggregation_type, temporal_resolution,
+                        translate_to_center=True,  # 2SA mode ON
+                        court_type=court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating aligned visualization: {str(e)}")
+            
+            with alignment_tabs[1]:
+                st.markdown("### Original Trajectories")
+                st.info("Trajectories shown in their actual spatial positions.")
+                
+                try:
+                    fig = visualize_static(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        aggregation_type, temporal_resolution,
+                        translate_to_center=False,  # 2SA mode OFF
+                        court_type=court_type
+                    )
+                    render_interactive_chart(fig)
+                except Exception as e:
+                    st.error(f"Error creating original visualization: {str(e)}")
+            
+            with alignment_tabs[2]:
+                st.markdown("### Side-by-Side Comparison")
+                st.info("Compare aligned vs. original trajectories.")
+                
+                col_left, col_right = st.columns(2)
+                
+                with col_left:
+                    st.markdown("**Center-Aligned**")
+                    try:
+                        fig_aligned = visualize_static(
+                            df, selected_configs, selected_objects,
+                            start_time, end_time,
+                            aggregation_type, temporal_resolution,
+                            translate_to_center=True,
+                            court_type=court_type
+                        )
+                        # Make figure smaller for side-by-side
+                        fig_aligned.update_layout(height=400)
+                        render_interactive_chart(fig_aligned)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                
+                with col_right:
+                    st.markdown("**Original Position**")
+                    try:
+                        fig_original = visualize_static(
+                            df, selected_configs, selected_objects,
+                            start_time, end_time,
+                            aggregation_type, temporal_resolution,
+                            translate_to_center=False,
+                            court_type=court_type
+                        )
+                        # Make figure smaller for side-by-side
+                        fig_original.update_layout(height=400)
+                        render_interactive_chart(fig_original)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+            
+            st.markdown("---")
+            st.success("✅ 2SA analysis complete! Use the tabs above to compare aligned and original trajectories.")
+    
+    elif analysis_method == "Heat Maps":
         st.header("🔥 Heat Maps")
         try:
             heatmap_df = None
