@@ -2680,7 +2680,7 @@ def main():
             
             with col2:
                     # Auto-detect optimal clusters button
-                    if st.button("� Auto-detect Optimal Clusters", help="Use elbow method to find optimal number of clusters"):
+                    if st.button("� Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters. You will need to manually adjust the slider to use the recommended value."):
                         with st.spinner("Detecting optimal number of clusters..."):
                             optimal_k = detect_optimal_clusters(st.session_state.distance_matrix)
                             if optimal_k is not None:
