@@ -361,8 +361,9 @@ def format_features_dataframe(features_df):
     formatted_df = features_df.copy()
     formatted_df = formatted_df.rename(columns=column_units)
     
-    # Round all values to 2 decimal places
-    formatted_df = formatted_df.round(2)
+    # Format all values to exactly 2 decimal places
+    for col in formatted_df.columns:
+        formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}")
     
     return formatted_df
 
@@ -2430,25 +2431,13 @@ def main():
             if 'feature_selection_default' not in st.session_state:
                 st.session_state.feature_selection_default = all_features
             
-            col1, col2 = st.columns([3, 1])
-            with col2:
-                st.markdown("")
-                st.markdown("")
-                if st.button("Select All", key="select_all_features"):
-                    st.session_state.feature_selection_default = all_features
-                    st.rerun()
-                if st.button("Clear All", key="clear_all_features"):
-                    st.session_state.feature_selection_default = []
-                    st.rerun()
-            
-            with col1:
-                selected_features = st.multiselect(
-                    "Choose which features to include in the distance calculation:",
-                    options=all_features,
-                    default=st.session_state.feature_selection_default,
-                    format_func=lambda x: feature_labels[x],
-                    key="selected_features"
-                )
+            selected_features = st.multiselect(
+                "Choose which features to include in the distance calculation:",
+                options=all_features,
+                default=st.session_state.feature_selection_default,
+                format_func=lambda x: feature_labels[x],
+                key="selected_features"
+            )
             
             if not selected_features:
                 st.warning("⚠️ Please select at least one feature to proceed.")
