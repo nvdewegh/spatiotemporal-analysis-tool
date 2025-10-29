@@ -332,6 +332,41 @@ def load_data(uploaded_file, update_state=True, show_success=True):
 # CLUSTERING INFRASTRUCTURE FUNCTIONS
 # ============================================================================
 
+def format_features_dataframe(features_df):
+    """
+    Format features dataframe with units in column names and 2 decimal places.
+    
+    Parameters:
+    -----------
+    features_df : pd.DataFrame
+        Features dataframe with original column names
+    
+    Returns:
+    --------
+    pd.DataFrame : Formatted dataframe with units and rounded values
+    """
+    # Define column name mapping with units
+    column_units = {
+        'total_distance': 'Total Distance (m)',
+        'duration': 'Duration (s)',
+        'avg_speed': 'Avg Speed (m/s)',
+        'net_displacement': 'Net Displacement (m)',
+        'sinuosity': 'Sinuosity (ratio)',
+        'bbox_area': 'Bbox Area (m²)',
+        'avg_direction': 'Avg Direction (rad)',
+        'max_speed': 'Max Speed (m/s)'
+    }
+    
+    # Create a copy and rename columns
+    formatted_df = features_df.copy()
+    formatted_df = formatted_df.rename(columns=column_units)
+    
+    # Round all values to 2 decimal places
+    formatted_df = formatted_df.round(2)
+    
+    return formatted_df
+
+
 def extract_trajectory_features(traj_df):
     """
     Extract 8 statistical features from a single trajectory.
@@ -2441,7 +2476,8 @@ def main():
             # Show features if computed
             if st.session_state.features_df is not None:
                 with st.expander("📋 Extracted Features"):
-                    st.dataframe(st.session_state.features_df, use_container_width=True)
+                    formatted_df = format_features_dataframe(st.session_state.features_df)
+                    st.dataframe(formatted_df)
         
         elif clustering_method == "Spatial (Chamfer)":
             st.subheader("📍 Spatial Clustering (Chamfer Distance)")
