@@ -2691,9 +2691,6 @@ def main():
                                 st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
                                 
                                 # Display elbow plot
-                                import plotly.graph_objects as go
-                                from plotly.subplots import make_subplots
-                                
                                 fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
                                 
                                 fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["inertias"], mode="lines+markers",
@@ -2803,6 +2800,15 @@ def main():
                             mds = MDS(n_components=mds_dims, dissimilarity='precomputed', random_state=42)
                             mds_coords = mds.fit_transform(st.session_state.distance_matrix)
                             
+                            # Calculate normalized stress (Kruskal's Stress-1)
+                            # This gives values between 0 and 1 (or 0-100%)
+                            from scipy.spatial.distance import pdist, squareform
+                            mds_distances = squareform(pdist(mds_coords))
+                            original_distances = st.session_state.distance_matrix
+                            
+                            # Kruskal's Stress-1 formula: sqrt(sum((d_orig - d_mds)^2) / sum(d_orig^2))
+                            stress_normalized = np.sqrt(np.sum((original_distances - mds_distances) ** 2) / np.sum(original_distances ** 2))
+                            
                             # Create color palette for clusters
                             import plotly.express as px
                             colors = px.colors.qualitative.Plotly[:n_clusters]
@@ -2878,7 +2884,7 @@ def main():
                             
                             st.plotly_chart(fig_mds, use_container_width=True)
                             st.success(f"✅ {mds_dims}D MDS projection computed successfully!")
-                            st.info(f"**Stress value**: {mds.stress_:.4f} (lower is better, <0.1 is excellent)")
+                            st.info(f"**Normalized Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
             
             # ===========================
             # TAB 2: SIMILARITY SEARCH
@@ -3489,8 +3495,6 @@ def main():
                                     
                                 else:  # Side-by-side
                                     # Create subplots with tennis courts
-                                    from plotly.subplots import make_subplots
-                                    
                                     n_selected = len(selected_clusters)
                                     cols = min(2, n_selected)
                                     rows = (n_selected + cols - 1) // cols
