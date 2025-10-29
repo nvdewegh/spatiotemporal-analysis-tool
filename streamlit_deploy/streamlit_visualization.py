@@ -686,7 +686,7 @@ def dtw_distance(traj_A, traj_B):
     return dtw_matrix[n, m]
 
 
-def detect_optimal_clusters(distance_matrix, max_clusters=10):
+def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=False):
     """
     Auto-detect optimal number of clusters using elbow method with silhouette validation.
     
@@ -696,10 +696,13 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10):
         Precomputed distance matrix
     max_clusters : int
         Maximum number of clusters to try
+    return_plot_data : bool
+        If True, also return data for plotting the elbow curve
     
     Returns:
     --------
     int : Optimal number of clusters
+    dict : (optional) Plot data if return_plot_data=True
     """
     n_samples = len(distance_matrix)
     
@@ -777,6 +780,15 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10):
     
     # Ensure reasonable range
     optimal_k = max(2, min(optimal_k, max_k))
+    
+    if return_plot_data:
+        k_values = list(range(2, max_k + 1))
+        return optimal_k, {
+            'k_values': k_values,
+            'inertias': inertias,
+            'silhouette_scores': silhouette_scores_list,
+            'optimal_k': optimal_k
+        }
     
     return optimal_k
 
@@ -2674,9 +2686,32 @@ def main():
                     # Auto-detect optimal clusters button
                     if st.button("� Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters."):
                         with st.spinner("Detecting optimal number of clusters..."):
-                            optimal_k = detect_optimal_clusters(st.session_state.distance_matrix)
+                            optimal_k, plot_data = detect_optimal_clusters(st.session_state.distance_matrix, return_plot_data=True)
                             if optimal_k is not None:
                                 st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
+                                
+                                # Display elbow plot
+                                import plotly.graph_objects as go
+                                from plotly.subplots import make_subplots
+                                
+                                fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+                                
+                                fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["inertias"], mode="lines+markers",
+                                    name="Inertia", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
+                                
+                                fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["silhouette_scores"],
+                                    mode="lines+markers", name="Silhouette Score", line=dict(color="green", width=2),
+                                    marker=dict(size=8)), secondary_y=True)
+                                
+                                fig.add_vline(x=optimal_k, line=dict(color="red", width=2, dash="dash"),
+                                    annotation_text=f"Optimal k={optimal_k}", annotation_position="top")
+                                
+                                fig.update_xaxes(title_text="Number of Clusters (k)")
+                                fig.update_yaxes(title_text="Inertia", secondary_y=False)
+                                fig.update_yaxes(title_text="Silhouette Score", secondary_y=True)
+                                fig.update_layout(title="Elbow Plot", hovermode="x unified", height=400)
+                                
+                                st.plotly_chart(fig, use_container_width=True)
                             else:
                                 st.warning("Could not automatically detect optimal clusters. Please select manually.")
                 
