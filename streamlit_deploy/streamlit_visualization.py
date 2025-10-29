@@ -2391,25 +2391,29 @@ def main():
                 'max_speed': '⚡ Maximum Speed'
             }
             
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                selected_features = st.multiselect(
-                    "Choose which features to include in the distance calculation:",
-                    options=all_features,
-                    default=all_features,  # All selected by default
-                    format_func=lambda x: feature_labels[x],
-                    key="selected_features"
-                )
+            # Initialize default selection in session state if not exists
+            if 'feature_selection_default' not in st.session_state:
+                st.session_state.feature_selection_default = all_features
             
+            col1, col2 = st.columns([3, 1])
             with col2:
                 st.markdown("")
                 st.markdown("")
                 if st.button("Select All", key="select_all_features"):
-                    st.session_state.selected_features = all_features
+                    st.session_state.feature_selection_default = all_features
                     st.rerun()
                 if st.button("Clear All", key="clear_all_features"):
-                    st.session_state.selected_features = []
+                    st.session_state.feature_selection_default = []
                     st.rerun()
+            
+            with col1:
+                selected_features = st.multiselect(
+                    "Choose which features to include in the distance calculation:",
+                    options=all_features,
+                    default=st.session_state.feature_selection_default,
+                    format_func=lambda x: feature_labels[x],
+                    key="selected_features"
+                )
             
             if not selected_features:
                 st.warning("⚠️ Please select at least one feature to proceed.")
