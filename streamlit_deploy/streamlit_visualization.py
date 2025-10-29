@@ -3078,7 +3078,8 @@ def main():
                         # Create color palette
                         colors = px.colors.qualitative.Plotly[:n_clusters]
                         
-                        fig_2d = go.Figure()
+                        # Start with tennis court
+                        fig_2d = create_tennis_court()
                         
                         # Plot each cluster
                         for cluster_id in range(1, n_clusters + 1):
@@ -3089,22 +3090,44 @@ def main():
                                 # Get trajectory data
                                 traj_data = trajectories_dict[tid]
                                 
+                                # Add trajectory line and markers
                                 fig_2d.add_trace(go.Scatter(
                                     x=traj_data[:, 0],  # X coordinates
                                     y=traj_data[:, 1],  # Y coordinates
                                     mode='lines+markers',
                                     name=f"T{tid} (C{cluster_id})",
                                     line=dict(color=colors[cluster_id - 1], width=2),
-                                    marker=dict(size=4, color=colors[cluster_id - 1]),
+                                    marker=dict(
+                                        size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
+                                        color=colors[cluster_id - 1]
+                                    ),
                                     legendgroup=f"cluster_{cluster_id}",
                                     hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                                 ))
+                                
+                                # Add arrow at the end
+                                if len(traj_data) >= 2:
+                                    dx = traj_data[-1, 0] - traj_data[-2, 0]
+                                    dy = traj_data[-1, 1] - traj_data[-2, 1]
+                                    angle = np.degrees(np.arctan2(dx, dy))
+                                    
+                                    fig_2d.add_trace(go.Scatter(
+                                        x=[traj_data[-1, 0]],
+                                        y=[traj_data[-1, 1]],
+                                        mode='markers',
+                                        marker=dict(
+                                            symbol='arrow',
+                                            color=colors[cluster_id - 1],
+                                            size=15,
+                                            angle=angle
+                                        ),
+                                        showlegend=False,
+                                        hoverinfo='skip'
+                                    ))
                         
                         fig_2d.update_layout(
                             title=f"2D Trajectory Clusters (n={n_clusters})",
-                            xaxis_title="X Coordinate",
-                            yaxis_title="Y Coordinate",
-                            height=700,
+                            height=900,
                             hovermode='closest',
                             showlegend=True,
                             legend=dict(
@@ -3113,10 +3136,11 @@ def main():
                                 y=0.99,
                                 xanchor="left",
                                 x=1.01
-                            )
+                            ),
+                            uirevision='constant'
                         )
                         
-                        st.plotly_chart(fig_2d, use_container_width=True)
+                        render_interactive_chart(fig_2d)
                         
                         # Cluster statistics
                         st.markdown("**Cluster Distribution:**")
@@ -3142,31 +3166,91 @@ def main():
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
                     st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
                 else:
-                    col1, col2 = st.columns([2, 1])
-                    with col1:
-                        show_projections = st.checkbox(
-                            "Show 2D projections",
-                            value=False,
-                            help="Display projections on XY, XZ, and YZ planes"
-                        )
+                    if st.button("🌐 Regenerate 3D Plot", key="btn_3d_cluster"):
+                        # Clear the cached plot to force regeneration
+                        if 'fig_3d_cluster' in st.session_state:
+                            del st.session_state.fig_3d_cluster
                     
-                    with col2:
-                        if st.button("🌐 Generate 3D Plot", key="btn_3d_cluster"):
-                            with st.spinner("Generating 3D spatiotemporal visualization..."):
-                                import plotly.express as px
-                                
-                                # Create trajectory dictionary mapping
-                                trajectories_dict = {tid: traj for tid, traj in zip(st.session_state.trajectory_ids, st.session_state.trajectories)}
-                                
-                                colors = px.colors.qualitative.Plotly[:n_clusters]
-                                
-                                fig_3d = go.Figure()
-                                
-                                # Plot each cluster in 3D
-                                for cluster_id in range(1, n_clusters + 1):
-                                    mask = cluster_labels == cluster_id
-                                    cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
-                                
+                    # Generate plot on first load or if regenerate button was clicked
+                    if 'fig_3d_cluster' not in st.session_state:
+                        with st.spinner("Generating 3D spatiotemporal visualization..."):
+                            import plotly.express as px
+                            
+                            # Create trajectory dictionary mapping
+                            trajectories_dict = {tid: traj for tid, traj in zip(st.session_state.trajectory_ids, st.session_state.trajectories)}
+                            
+                            colors = px.colors.qualitative.Plotly[:n_clusters]
+                            
+                            fig_3d = go.Figure()
+                            
+                            # Tennis court dimensions
+                            court_width = 8.23
+                            court_length = 23.77
+                            doubles_width = 10.97
+                            doubles_alley_width = (doubles_width - court_width) / 2
+                            
+                            # Add tennis court as a surface at z=0
+                            court_x = np.array([[-doubles_alley_width, court_width + doubles_alley_width],
+                                               [-doubles_alley_width, court_width + doubles_alley_width]])
+                            court_y = np.array([[0, 0],
+                                               [court_length, court_length]])
+                            court_z = np.array([[0, 0],
+                                               [0, 0]])
+                            
+                            fig_3d.add_trace(go.Surface(
+                                x=court_x,
+                                y=court_y,
+                                z=court_z,
+                                colorscale=[[0, '#2ECC71'], [1, '#2ECC71']],  # Tennis court green
+                                showscale=False,
+                                opacity=0.7,
+                                name='Tennis Court',
+                                hoverinfo='skip',
+                                showlegend=False
+                            ))
+                            
+                            # Add court lines as 3D lines at z=0
+                            def add_court_line_3d(x0, y0, x1, y1, color='white', width=2):
+                                fig_3d.add_trace(go.Scatter3d(
+                                    x=[x0, x1],
+                                    y=[y0, y1],
+                                    z=[0, 0],
+                                    mode='lines',
+                                    line=dict(color=color, width=width),
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
+                            
+                            # Court boundary (doubles)
+                            add_court_line_3d(-doubles_alley_width, 0, court_width + doubles_alley_width, 0, width=3)
+                            add_court_line_3d(-doubles_alley_width, court_length, court_width + doubles_alley_width, court_length, width=3)
+                            add_court_line_3d(-doubles_alley_width, 0, -doubles_alley_width, court_length, width=3)
+                            add_court_line_3d(court_width + doubles_alley_width, 0, court_width + doubles_alley_width, court_length, width=3)
+                            
+                            # Singles sidelines
+                            add_court_line_3d(0, 0, 0, court_length)
+                            add_court_line_3d(court_width, 0, court_width, court_length)
+                            
+                            # Net line
+                            net_position = court_length / 2
+                            add_court_line_3d(-doubles_alley_width, net_position, court_width + doubles_alley_width, net_position)
+                            
+                            # Service lines
+                            service_line_distance = 6.40
+                            service_line_bottom = net_position - service_line_distance
+                            service_line_top = net_position + service_line_distance
+                            add_court_line_3d(0, service_line_bottom, court_width, service_line_bottom)
+                            add_court_line_3d(0, service_line_top, court_width, service_line_top)
+                            
+                            # Center service line
+                            center_x = court_width / 2
+                            add_court_line_3d(center_x, service_line_bottom, center_x, service_line_top)
+                            
+                            # Plot each cluster in 3D
+                            for cluster_id in range(1, n_clusters + 1):
+                                mask = cluster_labels == cluster_id
+                                cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
+                            
                                 for tid in cluster_trajectory_ids:
                                     traj_data = trajectories_dict[tid]
                                     
@@ -3184,33 +3268,46 @@ def main():
                                         legendgroup=f"cluster_{cluster_id}",
                                         hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Time: %{{z}}<extra></extra>'
                                     ))
-                            
+                        
                             fig_3d.update_layout(
                                 title=f"3D Spatiotemporal Trajectory Clusters (n={n_clusters})",
                                 scene=dict(
-                                    xaxis_title="X Coordinate",
-                                    yaxis_title="Y Coordinate",
+                                    xaxis_title="X Coordinate (m)",
+                                    yaxis_title="Y Coordinate (m)",
                                     zaxis_title="Time Step",
                                     camera=dict(
-                                        eye=dict(x=1.5, y=1.5, z=1.3)
-                                    )
+                                        eye=dict(x=1.3, y=-1.3, z=1.0),
+                                        center=dict(x=0, y=0, z=0)
+                                    ),
+                                    xaxis=dict(
+                                        range=[-doubles_alley_width - 2, court_width + doubles_alley_width + 2]
+                                    ),
+                                    yaxis=dict(
+                                        range=[-3, court_length + 3]
+                                    ),
+                                    aspectmode='manual',
+                                    aspectratio=dict(x=1, y=2.5, z=1)
                                 ),
-                                height=800,
+                                height=900,
+                                margin=dict(l=0, r=0, t=50, b=50),
                                 hovermode='closest',
                                 showlegend=True,
                                 legend=dict(
                                     title="Trajectories",
                                     yanchor="top",
-                                    y=0.99,
+                                    y=1.0,
                                     xanchor="left",
-                                    x=0.01
+                                    x=0.85,
+                                    bgcolor="rgba(255, 255, 255, 0.9)"
                                 )
                             )
                             
-                            st.plotly_chart(fig_3d, use_container_width=True)
-                            st.success("✅ 3D visualization generated! Rotate and zoom to explore the spatiotemporal patterns.")
-            
-            # ===========================
+                        # Store in session state
+                        st.session_state.fig_3d_cluster = fig_3d
+                    
+                    # Display the plot (always, since it now auto-generates)
+                    render_interactive_chart(st.session_state.fig_3d_cluster)
+                    st.success("✅ 3D visualization generated! Rotate and zoom to explore the spatiotemporal patterns.")            # ===========================
             # TAB 3: CLUSTER COMPARISON
             # ===========================
             with viz_tab3:
@@ -3248,8 +3345,8 @@ def main():
                                 colors = px.colors.qualitative.Plotly[:n_clusters]
                                 
                                 if view_mode == "Overlay":
-                                    # Single plot with selected clusters
-                                    fig_compare = go.Figure()
+                                    # Single plot with selected clusters - start with tennis court
+                                    fig_compare = create_tennis_court()
                                     
                                     for cluster_id in selected_clusters:
                                         mask = cluster_labels == cluster_id
@@ -3258,30 +3355,53 @@ def main():
                                         for tid in cluster_trajectory_ids:
                                             traj_data = trajectories_dict[tid]
                                             
+                                            # Add trajectory line and markers
                                             fig_compare.add_trace(go.Scatter(
                                                 x=traj_data[:, 0],
                                                 y=traj_data[:, 1],
                                                 mode='lines+markers',
                                                 name=f"T{tid} (C{cluster_id})",
                                                 line=dict(color=colors[cluster_id - 1], width=2),
-                                                marker=dict(size=4, color=colors[cluster_id - 1]),
+                                                marker=dict(
+                                                    size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
+                                                    color=colors[cluster_id - 1]
+                                                ),
                                                 legendgroup=f"cluster_{cluster_id}",
                                                 hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                                             ))
+                                            
+                                            # Add arrow at the end
+                                            if len(traj_data) >= 2:
+                                                dx = traj_data[-1, 0] - traj_data[-2, 0]
+                                                dy = traj_data[-1, 1] - traj_data[-2, 1]
+                                                angle = np.degrees(np.arctan2(dx, dy))
+                                                
+                                                fig_compare.add_trace(go.Scatter(
+                                                    x=[traj_data[-1, 0]],
+                                                    y=[traj_data[-1, 1]],
+                                                    mode='markers',
+                                                    marker=dict(
+                                                        symbol='arrow',
+                                                        color=colors[cluster_id - 1],
+                                                        size=15,
+                                                        angle=angle
+                                                    ),
+                                                    showlegend=False,
+                                                    hoverinfo='skip'
+                                                ))
                                     
                                     fig_compare.update_layout(
                                         title=f"Cluster Comparison - Overlay View (Clusters: {selected_clusters})",
-                                        xaxis_title="X Coordinate",
-                                        yaxis_title="Y Coordinate",
-                                        height=600,
+                                        height=900,
                                         hovermode='closest',
-                                        showlegend=True
+                                        showlegend=True,
+                                        uirevision='constant'
                                     )
                                     
-                                    st.plotly_chart(fig_compare, use_container_width=True)
+                                    render_interactive_chart(fig_compare)
                                     
                                 else:  # Side-by-side
-                                    # Create subplots
+                                    # Create subplots with tennis courts
                                     from plotly.subplots import make_subplots
                                     
                                     n_selected = len(selected_clusters)
@@ -3293,20 +3413,86 @@ def main():
                                         cols=cols,
                                         subplot_titles=[f"Cluster {c} ({(cluster_labels == c).sum()} trajectories)" 
                                                        for c in selected_clusters],
-                                        vertical_spacing=0.15,
+                                        vertical_spacing=0.12,
                                         horizontal_spacing=0.1
                                     )
+                                    
+                                    # Tennis court dimensions
+                                    court_width = 8.23
+                                    court_length = 23.77
+                                    doubles_width = 10.97
+                                    doubles_alley_width = (doubles_width - court_width) / 2
+                                    service_line_distance = 6.40
+                                    net_position = court_length / 2
+                                    service_line_bottom = net_position - service_line_distance
+                                    service_line_top = net_position + service_line_distance
+                                    center_x = court_width / 2
                                     
                                     for idx, cluster_id in enumerate(selected_clusters):
                                         row = idx // cols + 1
                                         col = idx % cols + 1
                                         
+                                        # Add tennis court markings for this subplot
+                                        # Outer boundary (doubles court)
+                                        fig_compare.add_shape(
+                                            type="rect", 
+                                            x0=-doubles_alley_width, y0=0, 
+                                            x1=court_width + doubles_alley_width, y1=court_length,
+                                            line=dict(color="white", width=2),
+                                            row=row, col=col
+                                        )
+                                        
+                                        # Singles sidelines
+                                        fig_compare.add_shape(
+                                            type="line", x0=0, y0=0, x1=0, y1=court_length,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        fig_compare.add_shape(
+                                            type="line", x0=court_width, y0=0, x1=court_width, y1=court_length,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        
+                                        # Net
+                                        fig_compare.add_shape(
+                                            type="line", 
+                                            x0=-doubles_alley_width, y0=net_position, 
+                                            x1=court_width + doubles_alley_width, y1=net_position,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        
+                                        # Service lines
+                                        fig_compare.add_shape(
+                                            type="line", x0=0, y0=service_line_bottom, 
+                                            x1=court_width, y1=service_line_bottom,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        fig_compare.add_shape(
+                                            type="line", x0=0, y0=service_line_top, 
+                                            x1=court_width, y1=service_line_top,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        
+                                        # Center service line
+                                        fig_compare.add_shape(
+                                            type="line", x0=center_x, y0=service_line_bottom, 
+                                            x1=center_x, y1=service_line_top,
+                                            line=dict(color="white", width=1.5),
+                                            row=row, col=col
+                                        )
+                                        
+                                        # Add trajectories for this cluster
                                         mask = cluster_labels == cluster_id
                                         cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
                                         
                                         for tid in cluster_trajectory_ids:
                                             traj_data = trajectories_dict[tid]
                                             
+                                            # Add trajectory line and markers
                                             fig_compare.add_trace(
                                                 go.Scatter(
                                                     x=traj_data[:, 0],
@@ -3314,25 +3500,71 @@ def main():
                                                     mode='lines+markers',
                                                     name=f"T{tid}",
                                                     line=dict(color=colors[cluster_id - 1], width=2),
-                                                    marker=dict(size=4, color=colors[cluster_id - 1]),
+                                                    marker=dict(
+                                                        size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
+                                                        color=colors[cluster_id - 1]
+                                                    ),
                                                     showlegend=False,
                                                     hovertemplate=f'<b>Trajectory {tid}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                                                 ),
                                                 row=row,
                                                 col=col
                                             )
+                                            
+                                            # Add arrow at the end
+                                            if len(traj_data) >= 2:
+                                                dx = traj_data[-1, 0] - traj_data[-2, 0]
+                                                dy = traj_data[-1, 1] - traj_data[-2, 1]
+                                                angle = np.degrees(np.arctan2(dx, dy))
+                                                
+                                                fig_compare.add_trace(
+                                                    go.Scatter(
+                                                        x=[traj_data[-1, 0]],
+                                                        y=[traj_data[-1, 1]],
+                                                        mode='markers',
+                                                        marker=dict(
+                                                            symbol='arrow',
+                                                            color=colors[cluster_id - 1],
+                                                            size=12,
+                                                            angle=angle
+                                                        ),
+                                                        showlegend=False,
+                                                        hoverinfo='skip'
+                                                    ),
+                                                    row=row,
+                                                    col=col
+                                                )
                                         
-                                        # Update axes labels
-                                        fig_compare.update_xaxes(title_text="X Coordinate", row=row, col=col)
-                                        fig_compare.update_yaxes(title_text="Y Coordinate", row=row, col=col)
+                                        # Update axes for tennis court appearance
+                                        x_margin = 2.0
+                                        y_margin = 3.0
+                                        
+                                        fig_compare.update_xaxes(
+                                            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
+                                            showgrid=False,
+                                            zeroline=False,
+                                            title_text="Court Width (m)",
+                                            row=row, col=col
+                                        )
+                                        fig_compare.update_yaxes(
+                                            range=[-y_margin, court_length + y_margin],
+                                            showgrid=False,
+                                            zeroline=False,
+                                            title_text="Court Length (m)",
+                                            scaleanchor=f"x{col if row == 1 else (row-1)*cols + col}",
+                                            scaleratio=1,
+                                            row=row, col=col
+                                        )
                                     
                                     fig_compare.update_layout(
                                         title_text="Cluster Comparison - Side-by-side View",
-                                        height=400 * rows,
-                                        hovermode='closest'
+                                        height=900 * rows,
+                                        hovermode='closest',
+                                        plot_bgcolor='#25D366',  # Tennis court green
+                                        uirevision='constant'
                                     )
                                     
-                                    st.plotly_chart(fig_compare, use_container_width=True)
+                                    render_interactive_chart(fig_compare)
                                 
                                 # Cluster statistics
                                 st.markdown("---")
