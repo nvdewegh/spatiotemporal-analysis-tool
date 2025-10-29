@@ -2629,11 +2629,20 @@ def main():
                 n_trajectories = len(st.session_state.trajectory_ids)
                 max_clusters = min(20, n_trajectories - 1)
                 
+                # Use detected optimal k if available, otherwise use default
+                default_clusters = min(3, max_clusters)
+                if 'optimal_k_detected' in st.session_state:
+                    default_clusters = min(st.session_state.optimal_k_detected, max_clusters)
+                    # Show success message
+                    st.success(f"✅ Using detected optimal clusters: **{st.session_state.optimal_k_detected}**")
+                    # Clear the flag after using it
+                    del st.session_state.optimal_k_detected
+                
                 n_clusters = st.slider(
                     "Number of clusters",
                     min_value=2,
                     max_value=max_clusters,
-                    value=min(3, max_clusters),
+                    value=default_clusters,
                     help="Slide to select how many clusters to create",
                     key="n_clusters_slider"
                 )
@@ -2644,9 +2653,8 @@ def main():
                         with st.spinner("Detecting optimal number of clusters..."):
                             optimal_k = detect_optimal_clusters(st.session_state.distance_matrix)
                             if optimal_k is not None:
-                                st.success(f"✅ Optimal number of clusters detected: **{optimal_k}**")
-                                # Update the slider value in session state
-                                st.session_state.n_clusters_slider = optimal_k
+                                # Store the optimal k value and trigger rerun
+                                st.session_state.optimal_k_detected = optimal_k
                                 st.rerun()
                             else:
                                 st.warning("Could not automatically detect optimal clusters. Please select manually.")
