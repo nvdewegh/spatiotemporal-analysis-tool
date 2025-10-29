@@ -413,7 +413,7 @@ def extract_trajectory_features(traj_df):
 
 
 @st.cache_data
-def compute_feature_distance_matrix(df, selected_configs, selected_objects, start_time, end_time):
+def compute_feature_distance_matrix(df, selected_configs, selected_objects, start_time, end_time, selected_features=None):
     """
     Compute distance matrix based on trajectory features (Method 1).
     
@@ -429,6 +429,8 @@ def compute_feature_distance_matrix(df, selected_configs, selected_objects, star
         Start time filter
     end_time : float
         End time filter
+    selected_features : list, optional
+        List of feature names to use. If None, use all features.
     
     Returns:
     --------
@@ -456,6 +458,10 @@ def compute_feature_distance_matrix(df, selected_configs, selected_objects, star
     
     # Convert to DataFrame
     features_df = pd.DataFrame(features_list, index=trajectory_ids)
+    
+    # Select only specified features if provided
+    if selected_features is not None and len(selected_features) > 0:
+        features_df = features_df[selected_features]
     
     # Normalize features
     scaler = StandardScaler()
@@ -2361,12 +2367,61 @@ def main():
             st.subheader("🎯 Feature-Based Clustering")
             st.info("Cluster trajectories based on extracted features: distance, speed, duration, sinuosity, etc.")
             
+            # Feature selection
+            st.markdown("#### Select Features to Use")
+            all_features = [
+                'total_distance',
+                'duration',
+                'avg_speed',
+                'net_displacement',
+                'sinuosity',
+                'bbox_area',
+                'avg_direction',
+                'max_speed'
+            ]
+            
+            feature_labels = {
+                'total_distance': '📏 Total Distance',
+                'duration': '⏱️ Duration',
+                'avg_speed': '🏃 Average Speed',
+                'net_displacement': '📐 Net Displacement',
+                'sinuosity': '🌀 Sinuosity (Path Efficiency)',
+                'bbox_area': '📦 Bounding Box Area',
+                'avg_direction': '🧭 Average Direction',
+                'max_speed': '⚡ Maximum Speed'
+            }
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_features = st.multiselect(
+                    "Choose which features to include in the distance calculation:",
+                    options=all_features,
+                    default=all_features,  # All selected by default
+                    format_func=lambda x: feature_labels[x],
+                    key="selected_features"
+                )
+            
+            with col2:
+                st.markdown("")
+                st.markdown("")
+                if st.button("Select All", key="select_all_features"):
+                    st.session_state.selected_features = all_features
+                    st.rerun()
+                if st.button("Clear All", key="clear_all_features"):
+                    st.session_state.selected_features = []
+                    st.rerun()
+            
+            if not selected_features:
+                st.warning("⚠️ Please select at least one feature to proceed.")
+            else:
+                st.success(f"✅ {len(selected_features)} feature(s) selected")
+            
             # Compute distance matrix button
-            if st.button("🔄 Compute Feature Distance Matrix", key="compute_features"):
-                with st.spinner("Extracting features and computing distances..."):
+            if st.button("🔄 Compute Feature Distance Matrix", key="compute_features", disabled=not selected_features):
+                with st.spinner(f"Extracting {len(selected_features)} feature(s) and computing distances..."):
                     try:
                         distance_matrix, trajectory_ids, features_df = compute_feature_distance_matrix(
-                            df, selected_configs, selected_objects, start_time, end_time
+                            df, selected_configs, selected_objects, start_time, end_time, selected_features
                         )
                         
                         if distance_matrix is None:
@@ -2375,7 +2430,7 @@ def main():
                             st.session_state.distance_matrix = distance_matrix
                             st.session_state.trajectory_ids = trajectory_ids
                             st.session_state.features_df = features_df
-                            st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories!")
+                            st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories using {len(selected_features)} features!")
                     except Exception as e:
                         st.error(f"Error computing distances: {str(e)}")
             
