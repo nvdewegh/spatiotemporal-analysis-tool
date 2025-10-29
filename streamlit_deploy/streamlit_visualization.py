@@ -2686,8 +2686,6 @@ def main():
                             if optimal_k is not None:
                                 # Store the optimal k value and update the slider's session state value
                                 st.session_state.optimal_k_detected = optimal_k
-                                # Force the slider to update by setting its key in session state
-                                st.session_state.n_clusters_slider = optimal_k
                                 st.rerun()
                             else:
                                 st.warning("Could not automatically detect optimal clusters. Please select manually.")
