@@ -673,99 +673,6 @@ def dtw_distance(traj_A, traj_B):
     return dtw_matrix[n, m]
 
 
-def detect_optimal_clusters(distance_matrix, max_clusters=10):
-    """
-    Auto-detect optimal number of clusters using elbow method with silhouette validation.
-    
-    Parameters:
-    -----------
-    distance_matrix : np.array
-        Precomputed distance matrix
-    max_clusters : int
-        Maximum number of clusters to try
-    
-    Returns:
-    --------
-    int : Optimal number of clusters
-    """
-    n_samples = len(distance_matrix)
-    
-    # Edge cases
-    if n_samples < 3:
-        return 2
-    if n_samples < 10:
-        return min(3, n_samples - 1)
-    
-    max_k = min(max_clusters, n_samples - 1)
-    
-    inertias = []
-    silhouette_scores_list = []
-    
-    for k in range(2, max_k + 1):
-        # Perform hierarchical clustering
-        clustering = AgglomerativeClustering(
-            n_clusters=k,
-            metric='precomputed',
-            linkage='ward'
-        )
-        labels = clustering.fit_predict(distance_matrix)
-        
-        # Calculate within-cluster sum of squares (inertia)
-        inertia = 0
-        for cluster_id in range(k):
-            cluster_mask = labels == cluster_id
-            if np.sum(cluster_mask) > 0:
-                cluster_distances = distance_matrix[cluster_mask][:, cluster_mask]
-                inertia += np.sum(cluster_distances) / (2 * np.sum(cluster_mask))
-        inertias.append(inertia)
-        
-        # Calculate silhouette score
-        try:
-            sil_score = silhouette_score(distance_matrix, labels, metric='precomputed')
-            silhouette_scores_list.append(sil_score)
-        except:
-            silhouette_scores_list.append(0)
-    
-    # Find elbow point using angle method
-    if len(inertias) < 2:
-        return 3
-    
-    # Normalize inertias to 0-1 range
-    inertias_norm = np.array(inertias)
-    inertias_norm = (inertias_norm - inertias_norm.min()) / (inertias_norm.max() - inertias_norm.min() + 1e-10)
-    
-    # Calculate angles
-    angles = []
-    for i in range(1, len(inertias_norm) - 1):
-        p1 = np.array([i-1, inertias_norm[i-1]])
-        p2 = np.array([i, inertias_norm[i]])
-        p3 = np.array([i+1, inertias_norm[i+1]])
-        
-        v1 = p1 - p2
-        v2 = p3 - p2
-        
-        angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-10))
-        angles.append(angle)
-    
-    if len(angles) > 0:
-        elbow_idx = np.argmax(angles) + 1  # +1 because we start from k=2
-        optimal_k = elbow_idx + 2  # +2 to convert back to actual k value
-    else:
-        optimal_k = 3
-    
-    # Validate with silhouette score
-    if len(silhouette_scores_list) > 0:
-        if silhouette_scores_list[optimal_k - 2] < 0.25:
-            # If silhouette is poor, try to find better k
-            best_sil_idx = np.argmax(silhouette_scores_list)
-            if silhouette_scores_list[best_sil_idx] > 0.25:
-                optimal_k = best_sil_idx + 2
-    
-    # Ensure reasonable range
-    optimal_k = max(2, min(optimal_k, max_k))
-    
-    return optimal_k
-
 
 def perform_hierarchical_clustering(distance_matrix, n_clusters):
     """
@@ -2620,37 +2527,19 @@ def main():
             st.markdown("---")
             st.markdown("#### Cluster Assignment")
             
-            # Cluster selection controls
-            col1, col2 = st.columns([2, 1])
+            # Number of clusters slider
+            n_trajectories = len(st.session_state.trajectory_ids)
+            max_clusters = min(20, n_trajectories - 1)
             
-            with col1:
-                # Number of clusters slider
-                n_trajectories = len(st.session_state.trajectory_ids)
-                max_clusters = min(20, n_trajectories - 1)
-                
-                n_clusters = st.slider(
-                    "Number of clusters",
-                    min_value=2,
-                    max_value=max_clusters,
-                    value=min(3, max_clusters),
-                    help="Slide to select how many clusters to create",
-                    key="n_clusters_slider"
-                )
+            n_clusters = st.slider(
+                "Number of clusters",
+                min_value=2,
+                max_value=max_clusters,
+                value=min(3, max_clusters),
+                help="Slide to select how many clusters to create",
+                key="n_clusters_slider"
+            )
             
-            with col2:
-                    # Auto-detect optimal clusters button
-                    if st.button("� Auto-detect Optimal Clusters", help="Use elbow method to find optimal number of clusters"):
-                        with st.spinner("Detecting optimal number of clusters..."):
-                            optimal_k = detect_optimal_clusters(st.session_state.distance_matrix)
-                            if optimal_k is not None:
-                                st.success(f"✅ Optimal number of clusters detected: **{optimal_k}**")
-                                # Update the slider value in session state
-                                st.session_state.n_clusters_slider = optimal_k
-                                st.rerun()
-                            else:
-                                st.warning("Could not automatically detect optimal clusters. Please select manually.")
-                
-                         
             # Assign clusters based on selected number
             from scipy.cluster.hierarchy import fcluster
             cluster_labels = fcluster(linkage_matrix, n_clusters, criterion='maxclust')
