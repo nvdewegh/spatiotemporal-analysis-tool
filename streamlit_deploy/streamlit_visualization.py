@@ -2608,11 +2608,11 @@ def main():
             st.success(f"✅ Successfully assigned {n_trajectories} trajectories into {n_clusters} clusters using Ward linkage!")
             
             # ===========================
-            # STEP 5: ANALYSIS TOOLS
+            # ANALYSIS TOOLS
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 🔬 Step 5: Analysis Tools")
+            st.markdown("### 🔬 Analysis Tools")
             
             st.info("""
             **Advanced Analysis**: Explore cluster quality and trajectory relationships
@@ -2945,11 +2945,11 @@ def main():
             st.success("✅ Step 5 analysis tools are ready! Use the tabs above to explore your clusters.")
             
             # ===========================
-            # STEP 6: CLUSTER VISUALIZATIONS
+            # CLUSTER VISUALIZATIONS
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 🎨 Step 6: Cluster Visualizations")
+            st.markdown("### 🎨 Cluster Visualizations")
             
             st.info("""
             **Visualize Trajectories by Cluster**: See how trajectories are grouped spatially and temporally
@@ -3277,11 +3277,11 @@ def main():
             st.success("✅ Step 6 cluster visualizations complete! Explore your clustered trajectories above.")
             
             # ===========================
-            # STEP 7: FINAL TOUCHES
+            # EXPORT & SUMMARY
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 📋 Step 7: Export & Summary")
+            st.markdown("### 📋 Export & Summary")
             
             st.info("""
             **Final Step**: Export your results and view comprehensive analysis summary
@@ -3558,32 +3558,32 @@ def main():
                 
                 ### Workflow Steps
                 
-                #### **Step 1-2: Data Loading & Infrastructure**
+                #### **Data Loading & Infrastructure**
                 - Load trajectory data from CSV/Excel files
                 - Initialize clustering algorithms and distance computation functions
                 
-                #### **Step 3: Distance Computation**
+                #### **Distance Computation**
                 Choose from three distance metrics:
                 - **Features**: Extract trajectory features (length, speed, angles) and compute Euclidean distance
                 - **Spatial (Chamfer)**: Measure spatial shape similarity
                 - **DTW**: Dynamic Time Warping for temporal alignment
                 
-                #### **Step 4: Dendrogram & Clustering**
+                #### **Dendrogram & Clustering**
                 - View hierarchical clustering structure
                 - Select optimal number of clusters (manual or auto-detect)
                 - Assign trajectories to clusters
                 
-                #### **Step 5: Analysis Tools**
+                #### **Analysis Tools**
                 - **MDS Visualization**: Project high-dimensional distances to 2D/3D
                 - **Similarity Search**: Find most similar trajectories
                 - **Silhouette Analysis**: Validate cluster quality
                 
-                #### **Step 6: Cluster Visualizations**
+                #### **Cluster Visualizations**
                 - 2D spatial plots of clustered trajectories
                 - 3D spatiotemporal views
                 - Side-by-side cluster comparison
                 
-                #### **Step 7: Export & Summary**
+                #### **Export & Summary**
                 - Download cluster assignments, distance matrices, statistics
                 - View comprehensive analysis summary
                 - Access this documentation
