@@ -375,12 +375,18 @@ def extract_trajectory_features(traj_df):
     Parameters:
     -----------
     traj_df : pd.DataFrame
-        Trajectory data with columns: x, y, tst
+        Trajectory data with columns: X, Y, tst (or x, y, tst)
     
     Returns:
     --------
     dict : Dictionary containing 8 features
     """
+    # Handle both uppercase and lowercase column names
+    if 'X' in traj_df.columns:
+        x_col, y_col = 'X', 'Y'
+    else:
+        x_col, y_col = 'x', 'y'
+    
     if len(traj_df) < 2:
         return {
             'total_distance': 0.0,
@@ -398,8 +404,8 @@ def extract_trajectory_features(traj_df):
     
     # Total distance
     distances = np.sqrt(
-        np.diff(traj_df['x'])**2 + 
-        np.diff(traj_df['y'])**2
+        np.diff(traj_df[x_col])**2 + 
+        np.diff(traj_df[y_col])**2
     )
     total_distance = np.sum(distances)
     
@@ -413,20 +419,20 @@ def extract_trajectory_features(traj_df):
     
     # Net displacement (start to end)
     net_displacement = np.sqrt(
-        (traj_df['x'].iloc[-1] - traj_df['x'].iloc[0])**2 +
-        (traj_df['y'].iloc[-1] - traj_df['y'].iloc[0])**2
+        (traj_df[x_col].iloc[-1] - traj_df[x_col].iloc[0])**2 +
+        (traj_df[y_col].iloc[-1] - traj_df[y_col].iloc[0])**2
     )
     
     # Sinuosity (path efficiency)
     sinuosity = total_distance / net_displacement if net_displacement > 0 else 1.0
     
     # Bounding box area
-    bbox_area = (traj_df['x'].max() - traj_df['x'].min()) * \
-                (traj_df['y'].max() - traj_df['y'].min())
+    bbox_area = (traj_df[x_col].max() - traj_df[x_col].min()) * \
+                (traj_df[y_col].max() - traj_df[y_col].min())
     
     # Average direction
-    dx = np.diff(traj_df['x'])
-    dy = np.diff(traj_df['y'])
+    dx = np.diff(traj_df[x_col])
+    dy = np.diff(traj_df[y_col])
     angles = np.arctan2(dy, dx)
     avg_direction = np.mean(angles) if len(angles) > 0 else 0.0
     
@@ -486,11 +492,18 @@ def compute_feature_distance_matrix(df, selected_configs, selected_objects, star
     # Extract features for each trajectory
     features_list = []
     trajectory_ids = []
+    trajectories = []
     
     for (config, obj), traj_df in trajectory_groups:
         features = extract_trajectory_features(traj_df)
         features_list.append(features)
         trajectory_ids.append(f"{config}_obj{obj}")
+        # Store trajectory coordinates (handle both uppercase and lowercase column names)
+        if 'X' in traj_df.columns:
+            traj_coords = traj_df[['X', 'Y', 'tst']].values
+        else:
+            traj_coords = traj_df[['x', 'y', 'tst']].values
+        trajectories.append(traj_coords)
     
     # Convert to DataFrame
     features_df = pd.DataFrame(features_list, index=trajectory_ids)
@@ -506,7 +519,7 @@ def compute_feature_distance_matrix(df, selected_configs, selected_objects, star
     # Compute Euclidean distance matrix
     distance_matrix = cdist(features_normalized, features_normalized, metric='euclidean')
     
-    return distance_matrix, trajectory_ids, features_df
+    return distance_matrix, trajectory_ids, features_df, trajectories
 
 
 @st.cache_data
@@ -1982,6 +1995,10 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
+        # Initialize shared configuration state if not exists
+        if 'shared_selected_configs' not in st.session_state:
+            st.session_state.shared_selected_configs = config_sources
+        
         # Time range
         min_time = df['tst'].min()
         max_time = df['tst'].max()
@@ -1995,9 +2012,11 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=config_sources[:min(3, len(config_sources))],
+                default=st.session_state.shared_selected_configs,
                 key="visual_configs"
             )
+            # Update shared state
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
@@ -2059,18 +2078,12 @@ def main():
                 st.markdown("### Static Trajectory View")
                 st.info("Shows complete trajectory paths for selected objects and configurations.")
                 
-                translate_to_center = st.checkbox(
-                    "Translate to center",
-                    value=False,
-                    key="visual_translate"
-                )
-                
                 try:
                     fig = visualize_static(
                         df, selected_configs, selected_objects,
                         start_time, end_time,
                         aggregation_type, temporal_resolution,
-                        translate_to_center, court_type
+                        False, court_type  # translate_to_center set to False
                     )
                     render_interactive_chart(fig)
                 except Exception as e:
@@ -2150,6 +2163,10 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
+        # Initialize shared configuration state if not exists
+        if 'shared_selected_configs' not in st.session_state:
+            st.session_state.shared_selected_configs = config_sources
+        
         # Time range
         min_time = df['tst'].min()
         max_time = df['tst'].max()
@@ -2163,9 +2180,11 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=config_sources[:min(3, len(config_sources))],
+                default=st.session_state.shared_selected_configs,
                 key="2sa_configs"
             )
+            # Update shared state
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
@@ -2342,15 +2361,21 @@ def main():
         # Get common parameters for clustering
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
+        
+        # Initialize shared configuration state if not exists
+        if 'shared_selected_configs' not in st.session_state:
+            st.session_state.shared_selected_configs = config_sources
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=config_sources,
+                default=st.session_state.shared_selected_configs,
                 key="clustering_configs"
             )
+            # Update shared state
+            st.session_state.shared_selected_configs = selected_configs
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
@@ -2449,7 +2474,7 @@ def main():
             if st.button("🔄 Compute Feature Distance Matrix", key="compute_features", disabled=not selected_features):
                 with st.spinner(f"Extracting {len(selected_features)} feature(s) and computing distances..."):
                     try:
-                        distance_matrix, trajectory_ids, features_df = compute_feature_distance_matrix(
+                        distance_matrix, trajectory_ids, features_df, trajectories = compute_feature_distance_matrix(
                             df, selected_configs, selected_objects, start_time, end_time, selected_features
                         )
                         
@@ -2459,6 +2484,7 @@ def main():
                             st.session_state.distance_matrix = distance_matrix
                             st.session_state.trajectory_ids = trajectory_ids
                             st.session_state.features_df = features_df
+                            st.session_state.trajectories = trajectories
                             st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories using {len(selected_features)} features!")
                     except Exception as e:
                         st.error(f"Error computing distances: {str(e)}")
@@ -2554,8 +2580,13 @@ def main():
             - Use the slider to cut the dendrogram at different heights (select number of clusters)
             """)
             
-            # Create linkage matrix for hierarchical clustering (Ward linkage)
-            linkage_matrix = linkage(st.session_state.distance_matrix, method='ward')
+            # Create linkage matrix for hierarchical clustering
+            # Note: Ward linkage requires raw data, not distance matrix
+            # Using 'average' linkage which works with precomputed distance matrices
+            # Convert square distance matrix to condensed form
+            from scipy.spatial.distance import squareform
+            condensed_dist = squareform(st.session_state.distance_matrix, checks=False)
+            linkage_matrix = linkage(condensed_dist, method='average')
             
             # Create dendrogram visualization
             st.markdown("#### Dendrogram")
@@ -2653,8 +2684,10 @@ def main():
                         with st.spinner("Detecting optimal number of clusters..."):
                             optimal_k = detect_optimal_clusters(st.session_state.distance_matrix)
                             if optimal_k is not None:
-                                # Store the optimal k value and trigger rerun
+                                # Store the optimal k value and update the slider's session state value
                                 st.session_state.optimal_k_detected = optimal_k
+                                # Force the slider to update by setting its key in session state
+                                st.session_state.n_clusters_slider = optimal_k
                                 st.rerun()
                             else:
                                 st.warning("Could not automatically detect optimal clusters. Please select manually.")
@@ -3068,21 +3101,30 @@ def main():
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
                     st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
+                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
                 elif st.button("🎨 Generate 2D Cluster Plot", key="btn_2d_cluster"):
                     with st.spinner("Generating 2D visualization..."):
                         import plotly.express as px
                         
+                        # Get cluster data from session state
+                        cluster_labels = st.session_state.cluster_labels
+                        n_clusters = st.session_state.n_clusters
+                        
                         # Create trajectory dictionary mapping
                         trajectories_dict = {tid: traj for tid, traj in zip(st.session_state.trajectory_ids, st.session_state.trajectories)}
                         
-                        # Create color palette
-                        colors = px.colors.qualitative.Plotly[:n_clusters]
+                        # Get unique cluster IDs that actually exist in the data
+                        unique_clusters = sorted(np.unique(cluster_labels))
+                        
+                        # Create color palette based on actual number of clusters
+                        colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                         
                         # Start with tennis court
                         fig_2d = create_tennis_court()
                         
-                        # Plot each cluster
-                        for cluster_id in range(1, n_clusters + 1):
+                        # Plot each cluster (only clusters that actually exist)
+                        for idx, cluster_id in enumerate(unique_clusters):
                             mask = cluster_labels == cluster_id
                             cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
                             
@@ -3096,10 +3138,10 @@ def main():
                                     y=traj_data[:, 1],  # Y coordinates
                                     mode='lines+markers',
                                     name=f"T{tid} (C{cluster_id})",
-                                    line=dict(color=colors[cluster_id - 1], width=2),
+                                    line=dict(color=colors[idx], width=2),
                                     marker=dict(
                                         size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
-                                        color=colors[cluster_id - 1]
+                                        color=colors[idx]
                                     ),
                                     legendgroup=f"cluster_{cluster_id}",
                                     hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
@@ -3117,7 +3159,7 @@ def main():
                                         mode='markers',
                                         marker=dict(
                                             symbol='arrow',
-                                            color=colors[cluster_id - 1],
+                                            color=colors[idx],
                                             size=15,
                                             angle=angle
                                         ),
@@ -3165,6 +3207,8 @@ def main():
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
                     st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
+                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
                 else:
                     if st.button("🌐 Regenerate 3D Plot", key="btn_3d_cluster"):
                         # Clear the cached plot to force regeneration
@@ -3176,10 +3220,18 @@ def main():
                         with st.spinner("Generating 3D spatiotemporal visualization..."):
                             import plotly.express as px
                             
+                            # Get cluster data from session state
+                            cluster_labels = st.session_state.cluster_labels
+                            n_clusters = st.session_state.n_clusters
+                            
                             # Create trajectory dictionary mapping
                             trajectories_dict = {tid: traj for tid, traj in zip(st.session_state.trajectory_ids, st.session_state.trajectories)}
                             
-                            colors = px.colors.qualitative.Plotly[:n_clusters]
+                            # Get unique cluster IDs that actually exist in the data
+                            unique_clusters = sorted(np.unique(cluster_labels))
+                            
+                            # Create color palette based on actual number of clusters
+                            colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                             
                             fig_3d = go.Figure()
                             
@@ -3246,8 +3298,8 @@ def main():
                             center_x = court_width / 2
                             add_court_line_3d(center_x, service_line_bottom, center_x, service_line_top)
                             
-                            # Plot each cluster in 3D
-                            for cluster_id in range(1, n_clusters + 1):
+                            # Plot each cluster in 3D (only clusters that actually exist)
+                            for idx, cluster_id in enumerate(unique_clusters):
                                 mask = cluster_labels == cluster_id
                                 cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
                             
@@ -3263,8 +3315,8 @@ def main():
                                         z=time_steps,        # Time
                                         mode='lines+markers',
                                         name=f"T{tid} (C{cluster_id})",
-                                        line=dict(color=colors[cluster_id - 1], width=3),
-                                        marker=dict(size=3, color=colors[cluster_id - 1]),
+                                        line=dict(color=colors[idx], width=3),
+                                        marker=dict(size=3, color=colors[idx]),
                                         legendgroup=f"cluster_{cluster_id}",
                                         hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Time: %{{z}}<extra></extra>'
                                     ))
@@ -3317,12 +3369,21 @@ def main():
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
                     st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
+                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
                 else:
+                    # Get cluster data from session state
+                    cluster_labels = st.session_state.cluster_labels
+                    n_clusters = st.session_state.n_clusters
+                    
+                    # Get unique cluster IDs that actually exist in the data
+                    unique_clusters = sorted(np.unique(cluster_labels))
+                    
                     # Cluster selection
                     selected_clusters = st.multiselect(
                         "Select clusters to visualize",
-                        options=list(range(1, n_clusters + 1)),
-                        default=[1] if n_clusters >= 1 else [],
+                        options=unique_clusters,
+                        default=[unique_clusters[0]] if len(unique_clusters) >= 1 else [],
                         format_func=lambda x: f"Cluster {x} ({(cluster_labels == x).sum()} trajectories)",
                         help="Select one or more clusters to visualize"
                     )
@@ -3342,7 +3403,9 @@ def main():
                                 # Create trajectory dictionary mapping
                                 trajectories_dict = {tid: traj for tid, traj in zip(st.session_state.trajectory_ids, st.session_state.trajectories)}
                                 
-                                colors = px.colors.qualitative.Plotly[:n_clusters]
+                                # Create color mapping for actual clusters
+                                cluster_to_idx = {cid: idx for idx, cid in enumerate(unique_clusters)}
+                                colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                                 
                                 if view_mode == "Overlay":
                                     # Single plot with selected clusters - start with tennis court
@@ -3351,6 +3414,7 @@ def main():
                                     for cluster_id in selected_clusters:
                                         mask = cluster_labels == cluster_id
                                         cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
+                                        color_idx = cluster_to_idx[cluster_id]
                                         
                                         for tid in cluster_trajectory_ids:
                                             traj_data = trajectories_dict[tid]
@@ -3361,10 +3425,10 @@ def main():
                                                 y=traj_data[:, 1],
                                                 mode='lines+markers',
                                                 name=f"T{tid} (C{cluster_id})",
-                                                line=dict(color=colors[cluster_id - 1], width=2),
+                                                line=dict(color=colors[color_idx], width=2),
                                                 marker=dict(
                                                     size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
-                                                    color=colors[cluster_id - 1]
+                                                    color=colors[color_idx]
                                                 ),
                                                 legendgroup=f"cluster_{cluster_id}",
                                                 hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
@@ -3382,7 +3446,7 @@ def main():
                                                     mode='markers',
                                                     marker=dict(
                                                         symbol='arrow',
-                                                        color=colors[cluster_id - 1],
+                                                        color=colors[color_idx],
                                                         size=15,
                                                         angle=angle
                                                     ),
@@ -3431,6 +3495,7 @@ def main():
                                     for idx, cluster_id in enumerate(selected_clusters):
                                         row = idx // cols + 1
                                         col = idx % cols + 1
+                                        color_idx = cluster_to_idx[cluster_id]
                                         
                                         # Add tennis court markings for this subplot
                                         # Outer boundary (doubles court)
@@ -3499,10 +3564,10 @@ def main():
                                                     y=traj_data[:, 1],
                                                     mode='lines+markers',
                                                     name=f"T{tid}",
-                                                    line=dict(color=colors[cluster_id - 1], width=2),
+                                                    line=dict(color=colors[color_idx], width=2),
                                                     marker=dict(
                                                         size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
-                                                        color=colors[cluster_id - 1]
+                                                        color=colors[color_idx]
                                                     ),
                                                     showlegend=False,
                                                     hovertemplate=f'<b>Trajectory {tid}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
@@ -3524,7 +3589,7 @@ def main():
                                                         mode='markers',
                                                         marker=dict(
                                                             symbol='arrow',
-                                                            color=colors[cluster_id - 1],
+                                                            color=colors[color_idx],
                                                             size=12,
                                                             angle=angle
                                                         ),
