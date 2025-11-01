@@ -797,7 +797,7 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=F
 
 def perform_hierarchical_clustering(distance_matrix, n_clusters):
     """
-    Perform hierarchical clustering with Ward linkage.
+    Perform hierarchical clustering with average linkage (compatible with precomputed distances).
     
     Parameters:
     -----------
@@ -810,14 +810,14 @@ def perform_hierarchical_clustering(distance_matrix, n_clusters):
     --------
     tuple : (cluster_labels, linkage_matrix)
     """
-    # Create linkage matrix for dendrogram
-    linkage_matrix = linkage(distance_matrix, method='ward')
+    # Create linkage matrix for dendrogram - use 'average' instead of 'ward' for precomputed
+    linkage_matrix = linkage(distance_matrix, method='average')
     
-    # Perform clustering
+    # Perform clustering with average linkage (compatible with precomputed distances)
     clustering = AgglomerativeClustering(
         n_clusters=n_clusters,
         metric='precomputed',
-        linkage='ward'
+        linkage='average'  # Changed from 'ward' to 'average'
     )
     cluster_labels = clustering.fit_predict(distance_matrix)
     
