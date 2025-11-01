@@ -864,15 +864,16 @@ def initialize_clustering_session_state():
 def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
     """
     Create a spatial grid for the court and return zone mapping function.
+    Includes buffer zones around the court to capture out-of-bounds positions.
     
     Parameters:
     -----------
     court_type : str
         'Tennis' or 'Football'
     grid_rows : int
-        Number of rows in grid
+        Number of rows in grid (only for the court itself)
     grid_cols : int
-        Number of columns in grid
+        Number of columns in grid (only for the court itself)
     
     Returns:
     --------
@@ -881,16 +882,31 @@ def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
     dims = get_court_dimensions(court_type)
     width, height = dims['width'], dims['height']
     
-    # Create bins
-    x_bins = np.linspace(0, width, grid_cols + 1)
-    y_bins = np.linspace(0, height, grid_rows + 1)
+    # Add buffer zones around the court (typically 3-5 meters for tennis)
+    # This captures positions when players are outside court boundaries
+    buffer = 5.0  # meters
+    
+    # Extended grid with buffer zones
+    x_min, x_max = -buffer, width + buffer
+    y_min, y_max = -buffer, height + buffer
+    
+    # Create bins - main court gets the specified grid, plus 1 column/row on each side for buffer
+    actual_cols = grid_cols + 2  # +1 left buffer, +1 right buffer
+    actual_rows = grid_rows + 2  # +1 top buffer, +1 bottom buffer
+    
+    x_bins = np.linspace(x_min, x_max, actual_cols + 1)
+    y_bins = np.linspace(y_min, y_max, actual_rows + 1)
     
     # Generate zone labels (A, B, C, ...)
     zone_labels = []
-    for row in range(grid_rows):
-        for col in range(grid_cols):
-            idx = row * grid_cols + col
-            zone_labels.append(chr(65 + idx))  # A=65 in ASCII
+    for row in range(actual_rows):
+        for col in range(actual_cols):
+            idx = row * actual_cols + col
+            if idx < 26:
+                zone_labels.append(chr(65 + idx))  # A-Z
+            else:
+                # If we need more than 26 zones, use AA, AB, AC, etc.
+                zone_labels.append(chr(65 + (idx // 26) - 1) + chr(65 + (idx % 26)))
     
     def get_zone(x, y):
         """Map (x, y) coordinate to zone letter."""
@@ -898,17 +914,21 @@ def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
             return None
         col_idx = np.digitize(x, x_bins) - 1
         row_idx = np.digitize(y, y_bins) - 1
-        col_idx = max(0, min(grid_cols - 1, col_idx))
-        row_idx = max(0, min(grid_rows - 1, row_idx))
-        return zone_labels[row_idx * grid_cols + col_idx]
+        # Clamp to valid range (handle extreme outliers)
+        col_idx = max(0, min(actual_cols - 1, col_idx))
+        row_idx = max(0, min(actual_rows - 1, row_idx))
+        return zone_labels[row_idx * actual_cols + col_idx]
     
     return {
         'zone_labels': zone_labels,
         'x_bins': x_bins,
         'y_bins': y_bins,
         'get_zone': get_zone,
-        'grid_rows': grid_rows,
-        'grid_cols': grid_cols
+        'grid_rows': actual_rows,
+        'grid_cols': actual_cols,
+        'court_width': width,
+        'court_height': height,
+        'buffer': buffer
     }
 
 
@@ -2803,23 +2823,41 @@ def main():
         
         with col1:
             st.write("**Grid Resolution**")
-            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows")
-            grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols")
-            st.caption(f"Total zones: {grid_rows * grid_cols} (A-{chr(65 + grid_rows * grid_cols - 1)})")
+            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows", 
+                                 help="Rows for the court area (buffer zones added automatically)")
+            grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols",
+                                 help="Columns for the court area (buffer zones added automatically)")
             
-            # Live preview of grid layout
+            # Calculate actual grid with buffers
+            actual_rows = grid_rows + 2  # +1 top buffer, +1 bottom buffer
+            actual_cols = grid_cols + 2  # +1 left buffer, +1 right buffer
+            total_zones = actual_rows * actual_cols
+            
+            st.caption(f"Court zones: {grid_rows} × {grid_cols} = {grid_rows * grid_cols}")
+            st.caption(f"Total zones (with buffer): {actual_rows} × {actual_cols} = {total_zones}")
+            
+            # Live preview of grid layout with buffer zones highlighted
             st.markdown("**Grid Layout Preview:**")
-            preview_html = "<div style='font-family: monospace; font-size: 11px; line-height: 1.5;'>"
-            for row in range(grid_rows):
+            st.caption("🟦 = Court zones | 🟨 = Buffer zones (out-of-bounds)")
+            preview_html = "<div style='font-family: monospace; font-size: 10px; line-height: 1.4;'>"
+            for row in range(actual_rows):
                 preview_html += "<div>"
-                for col in range(grid_cols):
-                    zone_idx = row * grid_cols + col
-                    zone_label = chr(65 + zone_idx)
-                    preview_html += f"<span style='display: inline-block; width: 30px; text-align: center; border: 1px solid #ccc; background: #f0f0f0; padding: 2px; margin: 1px;'><b>{zone_label}</b></span>"
+                for col in range(actual_cols):
+                    zone_idx = row * actual_cols + col
+                    zone_label = chr(65 + zone_idx) if zone_idx < 26 else chr(65 + (zone_idx // 26) - 1) + chr(65 + (zone_idx % 26))
+                    
+                    # Determine if buffer zone
+                    is_buffer = (col == 0 or col == actual_cols - 1 or 
+                               row == 0 or row == actual_rows - 1)
+                    
+                    bg_color = '#ffffcc' if is_buffer else '#e6f2ff'  # Yellow for buffer, light blue for court
+                    border_color = '#999' if is_buffer else '#4CAF50'
+                    
+                    preview_html += f"<span style='display: inline-block; width: 28px; text-align: center; border: 1px solid {border_color}; background: {bg_color}; padding: 2px; margin: 1px;'><b>{zone_label}</b></span>"
                 preview_html += "</div>"
             preview_html += "</div>"
             st.markdown(preview_html, unsafe_allow_html=True)
-            st.caption("↑ Left-to-right, top-to-bottom labeling")
+            st.caption("↑ Left-to-right, top-to-bottom labeling (includes buffer zones)")
         
         with col2:
             st.write("**Temporal Resolution**")
@@ -3237,7 +3275,9 @@ def main():
                     st.info("""
                     **Understanding the Grid:**
                     - The **green area** shows the tennis court with white court markings
-                    - The court is divided into zones labeled **A, B, C,** etc. (left-to-right, top-to-bottom)
+                    - The **buffer zones** (light gray) around the court capture out-of-bounds positions
+                    - The court + buffer is divided into zones labeled **A, B, C,** etc. (left-to-right, top-to-bottom)
+                    - Players often move outside the court (behind baseline, outside sidelines) - these positions are also captured
                     - Each trajectory position is mapped to the zone it falls in
                     - This converts continuous (x,y) coordinates into discrete symbolic sequences
                     - Adjust grid resolution above to explore different spatial scales
@@ -3249,6 +3289,19 @@ def main():
                     # Draw grid lines
                     x_bins = grid_info['x_bins']
                     y_bins = grid_info['y_bins']
+                    court_width = grid_info['court_width']
+                    court_height = grid_info['court_height']
+                    buffer = grid_info['buffer']
+                    
+                    # Add buffer zone background (light gray)
+                    fig_grid.add_shape(
+                        type="rect",
+                        x0=-buffer, y0=-buffer,
+                        x1=court_width + buffer, y1=court_height + buffer,
+                        fillcolor='rgba(200, 200, 200, 0.3)',
+                        line=dict(color='rgba(150, 150, 150, 0.5)', width=2),
+                        layer="below"
+                    )
                     
                     # Add grid lines on top of court (using shapes for better visibility)
                     # Vertical lines
@@ -3272,33 +3325,60 @@ def main():
                         )
                     
                     # Add zone labels with background
-                    for row in range(grid_rows):
-                        for col in range(grid_cols):
-                            zone_idx = row * grid_cols + col
+                    actual_rows = grid_info['grid_rows']
+                    actual_cols = grid_info['grid_cols']
+                    
+                    for row in range(actual_rows):
+                        for col in range(actual_cols):
+                            zone_idx = row * actual_cols + col
                             zone_label = grid_info['zone_labels'][zone_idx]
                             
                             x_center = (x_bins[col] + x_bins[col + 1]) / 2
                             y_center = (y_bins[row] + y_bins[row + 1]) / 2
                             
+                            # Determine if this is a buffer zone or court zone
+                            is_buffer = (col == 0 or col == actual_cols - 1 or 
+                                       row == 0 or row == actual_rows - 1)
+                            
                             # Add zone label with high-contrast background
+                            # Use different styling for buffer zones
+                            if is_buffer:
+                                bgcolor = 'rgba(150, 150, 150, 0.7)'
+                                bordercolor = 'gray'
+                                font_size = 16
+                            else:
+                                bgcolor = 'rgba(0, 0, 0, 0.7)'
+                                bordercolor = 'red'
+                                font_size = 20
+                            
                             fig_grid.add_annotation(
                                 x=x_center,
                                 y=y_center,
                                 text=f"<b>{zone_label}</b>",
                                 showarrow=False,
-                                font=dict(size=20, color='white', family='Arial Black'),
-                                bgcolor='rgba(0, 0, 0, 0.7)',
-                                bordercolor='red',
+                                font=dict(size=font_size, color='white', family='Arial Black'),
+                                bgcolor=bgcolor,
+                                bordercolor=bordercolor,
                                 borderwidth=2,
-                                borderpad=8
+                                borderpad=6
                             )
                     
+                    total_zones = actual_rows * actual_cols
+                    court_zones = (actual_rows - 2) * (actual_cols - 2)
+                    buffer_zones = total_zones - court_zones
+                    
                     fig_grid.update_layout(
-                        title=f"<b>Spatial Discretization Grid on Tennis Court</b><br><sup>{grid_rows} rows × {grid_cols} columns = {grid_rows * grid_cols} zones (A-{chr(65 + grid_rows * grid_cols - 1)})</sup>",
-                        height=900
+                        title=f"<b>Spatial Discretization Grid with Buffer Zones</b><br>" + 
+                              f"<sup>{actual_rows} rows × {actual_cols} columns = {total_zones} total zones " +
+                              f"({court_zones} court zones + {buffer_zones} buffer zones)</sup>",
+                        height=900,
+                        xaxis=dict(range=[x_bins[0] - 0.5, x_bins[-1] + 0.5]),
+                        yaxis=dict(range=[y_bins[0] - 0.5, y_bins[-1] + 0.5])
                     )
                     
-                    render_interactive_chart(fig_grid, "Tennis court (green with white markings) divided into symbolic zones (red dashed grid). Each zone has a unique letter label (black boxes).")
+                    render_interactive_chart(fig_grid, 
+                        "Tennis court (green with white markings) + buffer zones (light gray) divided into symbolic zones. " +
+                        "Red grid shows court zones, gray borders show buffer zones for out-of-bounds positions.")
                     
                     # Show zone statistics
                     st.write("**Zone Coverage Statistics**")
