@@ -2766,6 +2766,28 @@ def main():
         - **Pattern Discovery:** Find common sub-patterns across rallies
         """)
         
+        # Show preview of grid concept
+        with st.expander("ℹ️ How does spatial discretization work?", expanded=False):
+            st.markdown("""
+            **Spatial discretization converts continuous coordinates into discrete zone labels:**
+            
+            1. The court is divided into a grid of M×N zones
+            2. Each zone gets a letter label (A, B, C, ...) assigned left-to-right, top-to-bottom
+            3. Every trajectory point (x, y) is mapped to its zone
+            4. The sequence of zones visited becomes a symbolic string
+            
+            **Example with 3×5 grid (15 zones):**
+            - Trajectory: (2.1, 1.3) → (5.4, 2.8) → (11.2, 5.1) → ...
+            - Zone mapping: A → B → H → ...
+            - Compressed sequence: A B H ...
+            
+            **Adjust the grid resolution below** to change the granularity of spatial encoding.
+            Finer grids capture more detail but create longer sequences.
+            Coarser grids are more abstract but may miss important spatial patterns.
+            
+            📊 **Tip:** Check the "Spatial Grid View" tab after generating sequences to see the zone layout!
+            """)
+        
         # Get available configurations and objects
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
@@ -2784,6 +2806,20 @@ def main():
             grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows")
             grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols")
             st.caption(f"Total zones: {grid_rows * grid_cols} (A-{chr(65 + grid_rows * grid_cols - 1)})")
+            
+            # Live preview of grid layout
+            st.markdown("**Grid Layout Preview:**")
+            preview_html = "<div style='font-family: monospace; font-size: 11px; line-height: 1.5;'>"
+            for row in range(grid_rows):
+                preview_html += "<div>"
+                for col in range(grid_cols):
+                    zone_idx = row * grid_cols + col
+                    zone_label = chr(65 + zone_idx)
+                    preview_html += f"<span style='display: inline-block; width: 30px; text-align: center; border: 1px solid #ccc; background: #f0f0f0; padding: 2px; margin: 1px;'><b>{zone_label}</b></span>"
+                preview_html += "</div>"
+            preview_html += "</div>"
+            st.markdown(preview_html, unsafe_allow_html=True)
+            st.caption("↑ Left-to-right, top-to-bottom labeling")
         
         with col2:
             st.write("**Temporal Resolution**")
@@ -3198,6 +3234,14 @@ def main():
                 with seq_tab4:
                     st.subheader("Spatial Grid Visualization")
                     
+                    st.info("""
+                    **Understanding the Grid:**
+                    - The court is divided into zones labeled A, B, C, etc. (left-to-right, top-to-bottom)
+                    - Each trajectory position is mapped to the zone it falls in
+                    - This converts continuous (x,y) coordinates into discrete symbolic sequences
+                    - Adjust grid resolution to explore different spatial scales
+                    """)
+                    
                     # Show grid overlay on court
                     fig_grid = create_pitch_figure(st.session_state.court_type)
                     
@@ -3211,7 +3255,7 @@ def main():
                             x=[x, x],
                             y=[y_bins[0], y_bins[-1]],
                             mode='lines',
-                            line=dict(color='gray', width=1, dash='dash'),
+                            line=dict(color='rgba(0, 0, 0, 0.5)', width=2),
                             showlegend=False,
                             hoverinfo='skip'
                         ))
@@ -3222,12 +3266,12 @@ def main():
                             x=[x_bins[0], x_bins[-1]],
                             y=[y, y],
                             mode='lines',
-                            line=dict(color='gray', width=1, dash='dash'),
+                            line=dict(color='rgba(0, 0, 0, 0.5)', width=2),
                             showlegend=False,
                             hoverinfo='skip'
                         ))
                     
-                    # Add zone labels
+                    # Add zone labels with background shading for better visibility
                     for row in range(grid_rows):
                         for col in range(grid_cols):
                             zone_idx = row * grid_cols + col
@@ -3236,22 +3280,34 @@ def main():
                             x_center = (x_bins[col] + x_bins[col + 1]) / 2
                             y_center = (y_bins[row] + y_bins[row + 1]) / 2
                             
+                            # Add semi-transparent background rectangle for each zone
+                            fig_grid.add_shape(
+                                type="rect",
+                                x0=x_bins[col], y0=y_bins[row],
+                                x1=x_bins[col + 1], y1=y_bins[row + 1],
+                                fillcolor=f"rgba({50 + zone_idx * 10 % 100}, {100 + zone_idx * 15 % 100}, {150 + zone_idx * 20 % 100}, 0.1)",
+                                line=dict(width=0),
+                                layer="below"
+                            )
+                            
                             fig_grid.add_annotation(
                                 x=x_center,
                                 y=y_center,
-                                text=zone_label,
+                                text=f"<b>{zone_label}</b>",
                                 showarrow=False,
-                                font=dict(size=16, color='black', family='Arial Black'),
-                                bgcolor='rgba(255, 255, 255, 0.7)',
-                                borderpad=4
+                                font=dict(size=18, color='black', family='Arial Black'),
+                                bgcolor='rgba(255, 255, 255, 0.8)',
+                                bordercolor='black',
+                                borderwidth=1,
+                                borderpad=6
                             )
                     
                     fig_grid.update_layout(
-                        title=f"Spatial Grid ({grid_rows}×{grid_cols} = {grid_rows * grid_cols} zones)",
-                        height=600
+                        title=f"<b>Spatial Discretization Grid</b><br><sup>{grid_rows} rows × {grid_cols} columns = {grid_rows * grid_cols} zones (A-{chr(65 + grid_rows * grid_cols - 1)})</sup>",
+                        height=700
                     )
                     
-                    render_interactive_chart(fig_grid, "Court divided into symbolic zones for sequence encoding")
+                    render_interactive_chart(fig_grid, "Court divided into symbolic zones for sequence encoding. Each zone has a unique letter label.")
                     
                     # Show zone statistics
                     st.write("**Zone Coverage Statistics**")
