@@ -3399,12 +3399,17 @@ def main():
                         # Create heatmap of zone visits using actual grid dimensions (with buffer zones)
                         actual_rows = grid_info['grid_rows']
                         actual_cols = grid_info['grid_cols']
+                        zone_labels = grid_info['zone_labels']
                         visit_matrix = np.zeros((actual_rows, actual_cols))
                         for zone, count in zone_visits.items():
-                            idx = ord(zone) - 65 if len(zone) == 1 else (ord(zone[0]) - 65 + 1) * 26 + (ord(zone[1]) - 65)
-                            row = idx // actual_cols
-                            col = idx % actual_cols
-                            visit_matrix[row, col] = count
+                            # Find the zone in the zone_labels list
+                            try:
+                                idx = zone_labels.index(zone)
+                                row = idx // actual_cols
+                                col = idx % actual_cols
+                                visit_matrix[row, col] = count
+                            except ValueError:
+                                pass  # Skip if zone not found
                         
                         fig_heatmap = go.Figure(data=go.Heatmap(
                             z=visit_matrix,
