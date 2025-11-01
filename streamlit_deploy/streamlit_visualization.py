@@ -3396,27 +3396,29 @@ def main():
                             for zone, count in sorted(zone_visits.items())
                         ])
                         
-                        # Create heatmap of zone visits
-                        visit_matrix = np.zeros((grid_rows, grid_cols))
+                        # Create heatmap of zone visits using actual grid dimensions (with buffer zones)
+                        actual_rows = grid_info['grid_rows']
+                        actual_cols = grid_info['grid_cols']
+                        visit_matrix = np.zeros((actual_rows, actual_cols))
                         for zone, count in zone_visits.items():
-                            idx = ord(zone) - 65
-                            row = idx // grid_cols
-                            col = idx % grid_cols
+                            idx = ord(zone) - 65 if len(zone) == 1 else (ord(zone[0]) - 65 + 1) * 26 + (ord(zone[1]) - 65)
+                            row = idx // actual_cols
+                            col = idx % actual_cols
                             visit_matrix[row, col] = count
                         
                         fig_heatmap = go.Figure(data=go.Heatmap(
                             z=visit_matrix,
                             colorscale='YlOrRd',
-                            text=[[grid_info['zone_labels'][r * grid_cols + c] 
-                                   for c in range(grid_cols)] 
-                                  for r in range(grid_rows)],
+                            text=[[grid_info['zone_labels'][r * actual_cols + c] 
+                                   for c in range(actual_cols)] 
+                                  for r in range(actual_rows)],
                             texttemplate='%{text}<br>%{z}',
                             textfont={"size": 10},
                             hovertemplate='Zone: %{text}<br>Visits: %{z}<extra></extra>'
                         ))
                         
                         fig_heatmap.update_layout(
-                            title="Zone Visit Frequency",
+                            title=f"Zone Visit Frequency ({actual_rows}×{actual_cols} grid with buffer zones)",
                             xaxis_title="Column",
                             yaxis_title="Row",
                             height=400
