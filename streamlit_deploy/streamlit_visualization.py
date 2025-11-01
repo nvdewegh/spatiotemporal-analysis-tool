@@ -3236,10 +3236,11 @@ def main():
                     
                     st.info("""
                     **Understanding the Grid:**
-                    - The court is divided into zones labeled A, B, C, etc. (left-to-right, top-to-bottom)
+                    - The **green area** shows the tennis court with white court markings
+                    - The court is divided into zones labeled **A, B, C,** etc. (left-to-right, top-to-bottom)
                     - Each trajectory position is mapped to the zone it falls in
                     - This converts continuous (x,y) coordinates into discrete symbolic sequences
-                    - Adjust grid resolution to explore different spatial scales
+                    - Adjust grid resolution above to explore different spatial scales
                     """)
                     
                     # Show grid overlay on court
@@ -3249,29 +3250,28 @@ def main():
                     x_bins = grid_info['x_bins']
                     y_bins = grid_info['y_bins']
                     
+                    # Add grid lines on top of court (using shapes for better visibility)
                     # Vertical lines
                     for x in x_bins:
-                        fig_grid.add_trace(go.Scatter(
-                            x=[x, x],
-                            y=[y_bins[0], y_bins[-1]],
-                            mode='lines',
-                            line=dict(color='rgba(0, 0, 0, 0.5)', width=2),
-                            showlegend=False,
-                            hoverinfo='skip'
-                        ))
+                        fig_grid.add_shape(
+                            type="line",
+                            x0=x, y0=y_bins[0],
+                            x1=x, y1=y_bins[-1],
+                            line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
+                            layer="above"
+                        )
                     
                     # Horizontal lines
                     for y in y_bins:
-                        fig_grid.add_trace(go.Scatter(
-                            x=[x_bins[0], x_bins[-1]],
-                            y=[y, y],
-                            mode='lines',
-                            line=dict(color='rgba(0, 0, 0, 0.5)', width=2),
-                            showlegend=False,
-                            hoverinfo='skip'
-                        ))
+                        fig_grid.add_shape(
+                            type="line",
+                            x0=x_bins[0], y0=y,
+                            x1=x_bins[-1], y1=y,
+                            line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
+                            layer="above"
+                        )
                     
-                    # Add zone labels with background shading for better visibility
+                    # Add zone labels with background
                     for row in range(grid_rows):
                         for col in range(grid_cols):
                             zone_idx = row * grid_cols + col
@@ -3280,34 +3280,25 @@ def main():
                             x_center = (x_bins[col] + x_bins[col + 1]) / 2
                             y_center = (y_bins[row] + y_bins[row + 1]) / 2
                             
-                            # Add semi-transparent background rectangle for each zone
-                            fig_grid.add_shape(
-                                type="rect",
-                                x0=x_bins[col], y0=y_bins[row],
-                                x1=x_bins[col + 1], y1=y_bins[row + 1],
-                                fillcolor=f"rgba({50 + zone_idx * 10 % 100}, {100 + zone_idx * 15 % 100}, {150 + zone_idx * 20 % 100}, 0.1)",
-                                line=dict(width=0),
-                                layer="below"
-                            )
-                            
+                            # Add zone label with high-contrast background
                             fig_grid.add_annotation(
                                 x=x_center,
                                 y=y_center,
                                 text=f"<b>{zone_label}</b>",
                                 showarrow=False,
-                                font=dict(size=18, color='black', family='Arial Black'),
-                                bgcolor='rgba(255, 255, 255, 0.8)',
-                                bordercolor='black',
-                                borderwidth=1,
-                                borderpad=6
+                                font=dict(size=20, color='white', family='Arial Black'),
+                                bgcolor='rgba(0, 0, 0, 0.7)',
+                                bordercolor='red',
+                                borderwidth=2,
+                                borderpad=8
                             )
                     
                     fig_grid.update_layout(
-                        title=f"<b>Spatial Discretization Grid</b><br><sup>{grid_rows} rows × {grid_cols} columns = {grid_rows * grid_cols} zones (A-{chr(65 + grid_rows * grid_cols - 1)})</sup>",
-                        height=700
+                        title=f"<b>Spatial Discretization Grid on Tennis Court</b><br><sup>{grid_rows} rows × {grid_cols} columns = {grid_rows * grid_cols} zones (A-{chr(65 + grid_rows * grid_cols - 1)})</sup>",
+                        height=900
                     )
                     
-                    render_interactive_chart(fig_grid, "Court divided into symbolic zones for sequence encoding. Each zone has a unique letter label.")
+                    render_interactive_chart(fig_grid, "Tennis court (green with white markings) divided into symbolic zones (red dashed grid). Each zone has a unique letter label (black boxes).")
                     
                     # Show zone statistics
                     st.write("**Zone Coverage Statistics**")
