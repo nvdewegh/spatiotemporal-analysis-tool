@@ -10,6 +10,8 @@ from sklearn.metrics import silhouette_score, silhouette_samples
 from scipy.spatial.distance import cdist, euclidean
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import plotly.express as px
+from itertools import groupby
+from collections import Counter
 
 # Common Plotly configuration for interactive charts
 PLOTLY_CONFIG = {
@@ -853,6 +855,432 @@ def initialize_clustering_session_state():
     
     if 'clustering_trajectories' not in st.session_state:
         st.session_state.clustering_trajectories = None
+
+
+# ============================================================================
+# SEQUENCE ANALYSIS FUNCTIONS
+# ============================================================================
+
+def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
+    """
+    Create a spatial grid for the court and return zone mapping function.
+    
+    Parameters:
+    -----------
+    court_type : str
+        'Tennis' or 'Football'
+    grid_rows : int
+        Number of rows in grid
+    grid_cols : int
+        Number of columns in grid
+    
+    Returns:
+    --------
+    dict with zone_labels, x_bins, y_bins, and get_zone function
+    """
+    dims = get_court_dimensions(court_type)
+    width, height = dims['width'], dims['height']
+    
+    # Create bins
+    x_bins = np.linspace(0, width, grid_cols + 1)
+    y_bins = np.linspace(0, height, grid_rows + 1)
+    
+    # Generate zone labels (A, B, C, ...)
+    zone_labels = []
+    for row in range(grid_rows):
+        for col in range(grid_cols):
+            idx = row * grid_cols + col
+            zone_labels.append(chr(65 + idx))  # A=65 in ASCII
+    
+    def get_zone(x, y):
+        """Map (x, y) coordinate to zone letter."""
+        if pd.isna(x) or pd.isna(y):
+            return None
+        col_idx = np.digitize(x, x_bins) - 1
+        row_idx = np.digitize(y, y_bins) - 1
+        col_idx = max(0, min(grid_cols - 1, col_idx))
+        row_idx = max(0, min(grid_rows - 1, row_idx))
+        return zone_labels[row_idx * grid_cols + col_idx]
+    
+    return {
+        'zone_labels': zone_labels,
+        'x_bins': x_bins,
+        'y_bins': y_bins,
+        'get_zone': get_zone,
+        'grid_rows': grid_rows,
+        'grid_cols': grid_cols
+    }
+
+
+def build_event_based_sequence(df, config, obj_id, start_time, end_time, grid_info, compress=True):
+    """
+    Build event-based sequence (one token per hit/bounce).
+    For tennis: use all data points as events.
+    
+    Parameters:
+    -----------
+    df : DataFrame
+    config : str
+        Configuration source
+    obj_id : int
+        Object ID
+    start_time, end_time : float
+        Time window
+    grid_info : dict
+        From create_spatial_grid()
+    compress : bool
+        If True, compress runs (AAABBB -> AB)
+    
+    Returns:
+    --------
+    str : sequence of zone tokens (e.g., "AABBBCCC" or "ABC" if compressed)
+    """
+    obj_data = df[(df['config_source'] == config) &
+                  (df['obj'] == obj_id) &
+                  (df['tst'] >= start_time) &
+                  (df['tst'] <= end_time)].sort_values('tst')
+    
+    if len(obj_data) == 0:
+        return ""
+    
+    get_zone = grid_info['get_zone']
+    tokens = [get_zone(row['x'], row['y']) for _, row in obj_data.iterrows()]
+    tokens = [t for t in tokens if t is not None]
+    
+    if compress:
+        # Run-length compression: AAABBB -> AB
+        tokens = [k for k, _ in groupby(tokens)]
+    
+    return ''.join(tokens)
+
+
+def build_interval_based_sequence(df, config, obj_id, start_time, end_time, 
+                                  grid_info, delta_t=0.2, compress=True):
+    """
+    Build equal-interval sequence (fixed time steps).
+    
+    Parameters:
+    -----------
+    delta_t : float
+        Time interval in seconds
+    
+    Returns:
+    --------
+    str : sequence of zone tokens
+    """
+    obj_data = df[(df['config_source'] == config) &
+                  (df['obj'] == obj_id) &
+                  (df['tst'] >= start_time) &
+                  (df['tst'] <= end_time)].sort_values('tst')
+    
+    if len(obj_data) == 0:
+        return ""
+    
+    get_zone = grid_info['get_zone']
+    
+    # Sample at fixed intervals
+    time_points = np.arange(start_time, end_time + delta_t, delta_t)
+    tokens = []
+    
+    for t in time_points:
+        # Find closest data point to this time
+        closest_idx = (obj_data['tst'] - t).abs().idxmin()
+        row = obj_data.loc[closest_idx]
+        zone = get_zone(row['x'], row['y'])
+        if zone is not None:
+            tokens.append(zone)
+    
+    if compress:
+        tokens = [k for k, _ in groupby(tokens)]
+    
+    return ''.join(tokens)
+
+
+def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
+                                grid_info, mode='event', delta_t=0.2, compress=True):
+    """
+    Build joint sequence combining multiple entities (ball, p1, p2).
+    
+    Returns:
+    --------
+    str : joint sequence like "B:A|P1:C|P2:F; B:B|P1:C|P2:E; ..."
+    """
+    # Build individual sequences
+    sequences = {}
+    for entity_id in entity_ids:
+        if mode == 'event':
+            seq = build_event_based_sequence(df, config, entity_id, start_time, 
+                                            end_time, grid_info, compress=False)
+        else:
+            seq = build_interval_based_sequence(df, config, entity_id, start_time, 
+                                               end_time, grid_info, delta_t, compress=False)
+        sequences[entity_id] = seq
+    
+    # Find max length
+    max_len = max(len(s) for s in sequences.values()) if sequences else 0
+    
+    # Pad sequences to same length
+    for eid in sequences:
+        while len(sequences[eid]) < max_len:
+            sequences[eid] += sequences[eid][-1] if sequences[eid] else 'X'
+    
+    # Combine into joint tokens
+    joint_tokens = []
+    for i in range(max_len):
+        token_parts = [f"{eid}:{sequences[eid][i]}" for eid in entity_ids]
+        joint_tokens.append('|'.join(token_parts))
+    
+    if compress:
+        joint_tokens = [k for k, _ in groupby(joint_tokens)]
+    
+    return '; '.join(joint_tokens)
+
+
+def levenshtein_distance(seq1, seq2):
+    """
+    Compute Levenshtein (edit) distance between two sequences.
+    
+    Parameters:
+    -----------
+    seq1, seq2 : str or list
+        Sequences to compare
+    
+    Returns:
+    --------
+    int : edit distance
+    """
+    len1, len2 = len(seq1), len(seq2)
+    
+    # Create DP table
+    dp = np.zeros((len1 + 1, len2 + 1), dtype=int)
+    
+    # Initialize
+    for i in range(len1 + 1):
+        dp[i, 0] = i
+    for j in range(len2 + 1):
+        dp[0, j] = j
+    
+    # Fill table
+    for i in range(1, len1 + 1):
+        for j in range(1, len2 + 1):
+            if seq1[i-1] == seq2[j-1]:
+                cost = 0
+            else:
+                cost = 1
+            
+            dp[i, j] = min(
+                dp[i-1, j] + 1,      # deletion
+                dp[i, j-1] + 1,      # insertion
+                dp[i-1, j-1] + cost  # substitution
+            )
+    
+    return int(dp[len1, len2])
+
+
+def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
+    """
+    Global alignment using Needleman-Wunsch algorithm.
+    
+    Parameters:
+    -----------
+    seq1, seq2 : str
+        Sequences to align
+    match : int
+        Score for matching characters
+    mismatch : int
+        Penalty for mismatch
+    gap : int
+        Penalty for gap (indel)
+    
+    Returns:
+    --------
+    dict with 'score', 'aligned_seq1', 'aligned_seq2'
+    """
+    len1, len2 = len(seq1), len(seq2)
+    
+    # Score matrix
+    score_matrix = np.zeros((len1 + 1, len2 + 1))
+    
+    # Initialize
+    for i in range(len1 + 1):
+        score_matrix[i, 0] = gap * i
+    for j in range(len2 + 1):
+        score_matrix[0, j] = gap * j
+    
+    # Fill matrix
+    for i in range(1, len1 + 1):
+        for j in range(1, len2 + 1):
+            if seq1[i-1] == seq2[j-1]:
+                diagonal = score_matrix[i-1, j-1] + match
+            else:
+                diagonal = score_matrix[i-1, j-1] + mismatch
+            
+            score_matrix[i, j] = max(
+                diagonal,
+                score_matrix[i-1, j] + gap,  # deletion
+                score_matrix[i, j-1] + gap   # insertion
+            )
+    
+    # Traceback
+    aligned1, aligned2 = [], []
+    i, j = len1, len2
+    
+    while i > 0 or j > 0:
+        current_score = score_matrix[i, j]
+        
+        if i > 0 and j > 0:
+            diag_score = match if seq1[i-1] == seq2[j-1] else mismatch
+            if current_score == score_matrix[i-1, j-1] + diag_score:
+                aligned1.append(seq1[i-1])
+                aligned2.append(seq2[j-1])
+                i -= 1
+                j -= 1
+                continue
+        
+        if i > 0 and current_score == score_matrix[i-1, j] + gap:
+            aligned1.append(seq1[i-1])
+            aligned2.append('-')
+            i -= 1
+        elif j > 0 and current_score == score_matrix[i, j-1] + gap:
+            aligned1.append('-')
+            aligned2.append(seq2[j-1])
+            j -= 1
+        else:
+            break
+    
+    return {
+        'score': score_matrix[len1, len2],
+        'aligned_seq1': ''.join(reversed(aligned1)),
+        'aligned_seq2': ''.join(reversed(aligned2))
+    }
+
+
+def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
+    """
+    Local alignment using Smith-Waterman algorithm.
+    
+    Returns:
+    --------
+    dict with 'score', 'aligned_seq1', 'aligned_seq2', 'start1', 'start2'
+    """
+    len1, len2 = len(seq1), len(seq2)
+    
+    # Score matrix
+    score_matrix = np.zeros((len1 + 1, len2 + 1))
+    
+    # Fill matrix (no negative scores)
+    max_score = 0
+    max_pos = (0, 0)
+    
+    for i in range(1, len1 + 1):
+        for j in range(1, len2 + 1):
+            if seq1[i-1] == seq2[j-1]:
+                diagonal = score_matrix[i-1, j-1] + match
+            else:
+                diagonal = score_matrix[i-1, j-1] + mismatch
+            
+            score_matrix[i, j] = max(
+                0,  # Can reset to 0
+                diagonal,
+                score_matrix[i-1, j] + gap,
+                score_matrix[i, j-1] + gap
+            )
+            
+            if score_matrix[i, j] > max_score:
+                max_score = score_matrix[i, j]
+                max_pos = (i, j)
+    
+    # Traceback from max position
+    aligned1, aligned2 = [], []
+    i, j = max_pos
+    
+    while i > 0 and j > 0 and score_matrix[i, j] > 0:
+        current_score = score_matrix[i, j]
+        
+        diag_score = match if seq1[i-1] == seq2[j-1] else mismatch
+        if current_score == score_matrix[i-1, j-1] + diag_score:
+            aligned1.append(seq1[i-1])
+            aligned2.append(seq2[j-1])
+            i -= 1
+            j -= 1
+        elif current_score == score_matrix[i-1, j] + gap:
+            aligned1.append(seq1[i-1])
+            aligned2.append('-')
+            i -= 1
+        elif current_score == score_matrix[i, j-1] + gap:
+            aligned1.append('-')
+            aligned2.append(seq2[j-1])
+            j -= 1
+        else:
+            break
+    
+    return {
+        'score': max_score,
+        'aligned_seq1': ''.join(reversed(aligned1)),
+        'aligned_seq2': ''.join(reversed(aligned2)),
+        'start1': i,
+        'start2': j
+    }
+
+
+def extract_ngrams(sequence, n=2):
+    """
+    Extract n-grams from sequence.
+    
+    Parameters:
+    -----------
+    sequence : str
+        Token sequence
+    n : int
+        N-gram size
+    
+    Returns:
+    --------
+    Counter : n-gram frequencies
+    """
+    if len(sequence) < n:
+        return Counter()
+    
+    ngrams = [sequence[i:i+n] for i in range(len(sequence) - n + 1)]
+    return Counter(ngrams)
+
+
+def compute_sequence_distance_matrix(sequences, method='levenshtein'):
+    """
+    Compute pairwise distance matrix for sequences.
+    
+    Parameters:
+    -----------
+    sequences : list of str
+        List of token sequences
+    method : str
+        'levenshtein' or 'normalized_levenshtein'
+    
+    Returns:
+    --------
+    np.array : distance matrix
+    """
+    n = len(sequences)
+    dist_matrix = np.zeros((n, n))
+    
+    for i in range(n):
+        for j in range(i + 1, n):
+            dist = levenshtein_distance(sequences[i], sequences[j])
+            
+            if method == 'normalized_levenshtein':
+                max_len = max(len(sequences[i]), len(sequences[j]))
+                if max_len > 0:
+                    dist = dist / max_len
+            
+            dist_matrix[i, j] = dist
+            dist_matrix[j, i] = dist
+    
+    return dist_matrix
+
+
+# ============================================================================
+# END SEQUENCE ANALYSIS FUNCTIONS
+# ============================================================================
 
 
 # Draw soccer pitch
@@ -1915,7 +2343,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration (IMO)", "2SA Method", "Heat Maps", "Clustering", "Extra"]
+                ["Visual Exploration (IMO)", "2SA Method", "Sequence Analysis", "Heat Maps", "Clustering", "Extra"]
             )
     
     # Main content
@@ -2326,6 +2754,550 @@ def main():
             
             st.markdown("---")
             st.success("✅ 2SA analysis complete! Use the tabs above to compare aligned and original trajectories.")
+    
+    elif analysis_method == "Sequence Analysis":
+        st.header("🔤 Sequence Analysis")
+        
+        st.info("""
+        **Translate trajectories to symbolic sequences for pattern mining and comparison:**
+        - **Spatial Discretization:** Divide court into zones (A, B, C, ...)
+        - **Temporal Sampling:** Event-based (per hit/bounce) or equal-interval
+        - **Sequence Comparison:** Edit distances and alignment (global/local)
+        - **Pattern Discovery:** Find common sub-patterns across rallies
+        """)
+        
+        # Get available configurations and objects
+        config_sources = df['config_source'].drop_duplicates().tolist()
+        objects = sorted(df['obj'].unique())
+        
+        # Time range
+        min_time = df['tst'].min()
+        max_time = df['tst'].max()
+        
+        st.markdown("---")
+        st.subheader("⚙️ Sequence Configuration")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.write("**Grid Resolution**")
+            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows")
+            grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols")
+            st.caption(f"Total zones: {grid_rows * grid_cols} (A-{chr(65 + grid_rows * grid_cols - 1)})")
+        
+        with col2:
+            st.write("**Temporal Resolution**")
+            sampling_mode = st.radio(
+                "Sampling mode",
+                ["Event-based", "Equal-interval"],
+                help="Event-based: one token per data point. Equal-interval: fixed time steps.",
+                key="seq_sampling"
+            )
+            
+            if sampling_mode == "Equal-interval":
+                delta_t = st.slider("Time interval (Δt)", 0.1, 2.0, 0.2, 0.1, key="seq_delta_t")
+                st.caption(f"Sampling every {delta_t}s")
+            else:
+                delta_t = 0.2  # Not used for event-based
+                st.caption("One token per data point")
+        
+        with col3:
+            st.write("**Compression**")
+            compress_runs = st.checkbox(
+                "Run-length compression",
+                value=True,
+                help="AAABBB → AB",
+                key="seq_compress"
+            )
+            
+            sequence_type = st.radio(
+                "Sequence type",
+                ["Per-entity", "Multi-entity"],
+                help="Per-entity: separate sequences for each object. Multi-entity: combined token per moment.",
+                key="seq_type"
+            )
+        
+        # Selection
+        st.markdown("---")
+        st.subheader("📊 Data Selection")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_configs = st.multiselect(
+                "Select configurations (rallies)",
+                config_sources,
+                default=config_sources[:min(5, len(config_sources))],
+                key="seq_configs"
+            )
+        
+        with col2:
+            selected_objects = st.multiselect(
+                "Select objects",
+                objects,
+                default=objects[:min(3, len(objects))],
+                help="For multi-entity: all selected objects combined. For per-entity: analyzed separately.",
+                key="seq_objects"
+            )
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            start_time = st.number_input(
+                "Start time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(min_time),
+                key="seq_start"
+            )
+        
+        with col4:
+            end_time = st.number_input(
+                "End time",
+                min_value=float(min_time),
+                max_value=float(max_time),
+                value=float(max_time),
+                key="seq_end"
+            )
+        
+        if not selected_configs:
+            st.warning("⚠️ Please select at least one configuration.")
+        elif not selected_objects:
+            st.warning("⚠️ Please select at least one object.")
+        else:
+            # Create grid
+            grid_info = create_spatial_grid(
+                court_type=st.session_state.court_type,
+                grid_rows=grid_rows,
+                grid_cols=grid_cols
+            )
+            
+            # Build sequences
+            st.markdown("---")
+            st.subheader("🔤 Generated Sequences")
+            
+            sequences_data = []
+            mode = 'event' if sampling_mode == "Event-based" else 'interval'
+            
+            if sequence_type == "Per-entity":
+                # Build per-entity sequences
+                for config in selected_configs:
+                    for obj_id in selected_objects:
+                        if mode == 'event':
+                            seq = build_event_based_sequence(
+                                df, config, obj_id, start_time, end_time,
+                                grid_info, compress=compress_runs
+                            )
+                        else:
+                            seq = build_interval_based_sequence(
+                                df, config, obj_id, start_time, end_time,
+                                grid_info, delta_t=delta_t, compress=compress_runs
+                            )
+                        
+                        if seq:
+                            sequences_data.append({
+                                'ID': f"{config}-Obj{obj_id}",
+                                'Config': config,
+                                'Object': obj_id,
+                                'Sequence': seq,
+                                'Length': len(seq)
+                            })
+            else:
+                # Multi-entity sequences
+                for config in selected_configs:
+                    seq = build_multi_entity_sequence(
+                        df, config, selected_objects, start_time, end_time,
+                        grid_info, mode=mode, delta_t=delta_t, compress=compress_runs
+                    )
+                    if seq:
+                        sequences_data.append({
+                            'ID': config,
+                            'Config': config,
+                            'Object': 'Multi',
+                            'Sequence': seq,
+                            'Length': len(seq)
+                        })
+            
+            if not sequences_data:
+                st.warning("⚠️ No sequences generated. Check your data and time range.")
+            else:
+                # Display sequences
+                seq_df = pd.DataFrame(sequences_data)
+                st.dataframe(seq_df, use_container_width=True, height=300)
+                
+                # Export sequences
+                csv_export = seq_df.to_csv(index=False)
+                st.download_button(
+                    "📥 Download sequences as CSV",
+                    csv_export,
+                    f"sequences_{sampling_mode}_{grid_rows}x{grid_cols}.csv",
+                    "text/csv"
+                )
+                
+                # Create tabs for analysis
+                st.markdown("---")
+                seq_tab1, seq_tab2, seq_tab3, seq_tab4 = st.tabs([
+                    "📏 Distance Matrix",
+                    "🔄 Pairwise Alignment",
+                    "📊 N-gram Patterns",
+                    "🌐 Spatial Grid View"
+                ])
+                
+                with seq_tab1:
+                    st.subheader("Distance Matrix & Clustering")
+                    
+                    st.write("**Distance Metric**")
+                    dist_method = st.radio(
+                        "Select metric",
+                        ["Levenshtein (edit distance)", "Normalized Levenshtein"],
+                        key="seq_dist_method"
+                    )
+                    
+                    # Compute distance matrix
+                    sequences = seq_df['Sequence'].tolist()
+                    method = 'levenshtein' if 'edit' in dist_method else 'normalized_levenshtein'
+                    dist_matrix = compute_sequence_distance_matrix(sequences, method=method)
+                    
+                    # Display matrix
+                    fig_dist = go.Figure(data=go.Heatmap(
+                        z=dist_matrix,
+                        x=seq_df['ID'],
+                        y=seq_df['ID'],
+                        colorscale='Reds',
+                        text=np.round(dist_matrix, 2),
+                        texttemplate='%{text}',
+                        textfont={"size": 10},
+                        hovertemplate='%{y} → %{x}<br>Distance: %{z:.2f}<extra></extra>'
+                    ))
+                    
+                    fig_dist.update_layout(
+                        title=f"Sequence Distance Matrix ({dist_method})",
+                        xaxis_title="Sequence",
+                        yaxis_title="Sequence",
+                        height=500
+                    )
+                    
+                    render_interactive_chart(fig_dist, "Darker red = more different sequences")
+                    
+                    # Clustering
+                    if len(sequences) >= 2:
+                        st.write("**Hierarchical Clustering**")
+                        
+                        n_clusters = st.slider(
+                            "Number of clusters",
+                            2,
+                            min(10, len(sequences)),
+                            min(3, len(sequences)),
+                            key="seq_clusters"
+                        )
+                        
+                        cluster_labels, linkage_matrix = perform_hierarchical_clustering(
+                            dist_matrix, n_clusters
+                        )
+                        
+                        # Add clusters to dataframe
+                        seq_df_clustered = seq_df.copy()
+                        seq_df_clustered['Cluster'] = cluster_labels
+                        
+                        st.write(f"**Cluster Assignment** ({n_clusters} clusters)")
+                        st.dataframe(seq_df_clustered, use_container_width=True, height=300)
+                        
+                        # Cluster statistics
+                        st.write("**Cluster Statistics**")
+                        cluster_stats = seq_df_clustered.groupby('Cluster').agg({
+                            'ID': 'count',
+                            'Length': ['mean', 'std']
+                        }).round(2)
+                        cluster_stats.columns = ['Count', 'Avg Length', 'Std Length']
+                        st.dataframe(cluster_stats, use_container_width=True)
+                
+                with seq_tab2:
+                    st.subheader("Pairwise Sequence Alignment")
+                    
+                    if len(sequences_data) < 2:
+                        st.info("Need at least 2 sequences for pairwise alignment.")
+                    else:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            seq1_idx = st.selectbox(
+                                "Sequence 1",
+                                range(len(sequences_data)),
+                                format_func=lambda i: sequences_data[i]['ID'],
+                                key="seq1_select"
+                            )
+                        
+                        with col2:
+                            seq2_idx = st.selectbox(
+                                "Sequence 2",
+                                range(len(sequences_data)),
+                                format_func=lambda i: sequences_data[i]['ID'],
+                                index=min(1, len(sequences_data) - 1),
+                                key="seq2_select"
+                            )
+                        
+                        seq1 = sequences_data[seq1_idx]['Sequence']
+                        seq2 = sequences_data[seq2_idx]['Sequence']
+                        
+                        # Alignment type
+                        align_type = st.radio(
+                            "Alignment type",
+                            ["Global (Needleman-Wunsch)", "Local (Smith-Waterman)"],
+                            help="Global: align entire sequences. Local: find best matching sub-sequences.",
+                            key="seq_align_type"
+                        )
+                        
+                        # Alignment parameters
+                        st.write("**Alignment Parameters**")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            match_score = st.number_input("Match score", -5, 10, 2, key="align_match")
+                        with col2:
+                            mismatch_penalty = st.number_input("Mismatch penalty", -10, 5, -1, key="align_mismatch")
+                        with col3:
+                            gap_penalty = st.number_input("Gap penalty", -10, 5, -1, key="align_gap")
+                        
+                        # Perform alignment
+                        if align_type.startswith("Global"):
+                            result = needleman_wunsch(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
+                            align_method = "Global"
+                        else:
+                            result = smith_waterman(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
+                            align_method = "Local"
+                        
+                        # Display results
+                        st.markdown("---")
+                        st.write(f"**{align_method} Alignment Results**")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Alignment Score", f"{result['score']:.1f}")
+                        with col2:
+                            if 'start1' in result:
+                                st.metric("Start positions", f"Seq1:{result['start1']}, Seq2:{result['start2']}")
+                            else:
+                                matches = sum(1 for a, b in zip(result['aligned_seq1'], result['aligned_seq2']) if a == b and a != '-')
+                                st.metric("Matches", matches)
+                        
+                        # Display alignment
+                        st.write("**Aligned Sequences:**")
+                        
+                        aligned1 = result['aligned_seq1']
+                        aligned2 = result['aligned_seq2']
+                        
+                        # Format alignment with colors
+                        alignment_html = "<div style='font-family: monospace; font-size: 14px;'>"
+                        alignment_html += f"<div><b>{sequences_data[seq1_idx]['ID']}:</b> "
+                        
+                        for c1, c2 in zip(aligned1, aligned2):
+                            if c1 == c2 and c1 != '-':
+                                color = 'green'
+                            elif c1 == '-' or c2 == '-':
+                                color = 'red'
+                            else:
+                                color = 'orange'
+                            alignment_html += f"<span style='color: {color};'>{c1}</span>"
+                        
+                        alignment_html += "</div><div><b>" + f"{sequences_data[seq2_idx]['ID']}:</b> "
+                        
+                        for c1, c2 in zip(aligned1, aligned2):
+                            if c1 == c2 and c1 != '-':
+                                color = 'green'
+                            elif c1 == '-' or c2 == '-':
+                                color = 'red'
+                            else:
+                                color = 'orange'
+                            alignment_html += f"<span style='color: {color};'>{c2}</span>"
+                        
+                        alignment_html += "</div></div>"
+                        
+                        st.markdown(alignment_html, unsafe_allow_html=True)
+                        st.caption("🟢 Match | 🟠 Mismatch | 🔴 Gap")
+                        
+                        # Compute statistics
+                        total_len = len(aligned1)
+                        matches = sum(1 for a, b in zip(aligned1, aligned2) if a == b and a != '-')
+                        mismatches = sum(1 for a, b in zip(aligned1, aligned2) if a != b and a != '-' and b != '-')
+                        gaps = sum(1 for a, b in zip(aligned1, aligned2) if a == '-' or b == '-')
+                        
+                        st.write("**Alignment Statistics:**")
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total length", total_len)
+                        with col2:
+                            st.metric("Matches", f"{matches} ({100*matches/total_len:.1f}%)")
+                        with col3:
+                            st.metric("Mismatches", f"{mismatches} ({100*mismatches/total_len:.1f}%)")
+                        with col4:
+                            st.metric("Gaps", f"{gaps} ({100*gaps/total_len:.1f}%)")
+                
+                with seq_tab3:
+                    st.subheader("N-gram Pattern Analysis")
+                    
+                    n_gram_size = st.slider("N-gram size", 2, 5, 2, key="seq_ngram_size")
+                    
+                    # Extract n-grams from all sequences
+                    all_ngrams = Counter()
+                    for seq_data in sequences_data:
+                        if sequence_type == "Per-entity":  # Only for simple sequences
+                            seq = seq_data['Sequence']
+                            ngrams = extract_ngrams(seq, n_gram_size)
+                            all_ngrams.update(ngrams)
+                    
+                    if sequence_type == "Multi-entity":
+                        st.info("N-gram analysis works best with per-entity sequences. Switch to 'Per-entity' mode for detailed pattern analysis.")
+                    elif not all_ngrams:
+                        st.warning("No n-grams found. Sequences may be too short.")
+                    else:
+                        # Display top patterns
+                        top_n = st.slider("Show top N patterns", 5, 50, 20, key="seq_top_ngrams")
+                        
+                        most_common = all_ngrams.most_common(top_n)
+                        
+                        ngram_df = pd.DataFrame(most_common, columns=['Pattern', 'Frequency'])
+                        ngram_df['Percentage'] = (100 * ngram_df['Frequency'] / ngram_df['Frequency'].sum()).round(2)
+                        
+                        st.write(f"**Top {top_n} {n_gram_size}-grams:**")
+                        st.dataframe(ngram_df, use_container_width=True, height=400)
+                        
+                        # Visualize frequency
+                        fig_ngram = go.Figure(data=[
+                            go.Bar(
+                                x=ngram_df['Pattern'],
+                                y=ngram_df['Frequency'],
+                                text=ngram_df['Frequency'],
+                                textposition='auto',
+                                marker=dict(color='steelblue')
+                            )
+                        ])
+                        
+                        fig_ngram.update_layout(
+                            title=f"Most Common {n_gram_size}-grams",
+                            xaxis_title="Pattern",
+                            yaxis_title="Frequency",
+                            height=400
+                        )
+                        
+                        render_interactive_chart(fig_ngram)
+                        
+                        # Per-sequence n-gram analysis
+                        st.write("**Per-Sequence N-gram Breakdown:**")
+                        
+                        for seq_data in sequences_data:
+                            with st.expander(f"{seq_data['ID']} - {seq_data['Sequence'][:50]}..."):
+                                seq_ngrams = extract_ngrams(seq_data['Sequence'], n_gram_size)
+                                if seq_ngrams:
+                                    seq_ngram_df = pd.DataFrame(
+                                        seq_ngrams.most_common(10),
+                                        columns=['Pattern', 'Count']
+                                    )
+                                    st.dataframe(seq_ngram_df, use_container_width=True)
+                                else:
+                                    st.info("No n-grams in this sequence.")
+                
+                with seq_tab4:
+                    st.subheader("Spatial Grid Visualization")
+                    
+                    # Show grid overlay on court
+                    fig_grid = create_pitch_figure(st.session_state.court_type)
+                    
+                    # Draw grid lines
+                    x_bins = grid_info['x_bins']
+                    y_bins = grid_info['y_bins']
+                    
+                    # Vertical lines
+                    for x in x_bins:
+                        fig_grid.add_trace(go.Scatter(
+                            x=[x, x],
+                            y=[y_bins[0], y_bins[-1]],
+                            mode='lines',
+                            line=dict(color='gray', width=1, dash='dash'),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+                    
+                    # Horizontal lines
+                    for y in y_bins:
+                        fig_grid.add_trace(go.Scatter(
+                            x=[x_bins[0], x_bins[-1]],
+                            y=[y, y],
+                            mode='lines',
+                            line=dict(color='gray', width=1, dash='dash'),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+                    
+                    # Add zone labels
+                    for row in range(grid_rows):
+                        for col in range(grid_cols):
+                            zone_idx = row * grid_cols + col
+                            zone_label = grid_info['zone_labels'][zone_idx]
+                            
+                            x_center = (x_bins[col] + x_bins[col + 1]) / 2
+                            y_center = (y_bins[row] + y_bins[row + 1]) / 2
+                            
+                            fig_grid.add_annotation(
+                                x=x_center,
+                                y=y_center,
+                                text=zone_label,
+                                showarrow=False,
+                                font=dict(size=16, color='black', family='Arial Black'),
+                                bgcolor='rgba(255, 255, 255, 0.7)',
+                                borderpad=4
+                            )
+                    
+                    fig_grid.update_layout(
+                        title=f"Spatial Grid ({grid_rows}×{grid_cols} = {grid_rows * grid_cols} zones)",
+                        height=600
+                    )
+                    
+                    render_interactive_chart(fig_grid, "Court divided into symbolic zones for sequence encoding")
+                    
+                    # Show zone statistics
+                    st.write("**Zone Coverage Statistics**")
+                    
+                    # Count which zones are visited
+                    zone_visits = Counter()
+                    for seq_data in sequences_data:
+                        if sequence_type == "Per-entity":
+                            for char in seq_data['Sequence']:
+                                zone_visits[char] += 1
+                    
+                    if zone_visits:
+                        zone_stats = pd.DataFrame([
+                            {'Zone': zone, 'Visits': count}
+                            for zone, count in sorted(zone_visits.items())
+                        ])
+                        
+                        # Create heatmap of zone visits
+                        visit_matrix = np.zeros((grid_rows, grid_cols))
+                        for zone, count in zone_visits.items():
+                            idx = ord(zone) - 65
+                            row = idx // grid_cols
+                            col = idx % grid_cols
+                            visit_matrix[row, col] = count
+                        
+                        fig_heatmap = go.Figure(data=go.Heatmap(
+                            z=visit_matrix,
+                            colorscale='YlOrRd',
+                            text=[[grid_info['zone_labels'][r * grid_cols + c] 
+                                   for c in range(grid_cols)] 
+                                  for r in range(grid_rows)],
+                            texttemplate='%{text}<br>%{z}',
+                            textfont={"size": 10},
+                            hovertemplate='Zone: %{text}<br>Visits: %{z}<extra></extra>'
+                        ))
+                        
+                        fig_heatmap.update_layout(
+                            title="Zone Visit Frequency",
+                            xaxis_title="Column",
+                            yaxis_title="Row",
+                            height=400
+                        )
+                        
+                        render_interactive_chart(fig_heatmap, "Hotter colors = more frequently visited zones")
+                    else:
+                        st.info("No zone statistics available for multi-entity sequences.")
     
     elif analysis_method == "Heat Maps":
         st.header("🔥 Heat Maps")
