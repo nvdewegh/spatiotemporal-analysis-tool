@@ -2342,6 +2342,12 @@ def main():
                     st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
                 st.session_state.uploaded_filenames = uploaded_names
                 st.session_state.config_sources = df['config_source'].drop_duplicates().tolist()
+                
+                # Initialize shared selections when new data is loaded
+                config_sources = df['config_source'].drop_duplicates().tolist()
+                objects = sorted(df['obj'].unique())
+                st.session_state.shared_selected_configs = config_sources
+                st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
             else:
                 st.error("No valid data found in the uploaded file(s). Please verify the format.")
                 df = None
@@ -2454,14 +2460,21 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared configuration state if not exists
+        # Initialize shared state if not exists
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
+        if 'shared_selected_objects' not in st.session_state:
+            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
         
-        # Ensure default only includes configs that exist in current data
-        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        if not valid_defaults:
-            valid_defaults = config_sources
+        # Validate shared selections against current data
+        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Use valid defaults, or fall back to all/first few if none are valid
+        if not valid_configs:
+            valid_configs = config_sources
+        if not valid_objects:
+            valid_objects = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -2476,7 +2489,7 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_defaults,
+                default=valid_configs,
                 key="visual_configs"
             )
             # Update shared state
@@ -2486,9 +2499,11 @@ def main():
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=objects[:min(5, len(objects))],
+                default=valid_objects,
                 key="visual_objects"
             )
+            # Update shared state
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -2627,14 +2642,21 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared configuration state if not exists
+        # Initialize shared state if not exists
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
+        if 'shared_selected_objects' not in st.session_state:
+            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
         
-        # Ensure default only includes configs that exist in current data
-        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        if not valid_defaults:
-            valid_defaults = config_sources
+        # Validate shared selections against current data
+        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Use valid defaults, or fall back to all/first few if none are valid
+        if not valid_configs:
+            valid_configs = config_sources
+        if not valid_objects:
+            valid_objects = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -2649,7 +2671,7 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_defaults,
+                default=valid_configs,
                 key="2sa_configs"
             )
             # Update shared state
@@ -2659,9 +2681,11 @@ def main():
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=objects[:min(5, len(objects))],
+                default=valid_objects,
                 key="2sa_objects"
             )
+            # Update shared state
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -2985,24 +3009,44 @@ def main():
         st.markdown("---")
         st.subheader("📊 Data Selection")
         
+        # Initialize shared state if not exists
+        if 'shared_selected_configs' not in st.session_state:
+            st.session_state.shared_selected_configs = config_sources[:min(5, len(config_sources))]
+        if 'shared_selected_objects' not in st.session_state:
+            st.session_state.shared_selected_objects = objects[:min(3, len(objects))]
+        
+        # Validate shared selections against current data
+        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Use valid defaults, or fall back to first few if none are valid
+        if not valid_configs:
+            valid_configs = config_sources[:min(5, len(config_sources))]
+        if not valid_objects:
+            valid_objects = objects[:min(3, len(objects))]
+        
         col1, col2 = st.columns(2)
         
         with col1:
             selected_configs = st.multiselect(
                 "Select configurations (rallies)",
                 config_sources,
-                default=config_sources[:min(5, len(config_sources))],
+                default=valid_configs,
                 key="seq_configs"
             )
+            # Update shared state
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
                 "Select objects",
                 objects,
-                default=objects[:min(3, len(objects))],
+                default=valid_objects,
                 help="For multi-entity: all selected objects combined. For per-entity: analyzed separately.",
                 key="seq_objects"
             )
+            # Update shared state
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -3405,21 +3449,28 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared configuration state if not exists
+        # Initialize shared state if not exists
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
+        if 'shared_selected_objects' not in st.session_state:
+            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
         
-        # Ensure default only includes configs that exist in current data
-        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        if not valid_defaults:
-            valid_defaults = config_sources
+        # Validate shared selections against current data
+        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Use valid defaults, or fall back to all/first few if none are valid
+        if not valid_configs:
+            valid_configs = config_sources
+        if not valid_objects:
+            valid_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_defaults,
+                default=valid_configs,
                 key="clustering_configs"
             )
             # Update shared state
@@ -3428,9 +3479,11 @@ def main():
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=objects[:min(5, len(objects))],
+                default=valid_objects,
                 key="clustering_objects"
             )
+            # Update shared state
+            st.session_state.shared_selected_objects = selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
@@ -5166,22 +5219,42 @@ def main():
         # Get common parameters
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
+        
+        # Initialize shared state if not exists
+        if 'shared_selected_configs' not in st.session_state:
+            st.session_state.shared_selected_configs = config_sources
+        if 'shared_selected_objects' not in st.session_state:
+            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
+        
+        # Validate shared selections against current data
+        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Use valid defaults, or fall back to all/first few if none are valid
+        if not valid_configs:
+            valid_configs = config_sources
+        if not valid_objects:
+            valid_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=config_sources,
+                default=valid_configs,
                 key="extra_configs"
             )
+            # Update shared state
+            st.session_state.shared_selected_configs = selected_configs
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=objects[:min(5, len(objects))],
+                default=valid_objects,
                 key="extra_objects"
             )
+            # Update shared state
+            st.session_state.shared_selected_objects = selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
