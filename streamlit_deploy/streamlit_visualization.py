@@ -2370,6 +2370,34 @@ def main():
                 "Select method",
                 ["Visual Exploration", "Clustering", "Sequence Analysis", "Heat Maps", "Extra"]
             )
+            
+            # Track method changes to sync widget states with shared state
+            if 'last_analysis_method' not in st.session_state:
+                st.session_state.last_analysis_method = analysis_method
+            
+            if st.session_state.last_analysis_method != analysis_method:
+                # Method changed - sync widget states from shared state
+                # This ensures widgets reflect the shared selection when switching methods
+                config_sources = df['config_source'].drop_duplicates().tolist()
+                objects = sorted(df['obj'].unique())
+                
+                # Get valid shared selections
+                valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+                valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+                
+                # Sync all widget states
+                st.session_state.visual_configs = valid_configs if valid_configs else config_sources
+                st.session_state.visual_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                st.session_state['2sa_configs'] = valid_configs if valid_configs else config_sources
+                st.session_state['2sa_objects'] = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                st.session_state.seq_configs = valid_configs if valid_configs else config_sources
+                st.session_state.seq_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                st.session_state.clustering_configs = valid_configs if valid_configs else config_sources
+                st.session_state.clustering_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                st.session_state.extra_configs = valid_configs if valid_configs else config_sources
+                st.session_state.extra_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                
+                st.session_state.last_analysis_method = analysis_method
     
     # Main content
     if df is None:
