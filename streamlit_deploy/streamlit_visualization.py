@@ -2801,8 +2801,7 @@ def main():
             - Compressed sequence: A B H ...
             
             **Adjust the grid resolution below** to change the granularity of spatial encoding.
-            Finer grids capture more detail but create longer sequences.
-            Coarser grids are more abstract but may miss important spatial patterns.
+            Finer grids capture more spatial detail, while coarser grids provide a more abstract representation.
             
             📊 **Tip:** Check the "Spatial Grid View" tab after generating sequences to see the zone layout!
             """)
