@@ -2477,6 +2477,12 @@ def main():
         st.markdown("---")
         st.subheader("📊 Visualization Settings")
         
+        # Ensure widget state matches shared state before creating widgets
+        if 'visual_configs' not in st.session_state or st.session_state.visual_configs != valid_configs:
+            st.session_state.visual_configs = valid_configs
+        if 'visual_objects' not in st.session_state or st.session_state.visual_objects != valid_objects:
+            st.session_state.visual_objects = valid_objects
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -2652,6 +2658,12 @@ def main():
         
         st.markdown("---")
         st.subheader("📊 Settings")
+        
+        # Ensure widget state matches shared state before creating widgets
+        if '2sa_configs' not in st.session_state or st.session_state['2sa_configs'] != valid_configs:
+            st.session_state['2sa_configs'] = valid_configs
+        if '2sa_objects' not in st.session_state or st.session_state['2sa_objects'] != valid_objects:
+            st.session_state['2sa_objects'] = valid_objects
         
         col1, col2 = st.columns(2)
         
@@ -3006,6 +3018,12 @@ def main():
             valid_configs = config_sources[:min(5, len(config_sources))]
         if not valid_objects:
             valid_objects = objects[:min(3, len(objects))]
+        
+        # Ensure widget state matches shared state before creating widgets
+        if 'seq_configs' not in st.session_state or st.session_state.seq_configs != valid_configs:
+            st.session_state.seq_configs = valid_configs
+        if 'seq_objects' not in st.session_state or st.session_state.seq_objects != valid_objects:
+            st.session_state.seq_objects = valid_objects
         
         col1, col2 = st.columns(2)
         
@@ -3440,6 +3458,12 @@ def main():
             valid_configs = config_sources
         if not valid_objects:
             valid_objects = objects[:min(5, len(objects))]
+
+        # Ensure widget state matches shared state before creating widgets
+        if 'clustering_configs' not in st.session_state or st.session_state.clustering_configs != valid_configs:
+            st.session_state.clustering_configs = valid_configs
+        if 'clustering_objects' not in st.session_state or st.session_state.clustering_objects != valid_objects:
+            st.session_state.clustering_objects = valid_objects
 
         col1, col2 = st.columns(2)
         with col1:
@@ -5205,6 +5229,12 @@ def main():
             valid_configs = config_sources
         if not valid_objects:
             valid_objects = objects[:min(5, len(objects))]
+
+        # Ensure widget state matches shared state before creating widgets
+        if 'extra_configs' not in st.session_state or st.session_state.extra_configs != valid_configs:
+            st.session_state.extra_configs = valid_configs
+        if 'extra_objects' not in st.session_state or st.session_state.extra_objects != valid_objects:
+            st.session_state.extra_objects = valid_objects
 
         col1, col2 = st.columns(2)
         with col1:
