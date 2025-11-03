@@ -2460,13 +2460,7 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared state if not exists
-        if 'shared_selected_configs' not in st.session_state:
-            st.session_state.shared_selected_configs = config_sources
-        if 'shared_selected_objects' not in st.session_state:
-            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
-        
-        # Validate shared selections against current data
+        # Validate shared selections against current data (don't re-initialize!)
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
@@ -2642,13 +2636,7 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared state if not exists
-        if 'shared_selected_configs' not in st.session_state:
-            st.session_state.shared_selected_configs = config_sources
-        if 'shared_selected_objects' not in st.session_state:
-            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
-        
-        # Validate shared selections against current data
+        # Validate shared selections against current data (don't re-initialize!)
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
@@ -3009,13 +2997,7 @@ def main():
         st.markdown("---")
         st.subheader("📊 Data Selection")
         
-        # Initialize shared state if not exists
-        if 'shared_selected_configs' not in st.session_state:
-            st.session_state.shared_selected_configs = config_sources[:min(5, len(config_sources))]
-        if 'shared_selected_objects' not in st.session_state:
-            st.session_state.shared_selected_objects = objects[:min(3, len(objects))]
-        
-        # Validate shared selections against current data
+        # Validate shared selections against current data (don't re-initialize!)
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
@@ -3449,13 +3431,7 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared state if not exists
-        if 'shared_selected_configs' not in st.session_state:
-            st.session_state.shared_selected_configs = config_sources
-        if 'shared_selected_objects' not in st.session_state:
-            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
-        
-        # Validate shared selections against current data
+        # Validate shared selections against current data (don't re-initialize!)
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
@@ -5220,13 +5196,7 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Initialize shared state if not exists
-        if 'shared_selected_configs' not in st.session_state:
-            st.session_state.shared_selected_configs = config_sources
-        if 'shared_selected_objects' not in st.session_state:
-            st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
-        
-        # Validate shared selections against current data
+        # Validate shared selections against current data (don't re-initialize!)
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
