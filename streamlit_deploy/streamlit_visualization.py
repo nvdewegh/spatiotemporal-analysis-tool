@@ -2802,8 +2802,6 @@ def main():
             
             **Adjust the grid resolution below** to change the granularity of spatial encoding.
             Finer grids capture more spatial detail, while coarser grids provide a more abstract representation.
-            
-            📊 **Tip:** Check the "Spatial Grid View" tab after generating sequences to see the zone layout!
             """)
         
         # Get available configurations and objects
@@ -2833,29 +2831,7 @@ def main():
             
             st.caption(f"Court zones: {grid_rows} × {grid_cols} = {grid_rows * grid_cols}")
             st.caption(f"Total zones (with buffer): {actual_rows} × {actual_cols} = {total_zones}")
-            
-            # Live preview of grid layout with buffer zones highlighted
-            st.markdown("**Grid Layout Preview:**")
-            st.caption("🟦 = Court zones | 🟨 = Buffer zones (out-of-bounds)")
-            preview_html = "<div style='font-family: monospace; font-size: 10px; line-height: 1.4;'>"
-            for row in range(actual_rows):
-                preview_html += "<div>"
-                for col in range(actual_cols):
-                    zone_idx = row * actual_cols + col
-                    zone_label = chr(65 + zone_idx) if zone_idx < 26 else chr(65 + (zone_idx // 26) - 1) + chr(65 + (zone_idx % 26))
-                    
-                    # Determine if buffer zone
-                    is_buffer = (col == 0 or col == actual_cols - 1 or 
-                               row == 0 or row == actual_rows - 1)
-                    
-                    bg_color = '#ffffcc' if is_buffer else '#e6f2ff'  # Yellow for buffer, light blue for court
-                    border_color = '#999' if is_buffer else '#4CAF50'
-                    
-                    preview_html += f"<span style='display: inline-block; width: 28px; text-align: center; border: 1px solid {border_color}; background: {bg_color}; padding: 2px; margin: 1px;'><b>{zone_label}</b></span>"
-                preview_html += "</div>"
-            preview_html += "</div>"
-            st.markdown(preview_html, unsafe_allow_html=True)
-            st.caption("↑ Left-to-right, top-to-bottom labeling (includes buffer zones)")
+            st.info("💡 See the **Spatial Grid View** tab after generating sequences to visualize the zone layout on the tennis court.")
         
         with col2:
             st.write("**Temporal Resolution**")
