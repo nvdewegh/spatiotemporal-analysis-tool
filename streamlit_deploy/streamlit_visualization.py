@@ -2477,12 +2477,6 @@ def main():
         st.markdown("---")
         st.subheader("📊 Visualization Settings")
         
-        # Initialize widget state from shared state (only if not already set)
-        if 'visual_configs' not in st.session_state:
-            st.session_state.visual_configs = valid_configs
-        if 'visual_objects' not in st.session_state:
-            st.session_state.visual_objects = valid_objects
-        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -2658,12 +2652,6 @@ def main():
         
         st.markdown("---")
         st.subheader("📊 Settings")
-        
-        # Initialize widget state from shared state (only if not already set)
-        if '2sa_configs' not in st.session_state:
-            st.session_state['2sa_configs'] = valid_configs
-        if '2sa_objects' not in st.session_state:
-            st.session_state['2sa_objects'] = valid_objects
         
         col1, col2 = st.columns(2)
         
@@ -3018,12 +3006,6 @@ def main():
             valid_configs = config_sources[:min(5, len(config_sources))]
         if not valid_objects:
             valid_objects = objects[:min(3, len(objects))]
-        
-        # Initialize widget state from shared state (only if not already set)
-        if 'seq_configs' not in st.session_state:
-            st.session_state.seq_configs = valid_configs
-        if 'seq_objects' not in st.session_state:
-            st.session_state.seq_objects = valid_objects
         
         col1, col2 = st.columns(2)
         
@@ -3458,12 +3440,6 @@ def main():
             valid_configs = config_sources
         if not valid_objects:
             valid_objects = objects[:min(5, len(objects))]
-
-        # Initialize widget state from shared state (only if not already set)
-        if 'clustering_configs' not in st.session_state:
-            st.session_state.clustering_configs = valid_configs
-        if 'clustering_objects' not in st.session_state:
-            st.session_state.clustering_objects = valid_objects
 
         col1, col2 = st.columns(2)
         with col1:
@@ -5229,12 +5205,6 @@ def main():
             valid_configs = config_sources
         if not valid_objects:
             valid_objects = objects[:min(5, len(objects))]
-
-        # Initialize widget state from shared state (only if not already set)
-        if 'extra_configs' not in st.session_state:
-            st.session_state.extra_configs = valid_configs
-        if 'extra_objects' not in st.session_state:
-            st.session_state.extra_objects = valid_objects
 
         col1, col2 = st.columns(2)
         with col1:
