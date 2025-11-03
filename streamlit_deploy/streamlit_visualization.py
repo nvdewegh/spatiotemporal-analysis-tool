@@ -2464,16 +2464,18 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Force widget state to match shared state BEFORE creating widgets
-        if valid_configs:
-            st.session_state.visual_configs = valid_configs
-        elif 'visual_configs' not in st.session_state:
-            st.session_state.visual_configs = config_sources
+        # Initialize widget state ONLY if it doesn't exist
+        if 'visual_configs' not in st.session_state:
+            if valid_configs:
+                st.session_state.visual_configs = valid_configs
+            else:
+                st.session_state.visual_configs = config_sources
             
-        if valid_objects:
-            st.session_state.visual_objects = valid_objects
-        elif 'visual_objects' not in st.session_state:
-            st.session_state.visual_objects = objects[:min(5, len(objects))]
+        if 'visual_objects' not in st.session_state:
+            if valid_objects:
+                st.session_state.visual_objects = valid_objects
+            else:
+                st.session_state.visual_objects = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -2643,16 +2645,18 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Force widget state to match shared state BEFORE creating widgets
-        if valid_configs:
-            st.session_state['2sa_configs'] = valid_configs
-        elif '2sa_configs' not in st.session_state:
-            st.session_state['2sa_configs'] = config_sources
+        # Initialize widget state ONLY if it doesn't exist
+        if '2sa_configs' not in st.session_state:
+            if valid_configs:
+                st.session_state['2sa_configs'] = valid_configs
+            else:
+                st.session_state['2sa_configs'] = config_sources
             
-        if valid_objects:
-            st.session_state['2sa_objects'] = valid_objects
-        elif '2sa_objects' not in st.session_state:
-            st.session_state['2sa_objects'] = objects[:min(5, len(objects))]
+        if '2sa_objects' not in st.session_state:
+            if valid_objects:
+                st.session_state['2sa_objects'] = valid_objects
+            else:
+                st.session_state['2sa_objects'] = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -3007,16 +3011,18 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Force widget state to match shared state BEFORE creating widgets
-        if valid_configs:
-            st.session_state.seq_configs = valid_configs
-        elif 'seq_configs' not in st.session_state:
-            st.session_state.seq_configs = config_sources[:min(5, len(config_sources))]
+        # Initialize widget state ONLY if it doesn't exist
+        if 'seq_configs' not in st.session_state:
+            if valid_configs:
+                st.session_state.seq_configs = valid_configs
+            else:
+                st.session_state.seq_configs = config_sources[:min(5, len(config_sources))]
             
-        if valid_objects:
-            st.session_state.seq_objects = valid_objects
-        elif 'seq_objects' not in st.session_state:
-            st.session_state.seq_objects = objects[:min(3, len(objects))]
+        if 'seq_objects' not in st.session_state:
+            if valid_objects:
+                st.session_state.seq_objects = valid_objects
+            else:
+                st.session_state.seq_objects = objects[:min(3, len(objects))]
         
         col1, col2 = st.columns(2)
         
@@ -3444,16 +3450,18 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Force widget state to match shared state BEFORE creating widgets
-        if valid_configs:
-            st.session_state.clustering_configs = valid_configs
-        elif 'clustering_configs' not in st.session_state:
-            st.session_state.clustering_configs = config_sources
+        # Initialize widget state ONLY if it doesn't exist
+        if 'clustering_configs' not in st.session_state:
+            if valid_configs:
+                st.session_state.clustering_configs = valid_configs
+            else:
+                st.session_state.clustering_configs = config_sources
             
-        if valid_objects:
-            st.session_state.clustering_objects = valid_objects
-        elif 'clustering_objects' not in st.session_state:
-            st.session_state.clustering_objects = objects[:min(5, len(objects))]
+        if 'clustering_objects' not in st.session_state:
+            if valid_objects:
+                st.session_state.clustering_objects = valid_objects
+            else:
+                st.session_state.clustering_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
@@ -5213,16 +5221,18 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Force widget state to match shared state BEFORE creating widgets
-        if valid_configs:
-            st.session_state.extra_configs = valid_configs
-        elif 'extra_configs' not in st.session_state:
-            st.session_state.extra_configs = config_sources
+        # Initialize widget state ONLY if it doesn't exist
+        if 'extra_configs' not in st.session_state:
+            if valid_configs:
+                st.session_state.extra_configs = valid_configs
+            else:
+                st.session_state.extra_configs = config_sources
             
-        if valid_objects:
-            st.session_state.extra_objects = valid_objects
-        elif 'extra_objects' not in st.session_state:
-            st.session_state.extra_objects = objects[:min(5, len(objects))]
+        if 'extra_objects' not in st.session_state:
+            if valid_objects:
+                st.session_state.extra_objects = valid_objects
+            else:
+                st.session_state.extra_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
