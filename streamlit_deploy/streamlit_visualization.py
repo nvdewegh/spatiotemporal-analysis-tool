@@ -2458,6 +2458,11 @@ def main():
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
         
+        # Ensure default only includes configs that exist in current data
+        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        if not valid_defaults:
+            valid_defaults = config_sources
+        
         # Time range
         min_time = df['tst'].min()
         max_time = df['tst'].max()
@@ -2471,7 +2476,7 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=st.session_state.shared_selected_configs,
+                default=valid_defaults,
                 key="visual_configs"
             )
             # Update shared state
@@ -2626,6 +2631,11 @@ def main():
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
         
+        # Ensure default only includes configs that exist in current data
+        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        if not valid_defaults:
+            valid_defaults = config_sources
+        
         # Time range
         min_time = df['tst'].min()
         max_time = df['tst'].max()
@@ -2639,7 +2649,7 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=st.session_state.shared_selected_configs,
+                default=valid_defaults,
                 key="2sa_configs"
             )
             # Update shared state
@@ -2838,10 +2848,8 @@ def main():
         
         st.info("""
         **Understanding the Grid:**
-        - The **green area** shows the tennis court with white court markings
         - The **tennis field in the broad sense** (light gray zones) extends beyond the court boundaries to capture out-of-bounds positions
-        - All zones are labeled **A, B, C,** etc. (row by row from top to bottom, filling each row left to right)
-        - Players often move outside the court boundaries (behind baseline, outside sidelines) - these positions are also captured
+        - All zones are labeled **A, B, C,** etc. (row by row from bottom to top, filling each row left to right)
         - Each trajectory position is mapped to the zone it falls in
         - Adjust the grid resolution sliders above to see how it affects the zone layout
         """)
@@ -2933,14 +2941,7 @@ def main():
                     borderpad=6
                 )
         
-        total_zones_viz = actual_rows_viz * actual_cols_viz
-        court_zones_viz = (actual_rows_viz - 2) * (actual_cols_viz - 2)
-        buffer_zones_viz = total_zones_viz - court_zones_viz
-        
         fig_grid.update_layout(
-            title=f"<b>Spatial Discretization Grid with Buffer Zones</b><br>" + 
-                  f"<sup>{actual_rows_viz} rows × {actual_cols_viz} columns = {total_zones_viz} total zones " +
-                  f"({court_zones_viz} court zones + {buffer_zones_viz} buffer zones)</sup>",
             height=700,
             xaxis=dict(range=[x_bins[0] - 0.5, x_bins[-1] + 0.5]),
             yaxis=dict(range=[y_bins[0] - 0.5, y_bins[-1] + 0.5])
@@ -3407,13 +3408,18 @@ def main():
         # Initialize shared configuration state if not exists
         if 'shared_selected_configs' not in st.session_state:
             st.session_state.shared_selected_configs = config_sources
+        
+        # Ensure default only includes configs that exist in current data
+        valid_defaults = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+        if not valid_defaults:
+            valid_defaults = config_sources
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=st.session_state.shared_selected_configs,
+                default=valid_defaults,
                 key="clustering_configs"
             )
             # Update shared state
