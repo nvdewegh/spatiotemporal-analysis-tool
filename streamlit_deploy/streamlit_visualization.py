@@ -2363,7 +2363,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration (IMO)", "2SA Method", "Sequence Analysis", "Heat Maps", "Clustering", "Extra"]
+                ["Visual Exploration", "2SA Method", "Sequence Analysis", "Heat Maps", "Clustering", "Extra"]
             )
     
     # Main content
@@ -2440,7 +2440,7 @@ def main():
         return
     
     # Analysis-specific interface
-    if analysis_method == "Visual Exploration (IMO)":
+    if analysis_method == "Visual Exploration":
         st.header("👁️ Visual Exploration")
         
         st.info("""
