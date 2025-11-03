@@ -2365,6 +2365,47 @@ def main():
             )
             st.session_state.court_type = court_type
             
+            # --- CENTRALIZED SELECTION PANEL ---
+            st.header("🎯 Data Selection")
+            st.markdown("**Manage your selections here** - these selections apply to all analysis methods.")
+            
+            config_sources = df['config_source'].drop_duplicates().tolist()
+            objects = sorted(df['obj'].unique())
+            
+            # Configuration selection
+            st.subheader("Configurations (Rallies)")
+            selected_configs = st.multiselect(
+                "Select configurations to analyze",
+                config_sources,
+                default=st.session_state.shared_selected_configs,
+                key="sidebar_configs",
+                help="These configurations will be used across all analysis methods"
+            )
+            st.session_state.shared_selected_configs = selected_configs
+            
+            # Object selection
+            st.subheader("Objects (Players/Entities)")
+            selected_objects = st.multiselect(
+                "Select objects to analyze",
+                objects,
+                default=st.session_state.shared_selected_objects,
+                key="sidebar_objects",
+                help="These objects will be used across all analysis methods"
+            )
+            st.session_state.shared_selected_objects = selected_objects
+            
+            # Display current selection summary
+            with st.expander("📋 Current Selection Summary", expanded=False):
+                st.write(f"**Configurations:** {len(selected_configs)} of {len(config_sources)} selected")
+                if selected_configs:
+                    st.write(", ".join(selected_configs))
+                st.write(f"**Objects:** {len(selected_objects)} of {len(objects)} selected")
+                if selected_objects:
+                    st.write(", ".join(map(str, selected_objects)))
+            
+            st.divider()
+            # --- END CENTRALIZED SELECTION PANEL ---
+            
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
@@ -2454,55 +2495,20 @@ def main():
         - **Animated Trajectories:** Watch movement over time
         - **Time Point View:** Examine trajectories at specific moments
         - **Average Positions:** Calculate and visualize mean positions
+        
+        **💡 Tip:** Use the sidebar to select which configurations and objects to analyze.
         """)
         
-        # Get available configurations and objects
-        config_sources = df['config_source'].drop_duplicates().tolist()
-        objects = sorted(df['obj'].unique())
-        
-        # Synchronize widget state from shared state
-        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
-        
-        # Initialize widget state ONLY if it doesn't exist
-        if 'visual_configs' not in st.session_state:
-            if valid_configs:
-                st.session_state.visual_configs = valid_configs
-            else:
-                st.session_state.visual_configs = config_sources
-            
-        if 'visual_objects' not in st.session_state:
-            if valid_objects:
-                st.session_state.visual_objects = valid_objects
-            else:
-                st.session_state.visual_objects = objects[:min(5, len(objects))]
+        # Use selections from sidebar
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
         
         # Time range
         min_time = df['tst'].min()
         max_time = df['tst'].max()
         
         st.markdown("---")
-        st.subheader("📊 Visualization Settings")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_configs = st.multiselect(
-                "Select configuration(s)",
-                config_sources,
-                key="visual_configs"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_configs = selected_configs
-        
-        with col2:
-            selected_objects = st.multiselect(
-                "Select object(s)",
-                objects,
-                key="visual_objects"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_objects = selected_objects
+        st.subheader("📊 Time Range Settings")
         
         col3, col4 = st.columns(2)
         
@@ -3003,47 +3009,11 @@ def main():
                 key="seq_type"
             )
         
-        # Selection
+        # Use selections from sidebar
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
+        
         st.markdown("---")
-        st.subheader("📊 Data Selection")
-        
-        # Synchronize widget state from shared state
-        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
-        
-        # Initialize widget state ONLY if it doesn't exist
-        if 'seq_configs' not in st.session_state:
-            if valid_configs:
-                st.session_state.seq_configs = valid_configs
-            else:
-                st.session_state.seq_configs = config_sources[:min(5, len(config_sources))]
-            
-        if 'seq_objects' not in st.session_state:
-            if valid_objects:
-                st.session_state.seq_objects = valid_objects
-            else:
-                st.session_state.seq_objects = objects[:min(3, len(objects))]
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_configs = st.multiselect(
-                "Select configurations (rallies)",
-                config_sources,
-                key="seq_configs"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_configs = selected_configs
-        
-        with col2:
-            selected_objects = st.multiselect(
-                "Select objects",
-                objects,
-                help="For multi-entity: all selected objects combined. For per-entity: analyzed separately.",
-                key="seq_objects"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -3440,47 +3410,9 @@ def main():
 
         st.markdown('---')
         
-        st.subheader("📊 Data Selection")
-
-        # Get common parameters for clustering
-        config_sources = df['config_source'].drop_duplicates().tolist()
-        objects = sorted(df['obj'].unique())
-        
-        # Get valid defaults from shared state
-        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
-        
-        # Initialize widget state ONLY if it doesn't exist
-        if 'clustering_configs' not in st.session_state:
-            if valid_configs:
-                st.session_state.clustering_configs = valid_configs
-            else:
-                st.session_state.clustering_configs = config_sources
-            
-        if 'clustering_objects' not in st.session_state:
-            if valid_objects:
-                st.session_state.clustering_objects = valid_objects
-            else:
-                st.session_state.clustering_objects = objects[:min(5, len(objects))]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_configs = st.multiselect(
-                "Select configuration(s)",
-                config_sources,
-                key="clustering_configs"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_configs = selected_configs
-            
-        with col2:
-            selected_objects = st.multiselect(
-                "Select object(s)",
-                objects,
-                key="clustering_objects"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_objects = selected_objects
+        # Use selections from sidebar
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
@@ -5213,45 +5145,9 @@ def main():
 
         st.markdown('---')
 
-        # Get common parameters
-        config_sources = df['config_source'].drop_duplicates().tolist()
-        objects = sorted(df['obj'].unique())
-        
-        # Synchronize widget state from shared state
-        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
-        
-        # Initialize widget state ONLY if it doesn't exist
-        if 'extra_configs' not in st.session_state:
-            if valid_configs:
-                st.session_state.extra_configs = valid_configs
-            else:
-                st.session_state.extra_configs = config_sources
-            
-        if 'extra_objects' not in st.session_state:
-            if valid_objects:
-                st.session_state.extra_objects = valid_objects
-            else:
-                st.session_state.extra_objects = objects[:min(5, len(objects))]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_configs = st.multiselect(
-                "Select configuration(s)",
-                config_sources,
-                key="extra_configs"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_configs = selected_configs
-            
-        with col2:
-            selected_objects = st.multiselect(
-                "Select object(s)",
-                objects,
-                key="extra_objects"
-            )
-            # Update shared state after user changes selection
-            st.session_state.shared_selected_objects = selected_objects
+        # Use selections from sidebar
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
