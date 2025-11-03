@@ -2839,9 +2839,9 @@ def main():
         st.info("""
         **Understanding the Grid:**
         - The **green area** shows the tennis court with white court markings
-        - The **buffer zones** (light gray) around the court capture out-of-bounds positions
-        - The court + buffer is divided into zones labeled **A, B, C,** etc. (row by row from top to bottom, filling each row left to right)
-        - Players often move outside the court (behind baseline, outside sidelines) - these positions are also captured
+        - The **tennis field in the broad sense** (light gray zones) extends beyond the court boundaries to capture out-of-bounds positions
+        - All zones are labeled **A, B, C,** etc. (row by row from top to bottom, filling each row left to right)
+        - Players often move outside the court boundaries (behind baseline, outside sidelines) - these positions are also captured
         - Each trajectory position is mapped to the zone it falls in
         - Adjust the grid resolution sliders above to see how it affects the zone layout
         """)
