@@ -971,7 +971,8 @@ def build_event_based_sequence(df, config, obj_id, start_time, end_time, grid_in
         # Run-length compression: AAABBB -> AB
         tokens = [k for k, _ in groupby(tokens)]
     
-    return ''.join(tokens)
+    # Return as list of tokens (not concatenated string)
+    return tokens
 
 
 def build_interval_based_sequence(df, config, obj_id, start_time, end_time, 
@@ -1013,7 +1014,8 @@ def build_interval_based_sequence(df, config, obj_id, start_time, end_time,
     if compress:
         tokens = [k for k, _ in groupby(tokens)]
     
-    return ''.join(tokens)
+    # Return as list of tokens (not concatenated string)
+    return tokens
 
 
 def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
@@ -1023,9 +1025,9 @@ def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
     
     Returns:
     --------
-    str : joint sequence like "B:A|P1:C|P2:F; B:B|P1:C|P2:E; ..."
+    list : joint sequence tokens like ["B:A|P1:C|P2:F", "B:B|P1:C|P2:E", ...]
     """
-    # Build individual sequences
+    # Build individual sequences (now returns lists)
     sequences = {}
     for entity_id in entity_ids:
         if mode == 'event':
@@ -1042,7 +1044,8 @@ def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
     # Pad sequences to same length
     for eid in sequences:
         while len(sequences[eid]) < max_len:
-            sequences[eid] += sequences[eid][-1] if sequences[eid] else 'X'
+            # Append last zone or 'X' if empty
+            sequences[eid].append(sequences[eid][-1] if sequences[eid] else 'X')
     
     # Combine into joint tokens
     joint_tokens = []
@@ -1053,7 +1056,9 @@ def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
     if compress:
         joint_tokens = [k for k, _ in groupby(joint_tokens)]
     
-    return '; '.join(joint_tokens)
+    # Return as list of joint tokens
+    return joint_tokens
+
 
 
 def levenshtein_distance(seq1, seq2):
@@ -1062,8 +1067,8 @@ def levenshtein_distance(seq1, seq2):
     
     Parameters:
     -----------
-    seq1, seq2 : str or list
-        Sequences to compare
+    seq1, seq2 : list
+        Sequences (lists of tokens) to compare
     
     Returns:
     --------
@@ -1103,10 +1108,10 @@ def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
     
     Parameters:
     -----------
-    seq1, seq2 : str
-        Sequences to align
+    seq1, seq2 : list
+        Sequences (lists of tokens) to align
     match : int
-        Score for matching characters
+        Score for matching tokens
     mismatch : int
         Penalty for mismatch
     gap : int
@@ -1114,7 +1119,7 @@ def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
     
     Returns:
     --------
-    dict with 'score', 'aligned_seq1', 'aligned_seq2'
+    dict with 'score', 'aligned_seq1', 'aligned_seq2' (both are lists)
     """
     len1, len2 = len(seq1), len(seq2)
     
@@ -1170,8 +1175,8 @@ def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
     
     return {
         'score': score_matrix[len1, len2],
-        'aligned_seq1': ''.join(reversed(aligned1)),
-        'aligned_seq2': ''.join(reversed(aligned2))
+        'aligned_seq1': list(reversed(aligned1)),
+        'aligned_seq2': list(reversed(aligned2))
     }
 
 
@@ -1179,9 +1184,14 @@ def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
     """
     Local alignment using Smith-Waterman algorithm.
     
+    Parameters:
+    -----------
+    seq1, seq2 : list
+        Sequences (lists of tokens) to align
+    
     Returns:
     --------
-    dict with 'score', 'aligned_seq1', 'aligned_seq2', 'start1', 'start2'
+    dict with 'score', 'aligned_seq1', 'aligned_seq2' (lists), 'start1', 'start2'
     """
     len1, len2 = len(seq1), len(seq2)
     
@@ -1236,8 +1246,8 @@ def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
     
     return {
         'score': max_score,
-        'aligned_seq1': ''.join(reversed(aligned1)),
-        'aligned_seq2': ''.join(reversed(aligned2)),
+        'aligned_seq1': list(reversed(aligned1)),
+        'aligned_seq2': list(reversed(aligned2)),
         'start1': i,
         'start2': j
     }
@@ -1249,19 +1259,20 @@ def extract_ngrams(sequence, n=2):
     
     Parameters:
     -----------
-    sequence : str
-        Token sequence
+    sequence : list
+        Token sequence (list of zone labels)
     n : int
         N-gram size
     
     Returns:
     --------
-    Counter : n-gram frequencies
+    Counter : n-gram frequencies (n-grams are tuples of tokens)
     """
     if len(sequence) < n:
         return Counter()
     
-    ngrams = [sequence[i:i+n] for i in range(len(sequence) - n + 1)]
+    # Extract n-grams as tuples of tokens
+    ngrams = [tuple(sequence[i:i+n]) for i in range(len(sequence) - n + 1)]
     return Counter(ngrams)
 
 
@@ -3054,6 +3065,9 @@ def main():
             sequences_data = []
             mode = 'event' if sampling_mode == "Event-based" else 'interval'
             
+            # Store both the list (for processing) and string (for display)
+            raw_sequences = []  # Store list form
+            
             if sequence_type == "Per-entity":
                 # Build per-entity sequences
                 for config in selected_configs:
@@ -3070,11 +3084,12 @@ def main():
                             )
                         
                         if seq:
+                            raw_sequences.append(seq)  # Store list
                             sequences_data.append({
                                 'ID': f"{config}-Obj{obj_id}",
                                 'Config': config,
                                 'Object': obj_id,
-                                'Sequence': seq,
+                                'Sequence': '-'.join(seq),  # Display with delimiter
                                 'Length': len(seq)
                             })
             else:
@@ -3085,11 +3100,12 @@ def main():
                         grid_info, mode=mode, delta_t=delta_t, compress=compress_runs
                     )
                     if seq:
+                        raw_sequences.append(seq)  # Store list
                         sequences_data.append({
                             'ID': config,
                             'Config': config,
                             'Object': 'Multi',
-                            'Sequence': seq,
+                            'Sequence': '; '.join(seq),  # Display with delimiter (multi-entity uses semicolons)
                             'Length': len(seq)
                         })
             
@@ -3127,10 +3143,9 @@ def main():
                         key="seq_dist_method"
                     )
                     
-                    # Compute distance matrix
-                    sequences = seq_df['Sequence'].tolist()
+                    # Compute distance matrix using raw sequences (lists)
                     method = 'levenshtein' if 'edit' in dist_method else 'normalized_levenshtein'
-                    dist_matrix = compute_sequence_distance_matrix(sequences, method=method)
+                    dist_matrix = compute_sequence_distance_matrix(raw_sequences, method=method)
                     
                     # Display matrix
                     fig_dist = go.Figure(data=go.Heatmap(
@@ -3210,8 +3225,8 @@ def main():
                                 key="seq2_select"
                             )
                         
-                        seq1 = sequences_data[seq1_idx]['Sequence']
-                        seq2 = sequences_data[seq2_idx]['Sequence']
+                        seq1 = raw_sequences[seq1_idx]  # Use raw list form
+                        seq2 = raw_sequences[seq2_idx]  # Use raw list form
                         
                         # Alignment type
                         align_type = st.radio(
@@ -3256,10 +3271,10 @@ def main():
                         # Display alignment
                         st.write("**Aligned Sequences:**")
                         
-                        aligned1 = result['aligned_seq1']
-                        aligned2 = result['aligned_seq2']
+                        aligned1 = result['aligned_seq1']  # Now a list
+                        aligned2 = result['aligned_seq2']  # Now a list
                         
-                        # Format alignment with colors
+                        # Format alignment with colors and delimiters
                         alignment_html = "<div style='font-family: monospace; font-size: 14px;'>"
                         alignment_html += f"<div><b>{sequences_data[seq1_idx]['ID']}:</b> "
                         
@@ -3270,8 +3285,11 @@ def main():
                                 color = 'red'
                             else:
                                 color = 'orange'
-                            alignment_html += f"<span style='color: {color};'>{c1}</span>"
+                            # Add delimiter after each token
+                            alignment_html += f"<span style='color: {color};'>{c1}</span>-"
                         
+                        # Remove trailing delimiter
+                        alignment_html = alignment_html.rstrip('-')
                         alignment_html += "</div><div><b>" + f"{sequences_data[seq2_idx]['ID']}:</b> "
                         
                         for c1, c2 in zip(aligned1, aligned2):
@@ -3281,8 +3299,11 @@ def main():
                                 color = 'red'
                             else:
                                 color = 'orange'
-                            alignment_html += f"<span style='color: {color};'>{c2}</span>"
+                            # Add delimiter after each token
+                            alignment_html += f"<span style='color: {color};'>{c2}</span>-"
                         
+                        # Remove trailing delimiter
+                        alignment_html = alignment_html.rstrip('-')
                         alignment_html += "</div></div>"
                         
                         st.markdown(alignment_html, unsafe_allow_html=True)
@@ -3310,11 +3331,10 @@ def main():
                     
                     n_gram_size = st.slider("N-gram size", 2, 5, 2, key="seq_ngram_size")
                     
-                    # Extract n-grams from all sequences
+                    # Extract n-grams from all sequences using raw form
                     all_ngrams = Counter()
-                    for seq_data in sequences_data:
+                    for seq in raw_sequences:
                         if sequence_type == "Per-entity":  # Only for simple sequences
-                            seq = seq_data['Sequence']
                             ngrams = extract_ngrams(seq, n_gram_size)
                             all_ngrams.update(ngrams)
                     
@@ -3328,7 +3348,9 @@ def main():
                         
                         most_common = all_ngrams.most_common(top_n)
                         
+                        # Convert tuples to delimited strings for display
                         ngram_df = pd.DataFrame(most_common, columns=['Pattern', 'Frequency'])
+                        ngram_df['Pattern'] = ngram_df['Pattern'].apply(lambda x: '-'.join(x))
                         ngram_df['Percentage'] = (100 * ngram_df['Frequency'] / ngram_df['Frequency'].sum()).round(2)
                         
                         st.write(f"**Top {top_n} {n_gram_size}-grams:**")
@@ -3357,14 +3379,19 @@ def main():
                         # Per-sequence n-gram analysis
                         st.write("**Per-Sequence N-gram Breakdown:**")
                         
-                        for seq_data in sequences_data:
-                            with st.expander(f"{seq_data['ID']} - {seq_data['Sequence'][:50]}..."):
-                                seq_ngrams = extract_ngrams(seq_data['Sequence'], n_gram_size)
+                        for idx, seq_data in enumerate(sequences_data):
+                            seq = raw_sequences[idx]  # Use raw list form
+                            # Show preview with delimiter
+                            preview = '-'.join(seq[:20]) + ('...' if len(seq) > 20 else '')
+                            with st.expander(f"{seq_data['ID']} - {preview}"):
+                                seq_ngrams = extract_ngrams(seq, n_gram_size)
                                 if seq_ngrams:
                                     seq_ngram_df = pd.DataFrame(
                                         seq_ngrams.most_common(10),
                                         columns=['Pattern', 'Count']
                                     )
+                                    # Convert tuples to delimited strings for display
+                                    seq_ngram_df['Pattern'] = seq_ngram_df['Pattern'].apply(lambda x: '-'.join(x))
                                     st.dataframe(seq_ngram_df, use_container_width=True)
                                 else:
                                     st.info("No n-grams in this sequence.")
