@@ -897,19 +897,26 @@ def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
     x_bins = np.linspace(x_min, x_max, actual_cols + 1)
     y_bins = np.linspace(y_min, y_max, actual_rows + 1)
     
-    # Generate zone labels (A, B, C, ...)
+    # Generate zone labels using row-column notation (A1, A2, B1, B2, etc.)
+    # Column letters: A, B, C, ..., Z, AA, AB, AC, ...
+    # Row numbers: 1, 2, 3, ...
+    def get_column_label(col_idx):
+        """Generate column label (A, B, C, ..., Z, AA, AB, ...)"""
+        if col_idx < 26:
+            return chr(65 + col_idx)  # A-Z
+        else:
+            # For more than 26 columns: AA, AB, AC, ...
+            return chr(65 + (col_idx // 26) - 1) + chr(65 + (col_idx % 26))
+    
     zone_labels = []
     for row in range(actual_rows):
         for col in range(actual_cols):
-            idx = row * actual_cols + col
-            if idx < 26:
-                zone_labels.append(chr(65 + idx))  # A-Z
-            else:
-                # If we need more than 26 zones, use AA, AB, AC, etc.
-                zone_labels.append(chr(65 + (idx // 26) - 1) + chr(65 + (idx % 26)))
+            col_label = get_column_label(col)
+            row_label = str(row + 1)  # 1-based row numbering
+            zone_labels.append(f"{col_label}{row_label}")
     
     def get_zone(x, y):
-        """Map (x, y) coordinate to zone letter."""
+        """Map (x, y) coordinate to zone label (e.g., A1, B2, C3)."""
         if pd.isna(x) or pd.isna(y):
             return None
         col_idx = np.digitize(x, x_bins) - 1
