@@ -2371,31 +2371,18 @@ def main():
                 ["Visual Exploration", "Clustering", "Sequence Analysis", "Heat Maps", "Extra"]
             )
             
-            # Track method changes to sync widget states with shared state
+            # Track method changes and clear widget states to force re-sync
             if 'last_analysis_method' not in st.session_state:
                 st.session_state.last_analysis_method = analysis_method
             
             if st.session_state.last_analysis_method != analysis_method:
-                # Method changed - sync widget states from shared state
-                # This ensures widgets reflect the shared selection when switching methods
-                config_sources = df['config_source'].drop_duplicates().tolist()
-                objects = sorted(df['obj'].unique())
-                
-                # Get valid shared selections
-                valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-                valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
-                
-                # Sync all widget states
-                st.session_state.visual_configs = valid_configs if valid_configs else config_sources
-                st.session_state.visual_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
-                st.session_state['2sa_configs'] = valid_configs if valid_configs else config_sources
-                st.session_state['2sa_objects'] = valid_objects if valid_objects else objects[:min(5, len(objects))]
-                st.session_state.seq_configs = valid_configs if valid_configs else config_sources
-                st.session_state.seq_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
-                st.session_state.clustering_configs = valid_configs if valid_configs else config_sources
-                st.session_state.clustering_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
-                st.session_state.extra_configs = valid_configs if valid_configs else config_sources
-                st.session_state.extra_objects = valid_objects if valid_objects else objects[:min(5, len(objects))]
+                # Method changed - clear all widget states so they re-initialize from shared state
+                # This is the key to making selections synchronize across methods
+                for key in ['visual_configs', 'visual_objects', '2sa_configs', '2sa_objects',
+                           'seq_configs', 'seq_objects', 'clustering_configs', 'clustering_objects',
+                           'extra_configs', 'extra_objects']:
+                    if key in st.session_state:
+                        del st.session_state[key]
                 
                 st.session_state.last_analysis_method = analysis_method
     
@@ -3025,15 +3012,16 @@ def main():
         st.markdown("---")
         st.subheader("📊 Data Selection")
         
-        # Validate shared selections against current data (don't re-initialize!)
-        valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
-        valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        # Initialize widget state from shared state (only on first render)
+        if 'seq_configs' not in st.session_state:
+            # First time rendering this widget - initialize from shared state
+            valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
+            st.session_state.seq_configs = valid_configs if valid_configs else config_sources[:min(5, len(config_sources))]
         
-        # Use valid defaults, or fall back to first few if none are valid
-        if not valid_configs:
-            valid_configs = config_sources[:min(5, len(config_sources))]
-        if not valid_objects:
-            valid_objects = objects[:min(3, len(objects))]
+        if 'seq_objects' not in st.session_state:
+            # First time rendering this widget - initialize from shared state
+            valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+            st.session_state.seq_objects = valid_objects if valid_objects else objects[:min(3, len(objects))]
         
         col1, col2 = st.columns(2)
         
@@ -3041,21 +3029,19 @@ def main():
             selected_configs = st.multiselect(
                 "Select configurations (rallies)",
                 config_sources,
-                default=valid_configs,
                 key="seq_configs"
             )
-            # Update shared state
+            # Update shared state after widget renders
             st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
                 "Select objects",
                 objects,
-                default=valid_objects,
                 help="For multi-entity: all selected objects combined. For per-entity: analyzed separately.",
                 key="seq_objects"
             )
-            # Update shared state
+            # Update shared state after widget renders
             st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
