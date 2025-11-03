@@ -2306,7 +2306,6 @@ def create_heatmap(df):
 # Main app
 def main():
     st.title("📊 Spatiotemporal Analysis and Modeling")
-    st.caption("Version 2.0 - Updated October 21, 2025")
     
     df = st.session_state.data
     uploaded_files = None
