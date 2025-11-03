@@ -2460,15 +2460,20 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Get valid defaults from shared state
+        # Synchronize widget state from shared state
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Use valid defaults, or fall back to all/first few if none are valid
-        if not valid_configs:
-            valid_configs = config_sources
-        if not valid_objects:
-            valid_objects = objects[:min(5, len(objects))]
+        # Force widget state to match shared state BEFORE creating widgets
+        if valid_configs:
+            st.session_state.visual_configs = valid_configs
+        elif 'visual_configs' not in st.session_state:
+            st.session_state.visual_configs = config_sources
+            
+        if valid_objects:
+            st.session_state.visual_objects = valid_objects
+        elif 'visual_objects' not in st.session_state:
+            st.session_state.visual_objects = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -2483,19 +2488,19 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_configs,
-                key="visual_configs",
-                on_change=lambda: st.session_state.update({'shared_selected_configs': st.session_state.visual_configs})
+                key="visual_configs"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=valid_objects,
-                key="visual_objects",
-                on_change=lambda: st.session_state.update({'shared_selected_objects': st.session_state.visual_objects})
+                key="visual_objects"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -2634,15 +2639,20 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Get valid defaults from shared state
+        # Synchronize widget state from shared state
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Use valid defaults, or fall back to all/first few if none are valid
-        if not valid_configs:
-            valid_configs = config_sources
-        if not valid_objects:
-            valid_objects = objects[:min(5, len(objects))]
+        # Force widget state to match shared state BEFORE creating widgets
+        if valid_configs:
+            st.session_state['2sa_configs'] = valid_configs
+        elif '2sa_configs' not in st.session_state:
+            st.session_state['2sa_configs'] = config_sources
+            
+        if valid_objects:
+            st.session_state['2sa_objects'] = valid_objects
+        elif '2sa_objects' not in st.session_state:
+            st.session_state['2sa_objects'] = objects[:min(5, len(objects))]
         
         # Time range
         min_time = df['tst'].min()
@@ -2657,19 +2667,19 @@ def main():
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_configs,
-                key="2sa_configs",
-                on_change=lambda: st.session_state.update({'shared_selected_configs': st.session_state['2sa_configs']})
+                key="2sa_configs"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=valid_objects,
-                key="2sa_objects",
-                on_change=lambda: st.session_state.update({'shared_selected_objects': st.session_state['2sa_objects']})
+                key="2sa_objects"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -2993,9 +3003,20 @@ def main():
         st.markdown("---")
         st.subheader("📊 Data Selection")
         
-        # Get valid defaults from shared state
+        # Synchronize widget state from shared state
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
+        
+        # Force widget state to match shared state BEFORE creating widgets
+        if valid_configs:
+            st.session_state.seq_configs = valid_configs
+        elif 'seq_configs' not in st.session_state:
+            st.session_state.seq_configs = config_sources[:min(5, len(config_sources))]
+            
+        if valid_objects:
+            st.session_state.seq_objects = valid_objects
+        elif 'seq_objects' not in st.session_state:
+            st.session_state.seq_objects = objects[:min(3, len(objects))]
         
         col1, col2 = st.columns(2)
         
@@ -3003,20 +3024,20 @@ def main():
             selected_configs = st.multiselect(
                 "Select configurations (rallies)",
                 config_sources,
-                default=valid_configs if valid_configs else config_sources[:min(5, len(config_sources))],
-                key="seq_configs",
-                on_change=lambda: st.session_state.update({'shared_selected_configs': st.session_state.seq_configs})
+                key="seq_configs"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_configs = selected_configs
         
         with col2:
             selected_objects = st.multiselect(
                 "Select objects",
                 objects,
-                default=valid_objects if valid_objects else objects[:min(3, len(objects))],
                 help="For multi-entity: all selected objects combined. For per-entity: analyzed separately.",
-                key="seq_objects",
-                on_change=lambda: st.session_state.update({'shared_selected_objects': st.session_state.seq_objects})
+                key="seq_objects"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_objects = selected_objects
         
         col3, col4 = st.columns(2)
         
@@ -3423,29 +3444,35 @@ def main():
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Use valid defaults, or fall back to all/first few if none are valid
-        if not valid_configs:
-            valid_configs = config_sources
-        if not valid_objects:
-            valid_objects = objects[:min(5, len(objects))]
+        # Force widget state to match shared state BEFORE creating widgets
+        if valid_configs:
+            st.session_state.clustering_configs = valid_configs
+        elif 'clustering_configs' not in st.session_state:
+            st.session_state.clustering_configs = config_sources
+            
+        if valid_objects:
+            st.session_state.clustering_objects = valid_objects
+        elif 'clustering_objects' not in st.session_state:
+            st.session_state.clustering_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_configs,
-                key="clustering_configs",
-                on_change=lambda: st.session_state.update({'shared_selected_configs': st.session_state.clustering_configs})
+                key="clustering_configs"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_configs = selected_configs
+            
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=valid_objects,
-                key="clustering_objects",
-                on_change=lambda: st.session_state.update({'shared_selected_objects': st.session_state.clustering_objects})
+                key="clustering_objects"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_objects = selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
@@ -5182,33 +5209,39 @@ def main():
         config_sources = df['config_source'].drop_duplicates().tolist()
         objects = sorted(df['obj'].unique())
         
-        # Get valid defaults from shared state
+        # Synchronize widget state from shared state
         valid_configs = [c for c in st.session_state.shared_selected_configs if c in config_sources]
         valid_objects = [o for o in st.session_state.shared_selected_objects if o in objects]
         
-        # Use valid defaults, or fall back to all/first few if none are valid
-        if not valid_configs:
-            valid_configs = config_sources
-        if not valid_objects:
-            valid_objects = objects[:min(5, len(objects))]
+        # Force widget state to match shared state BEFORE creating widgets
+        if valid_configs:
+            st.session_state.extra_configs = valid_configs
+        elif 'extra_configs' not in st.session_state:
+            st.session_state.extra_configs = config_sources
+            
+        if valid_objects:
+            st.session_state.extra_objects = valid_objects
+        elif 'extra_objects' not in st.session_state:
+            st.session_state.extra_objects = objects[:min(5, len(objects))]
 
         col1, col2 = st.columns(2)
         with col1:
             selected_configs = st.multiselect(
                 "Select configuration(s)",
                 config_sources,
-                default=valid_configs,
-                key="extra_configs",
-                on_change=lambda: st.session_state.update({'shared_selected_configs': st.session_state.extra_configs})
+                key="extra_configs"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_configs = selected_configs
+            
         with col2:
             selected_objects = st.multiselect(
                 "Select object(s)",
                 objects,
-                default=valid_objects,
-                key="extra_objects",
-                on_change=lambda: st.session_state.update({'shared_selected_objects': st.session_state.extra_objects})
+                key="extra_objects"
             )
+            # Update shared state after user changes selection
+            st.session_state.shared_selected_objects = selected_objects
 
         # Time range
         min_time = float(df['tst'].min())
