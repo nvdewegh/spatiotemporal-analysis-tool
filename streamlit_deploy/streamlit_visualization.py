@@ -2363,7 +2363,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration", "2SA Method", "Sequence Analysis", "Heat Maps", "Clustering", "Extra"]
+                ["Visual Exploration", "Clustering", "Sequence Analysis", "Heat Maps", "Extra"]
             )
     
     # Main content
