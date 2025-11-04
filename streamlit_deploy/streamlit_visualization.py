@@ -3632,6 +3632,9 @@ def main():
                                     )
                                     
                                     # Create silhouette plot
+                                    import plotly.express as px
+                                    colors = px.colors.qualitative.Plotly[:n_clusters]
+                                    
                                     fig_silhouette = go.Figure()
                                     
                                     y_lower = 10
