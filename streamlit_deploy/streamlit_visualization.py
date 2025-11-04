@@ -3176,36 +3176,503 @@ def main():
                     render_interactive_chart(fig_dist, "Darker red = more different sequences")
                     
                     # Clustering
-                    if len(sequences) >= 2:
-                        st.write("**Hierarchical Clustering**")
+                    if len(raw_sequences) >= 2:
+                        st.markdown('---')
                         
-                        n_clusters = st.slider(
-                            "Number of clusters",
-                            2,
-                            min(10, len(sequences)),
-                            min(3, len(sequences)),
-                            key="seq_clusters"
+                        # ========================================
+                        # Hierarchical Clustering - Dendrogram & Cluster Assignment
+                        # ========================================
+                        st.subheader("🌳 Hierarchical Clustering - Dendrogram & Cluster Assignment")
+                        
+                        st.info("""
+                        **Dendrogram Visualization**: Shows the hierarchical structure of sequence clustering.
+                        - Each leaf represents a sequence
+                        - Height indicates dissimilarity between merged clusters
+                        - Use the slider to cut the dendrogram at different heights (select number of clusters)
+                        """)
+                        
+                        # Create linkage matrix for hierarchical clustering
+                        # Convert square distance matrix to condensed form
+                        from scipy.spatial.distance import squareform
+                        condensed_dist = squareform(dist_matrix, checks=False)
+                        linkage_matrix = linkage(condensed_dist, method='average')
+                        
+                        # Create dendrogram visualization
+                        st.markdown("#### Dendrogram")
+                        
+                        # Use scipy to create dendrogram data
+                        from scipy.cluster.hierarchy import dendrogram as scipy_dendrogram
+                        dendro_data = scipy_dendrogram(
+                            linkage_matrix,
+                            labels=[f"S{sid}" for sid in seq_df['ID']],
+                            no_plot=True
                         )
                         
-                        cluster_labels, linkage_matrix = perform_hierarchical_clustering(
-                            dist_matrix, n_clusters
+                        # Create plotly dendrogram
+                        icoord = np.array(dendro_data['icoord'])
+                        dcoord = np.array(dendro_data['dcoord'])
+                        colors = dendro_data['color_list']
+                        labels = dendro_data['ivl']
+                        
+                        # Convert matplotlib color codes to Plotly-compatible colors
+                        color_map = {
+                            'C0': '#1f77b4', 'C1': '#ff7f0e', 'C2': '#2ca02c', 'C3': '#d62728',
+                            'C4': '#9467bd', 'C5': '#8c564b', 'C6': '#e377c2', 'C7': '#7f7f7f',
+                            'C8': '#bcbd22', 'C9': '#17becf', 'b': 'blue', 'g': 'green',
+                            'r': 'red', 'c': 'cyan', 'm': 'magenta', 'y': 'yellow', 'k': 'black'
+                        }
+                        plotly_colors = [color_map.get(c, c) for c in colors]
+                        
+                        fig_dendro = go.Figure()
+                        
+                        # Add dendrogram lines
+                        for i, (xi, yi) in enumerate(zip(icoord, dcoord)):
+                            fig_dendro.add_trace(go.Scatter(
+                                x=xi,
+                                y=yi,
+                                mode='lines',
+                                line=dict(color=plotly_colors[i], width=2),
+                                hoverinfo='skip',
+                                showlegend=False
+                            ))
+                        
+                        # Add labels at bottom
+                        n_leaves = len(labels)
+                        x_positions = [5 + i * 10 for i in range(n_leaves)]
+                        
+                        fig_dendro.update_layout(
+                            title="Hierarchical Clustering Dendrogram (Average Linkage)",
+                            xaxis=dict(
+                                title="Sequence",
+                                tickmode='array',
+                                tickvals=x_positions,
+                                ticktext=labels,
+                                tickangle=-45
+                            ),
+                            yaxis=dict(title="Distance"),
+                            height=500,
+                            hovermode='closest',
+                            plot_bgcolor='white',
+                            showlegend=False
                         )
                         
-                        # Add clusters to dataframe
+                        st.plotly_chart(fig_dendro, use_container_width=True)
+                        
+                        st.markdown("---")
+                        st.markdown("#### Cluster Assignment")
+                        
+                        # Cluster selection controls
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            # Number of clusters slider
+                            n_sequences = len(raw_sequences)
+                            max_clusters = min(10, n_sequences - 1)
+                            
+                            n_clusters = st.slider(
+                                "Number of clusters",
+                                min_value=2,
+                                max_value=max_clusters,
+                                value=min(3, max_clusters),
+                                help="Slide to select how many clusters to create",
+                                key="seq_clusters"
+                            )
+                        
+                        with col2:
+                            # Auto-detect optimal clusters button
+                            if st.button("🎯 Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters.", key="seq_auto_clusters"):
+                                with st.spinner("Detecting optimal number of clusters..."):
+                                    optimal_k, plot_data = detect_optimal_clusters(dist_matrix, return_plot_data=True)
+                                    if optimal_k is not None:
+                                        st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
+                                        
+                                        # Display elbow plot
+                                        fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+                                        
+                                        fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["inertias"], mode="lines+markers",
+                                            name="Inertia", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
+                                        
+                                        fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["silhouette_scores"],
+                                            mode="lines+markers", name="Silhouette Score", line=dict(color="green", width=2),
+                                            marker=dict(size=8)), secondary_y=True)
+                                        
+                                        fig.add_vline(x=optimal_k, line=dict(color="red", width=2, dash="dash"),
+                                            annotation_text=f"Optimal k={optimal_k}", annotation_position="top")
+                                        
+                                        fig.update_xaxes(title_text="Number of Clusters (k)")
+                                        fig.update_yaxes(title_text="Inertia", secondary_y=False)
+                                        fig.update_yaxes(title_text="Silhouette Score", secondary_y=True)
+                                        fig.update_layout(title="Elbow Plot", hovermode="x unified", height=400)
+                                        
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    else:
+                                        st.warning("Could not automatically detect optimal clusters. Please select manually.")
+                        
+                        # Assign clusters based on selected number
+                        from scipy.cluster.hierarchy import fcluster
+                        cluster_labels = fcluster(linkage_matrix, n_clusters, criterion='maxclust')
+                        
+                        # Display cluster assignment summary
+                        st.markdown(f"**Cluster Assignment Summary** ({n_clusters} clusters)")
+                        
+                        # Create a dataframe showing cluster assignments
                         seq_df_clustered = seq_df.copy()
                         seq_df_clustered['Cluster'] = cluster_labels
                         
-                        st.write(f"**Cluster Assignment** ({n_clusters} clusters)")
-                        st.dataframe(seq_df_clustered, use_container_width=True, height=300)
+                        # Count sequences per cluster
+                        cluster_counts = seq_df_clustered['Cluster'].value_counts().sort_index()
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Sequences per Cluster:**")
+                            for cluster_id in sorted(cluster_counts.index):
+                                count = cluster_counts[cluster_id]
+                                st.write(f"• Cluster {cluster_id}: **{count}** sequences")
+                        
+                        with col2:
+                            # Show cluster assignments table
+                            st.markdown("**Cluster Assignments:**")
+                            st.dataframe(
+                                seq_df_clustered[['ID', 'Cluster', 'Length']].sort_values('Cluster'),
+                                height=min(300, len(seq_df_clustered) * 35 + 38),
+                                use_container_width=True
+                            )
                         
                         # Cluster statistics
-                        st.write("**Cluster Statistics**")
+                        st.markdown("**Cluster Statistics**")
                         cluster_stats = seq_df_clustered.groupby('Cluster').agg({
                             'ID': 'count',
                             'Length': ['mean', 'std']
                         }).round(2)
                         cluster_stats.columns = ['Count', 'Avg Length', 'Std Length']
                         st.dataframe(cluster_stats, use_container_width=True)
+                        
+                        st.markdown('---')
+                        st.success(f"✅ Successfully assigned {n_sequences} sequences into {n_clusters} clusters using Average linkage!")
+                        
+                        # ===========================
+                        # ANALYSIS TOOLS
+                        # ===========================
+                        
+                        st.markdown('---')
+                        st.markdown("### 🔬 Analysis Tools")
+                        
+                        st.info("""
+                        **Advanced Analysis**: Explore cluster quality and sequence relationships
+                        - **MDS Visualization**: Project high-dimensional data to 2D/3D space
+                        - **Similarity Search**: Find most similar sequences to a reference
+                        - **Silhouette Analysis**: Evaluate cluster quality metrics
+                        """)
+                        
+                        # Create tabs for different analysis tools
+                        analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
+                            "📊 MDS Visualization", 
+                            "🔍 Similarity Search", 
+                            "📈 Silhouette Analysis"
+                        ])
+                        
+                        # ===========================
+                        # TAB 1: MDS VISUALIZATION
+                        # ===========================
+                        with analysis_tab1:
+                            st.markdown("#### Multidimensional Scaling (MDS)")
+                            st.markdown("Visualize sequence clusters in 2D or 3D space based on their pairwise distances.")
+                            
+                            # MDS dimension selection
+                            col1, col2 = st.columns([1, 3])
+                            with col1:
+                                mds_dims = st.radio(
+                                    "Dimensions",
+                                    options=[2, 3],
+                                    index=0,
+                                    help="Choose 2D or 3D visualization",
+                                    key="seq_mds_dims"
+                                )
+                            
+                            with col2:
+                                if st.button("🎨 Generate MDS Plot", help="Click to compute and visualize MDS projection", key="seq_mds_button"):
+                                    with st.spinner(f"Computing {mds_dims}D MDS projection..."):
+                                        from sklearn.manifold import MDS
+                                        
+                                        # Compute MDS
+                                        mds = MDS(n_components=mds_dims, dissimilarity='precomputed', random_state=42)
+                                        mds_coords = mds.fit_transform(dist_matrix)
+                                        
+                                        # Calculate normalized stress
+                                        from scipy.spatial.distance import pdist, squareform
+                                        mds_distances = squareform(pdist(mds_coords))
+                                        
+                                        stress_normalized = np.sqrt(np.sum((dist_matrix - mds_distances) ** 2) / np.sum(dist_matrix ** 2))
+                                        
+                                        # Create color palette for clusters
+                                        import plotly.express as px
+                                        colors = px.colors.qualitative.Plotly[:n_clusters]
+                                        
+                                        # Create plotly figure
+                                        if mds_dims == 2:
+                                            fig_mds = go.Figure()
+                                            
+                                            for cluster_id in range(1, n_clusters + 1):
+                                                mask = cluster_labels == cluster_id
+                                                cluster_sequences = seq_df_clustered[mask]['ID'].values
+                                                
+                                                fig_mds.add_trace(go.Scatter(
+                                                    x=mds_coords[mask, 0],
+                                                    y=mds_coords[mask, 1],
+                                                    mode='markers+text',
+                                                    marker=dict(
+                                                        size=12,
+                                                        color=colors[cluster_id - 1],
+                                                        line=dict(width=1, color='white')
+                                                    ),
+                                                    text=[f"S{sid}" for sid in cluster_sequences],
+                                                    textposition="top center",
+                                                    textfont=dict(size=9),
+                                                    name=f"Cluster {cluster_id}",
+                                                    hovertemplate='<b>Sequence %{text}</b><br>Cluster: ' + str(cluster_id) + '<extra></extra>'
+                                                ))
+                                            
+                                            fig_mds.update_layout(
+                                                title="2D MDS Projection of Sequence Clusters",
+                                                xaxis_title="MDS Dimension 1",
+                                                yaxis_title="MDS Dimension 2",
+                                                height=600,
+                                                hovermode='closest',
+                                                showlegend=True
+                                            )
+                                            
+                                        else:  # 3D
+                                            fig_mds = go.Figure()
+                                            
+                                            for cluster_id in range(1, n_clusters + 1):
+                                                mask = cluster_labels == cluster_id
+                                                cluster_sequences = seq_df_clustered[mask]['ID'].values
+                                                
+                                                fig_mds.add_trace(go.Scatter3d(
+                                                    x=mds_coords[mask, 0],
+                                                    y=mds_coords[mask, 1],
+                                                    z=mds_coords[mask, 2],
+                                                    mode='markers+text',
+                                                    marker=dict(
+                                                        size=8,
+                                                        color=colors[cluster_id - 1],
+                                                        line=dict(width=1, color='white')
+                                                    ),
+                                                    text=[f"S{sid}" for sid in cluster_sequences],
+                                                    textposition="top center",
+                                                    textfont=dict(size=8),
+                                                    name=f"Cluster {cluster_id}",
+                                                    hovertemplate='<b>Sequence %{text}</b><br>Cluster: ' + str(cluster_id) + '<extra></extra>'
+                                                ))
+                                            
+                                            fig_mds.update_layout(
+                                                title="3D MDS Projection of Sequence Clusters",
+                                                scene=dict(
+                                                    xaxis_title="MDS Dimension 1",
+                                                    yaxis_title="MDS Dimension 2",
+                                                    zaxis_title="MDS Dimension 3"
+                                                ),
+                                                height=700,
+                                                hovermode='closest',
+                                                showlegend=True
+                                            )
+                                        
+                                        st.plotly_chart(fig_mds, use_container_width=True)
+                                        st.success(f"✅ {mds_dims}D MDS projection computed successfully!")
+                                        st.info(f"**Normalized Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
+                        
+                        # ===========================
+                        # TAB 2: SIMILARITY SEARCH
+                        # ===========================
+                        with analysis_tab2:
+                            st.markdown("#### Top-K Similar Sequences")
+                            st.markdown("Find sequences most similar to a selected reference sequence.")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Select reference sequence
+                                reference_idx = st.selectbox(
+                                    "Select reference sequence",
+                                    options=range(len(seq_df)),
+                                    format_func=lambda i: f"Sequence {seq_df.iloc[i]['ID']} (Cluster {cluster_labels[i]})",
+                                    help="Choose a sequence to find similar ones",
+                                    key="seq_ref_select"
+                                )
+                            
+                            with col2:
+                                # Select number of similar sequences to show
+                                k_similar = st.slider(
+                                    "Number of similar sequences (K)",
+                                    min_value=1,
+                                    max_value=min(20, len(seq_df) - 1),
+                                    value=5,
+                                    help="How many similar sequences to display",
+                                    key="seq_k_similar"
+                                )
+                            
+                            if st.button("🔍 Find Similar Sequences", key="seq_find_similar"):
+                                with st.spinner("Searching for similar sequences..."):
+                                    # Get distances from reference sequence to all others
+                                    distances = dist_matrix[reference_idx].copy()
+                                    
+                                    # Set distance to self as infinity to exclude it
+                                    distances[reference_idx] = np.inf
+                                    
+                                    # Find K most similar (smallest distances)
+                                    similar_indices = np.argsort(distances)[:k_similar]
+                                    
+                                    # Create results dataframe
+                                    results_df = pd.DataFrame({
+                                        'Rank': range(1, k_similar + 1),
+                                        'Sequence ID': [seq_df.iloc[i]['ID'] for i in similar_indices],
+                                        'Cluster': [cluster_labels[i] for i in similar_indices],
+                                        'Length': [seq_df.iloc[i]['Length'] for i in similar_indices],
+                                        'Distance': distances[similar_indices],
+                                        'Similarity Score': 1 / (1 + distances[similar_indices])
+                                    })
+                                    
+                                    # Display reference info
+                                    ref_sid = seq_df.iloc[reference_idx]['ID']
+                                    ref_cluster = cluster_labels[reference_idx]
+                                    ref_length = seq_df.iloc[reference_idx]['Length']
+                                    
+                                    st.markdown(f"**Reference Sequence**: S{ref_sid} (Cluster {ref_cluster}, Length {ref_length})")
+                                    st.markdown(f"**Top {k_similar} Most Similar Sequences:**")
+                                    
+                                    # Format and display results
+                                    st.dataframe(
+                                        results_df.style.format({
+                                            'Distance': '{:.4f}',
+                                            'Similarity Score': '{:.4f}'
+                                        }).background_gradient(subset=['Similarity Score'], cmap='Greens'),
+                                        use_container_width=True,
+                                        height=min(400, len(results_df) * 35 + 38)
+                                    )
+                                    
+                                    # Cluster distribution analysis
+                                    same_cluster = sum(results_df['Cluster'] == ref_cluster)
+                                    st.markdown(f"**Cluster Analysis**: {same_cluster}/{k_similar} similar sequences are in the same cluster as the reference")
+                                    
+                                    if same_cluster == k_similar:
+                                        st.success("✅ All similar sequences are in the same cluster - excellent clustering!")
+                                    elif same_cluster >= k_similar * 0.7:
+                                        st.info("ℹ️ Most similar sequences are in the same cluster - good clustering quality")
+                                    else:
+                                        st.warning("⚠️ Many similar sequences are in different clusters - consider adjusting cluster count")
+                        
+                        # ===========================
+                        # TAB 3: SILHOUETTE ANALYSIS
+                        # ===========================
+                        with analysis_tab3:
+                            st.markdown("#### Silhouette Analysis")
+                            st.markdown("Evaluate cluster quality using silhouette coefficients. Values range from -1 to 1:")
+                            st.markdown("- **Close to 1**: Well-clustered, far from neighboring clusters")
+                            st.markdown("- **Close to 0**: Near the decision boundary between clusters")
+                            st.markdown("- **Negative**: Possibly assigned to wrong cluster")
+                            
+                            if st.button("📊 Calculate Silhouette Scores", key="seq_silhouette"):
+                                with st.spinner("Computing silhouette analysis..."):
+                                    from sklearn.metrics import silhouette_score, silhouette_samples
+                                    
+                                    # Compute silhouette scores
+                                    overall_score = silhouette_score(dist_matrix, cluster_labels, metric='precomputed')
+                                    sample_scores = silhouette_samples(dist_matrix, cluster_labels, metric='precomputed')
+                                    
+                                    # Display overall score
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Overall Silhouette Score", f"{overall_score:.4f}")
+                                    with col2:
+                                        st.metric("Number of Clusters", n_clusters)
+                                    with col3:
+                                        avg_cluster_size = len(cluster_labels) / n_clusters
+                                        st.metric("Avg Cluster Size", f"{avg_cluster_size:.1f}")
+                                    
+                                    # Quality interpretation
+                                    if overall_score > 0.7:
+                                        st.success("🌟 **Excellent** clustering structure!")
+                                    elif overall_score > 0.5:
+                                        st.success("✅ **Good** clustering quality")
+                                    elif overall_score > 0.3:
+                                        st.info("ℹ️ **Moderate** clustering quality")
+                                    else:
+                                        st.warning("⚠️ **Poor** clustering - consider different parameters")
+                                    
+                                    st.markdown("---")
+                                    st.markdown("**Per-Cluster Silhouette Scores:**")
+                                    
+                                    # Create per-cluster analysis
+                                    cluster_stats_sil = []
+                                    for cluster_id in range(1, n_clusters + 1):
+                                        mask = cluster_labels == cluster_id
+                                        cluster_scores = sample_scores[mask]
+                                        
+                                        cluster_stats_sil.append({
+                                            'Cluster': cluster_id,
+                                            'Size': mask.sum(),
+                                            'Mean Score': cluster_scores.mean(),
+                                            'Min Score': cluster_scores.min(),
+                                            'Max Score': cluster_scores.max(),
+                                            'Std Dev': cluster_scores.std()
+                                        })
+                                    
+                                    cluster_stats_sil_df = pd.DataFrame(cluster_stats_sil)
+                                    
+                                    # Display cluster statistics
+                                    st.dataframe(
+                                        cluster_stats_sil_df.style.format({
+                                            'Mean Score': '{:.4f}',
+                                            'Min Score': '{:.4f}',
+                                            'Max Score': '{:.4f}',
+                                            'Std Dev': '{:.4f}'
+                                        }).background_gradient(subset=['Mean Score'], cmap='RdYlGn'),
+                                        use_container_width=True
+                                    )
+                                    
+                                    # Create silhouette plot
+                                    fig_silhouette = go.Figure()
+                                    
+                                    y_lower = 10
+                                    for cluster_id in range(1, n_clusters + 1):
+                                        mask = cluster_labels == cluster_id
+                                        cluster_scores = sample_scores[mask]
+                                        cluster_scores.sort()
+                                        
+                                        y_upper = y_lower + len(cluster_scores)
+                                        
+                                        color = colors[cluster_id - 1]
+                                        fig_silhouette.add_trace(go.Bar(
+                                            x=cluster_scores,
+                                            y=list(range(y_lower, y_upper)),
+                                            orientation='h',
+                                            marker=dict(color=color),
+                                            name=f"Cluster {cluster_id}",
+                                            hovertemplate='Silhouette: %{x:.3f}<extra></extra>'
+                                        ))
+                                        
+                                        y_lower = y_upper + 10
+                                    
+                                    # Add average score line
+                                    fig_silhouette.add_vline(
+                                        x=overall_score,
+                                        line=dict(color="red", width=2, dash="dash"),
+                                        annotation_text=f"Average: {overall_score:.3f}",
+                                        annotation_position="top"
+                                    )
+                                    
+                                    fig_silhouette.update_layout(
+                                        title="Silhouette Plot for Each Cluster",
+                                        xaxis_title="Silhouette Coefficient",
+                                        yaxis_title="Cluster",
+                                        height=max(400, n_clusters * 100),
+                                        showlegend=True,
+                                        barmode='overlay'
+                                    )
+                                    
+                                    st.plotly_chart(fig_silhouette, use_container_width=True)
+                                    st.success("✅ Silhouette analysis complete!")
                 
                 with seq_tab2:
                     st.subheader("Pairwise Sequence Alignment")
