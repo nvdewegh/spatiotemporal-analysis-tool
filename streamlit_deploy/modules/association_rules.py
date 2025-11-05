@@ -79,11 +79,26 @@ def prepare_feature_transactions(features_df, n_bins=3):
     Returns:
         transactions: List of lists
         item_names: Sorted list of unique items
+        bin_info: Dictionary with bin ranges for each feature
     """
     transactions = []
+    bin_info = {}  # Store bin ranges for display
     numeric_cols = features_df.select_dtypes(include=[np.number]).columns.tolist()
     exclude_cols = ['config', 'object', 'rally_id']
     feature_cols = [col for col in numeric_cols if col not in exclude_cols]
+    
+    # Calculate bin ranges for each feature
+    bin_labels = ['low', 'medium', 'high'] if n_bins == 3 else [f'bin{i+1}' for i in range(n_bins)]
+    for col in feature_cols:
+        col_min = features_df[col].min()
+        col_max = features_df[col].max()
+        if col_max > col_min:
+            bin_width = (col_max - col_min) / n_bins
+            bin_info[col] = {}
+            for i in range(n_bins):
+                bin_start = col_min + i * bin_width
+                bin_end = col_min + (i + 1) * bin_width
+                bin_info[col][bin_labels[i]] = (bin_start, bin_end)
     
     for idx, row in features_df.iterrows():
         transaction = []
@@ -96,7 +111,6 @@ def prepare_feature_transactions(features_df, n_bins=3):
                 if col_max > col_min:
                     bin_width = (col_max - col_min) / n_bins
                     bin_idx = min(int((value - col_min) / bin_width), n_bins - 1)
-                    bin_labels = ['low', 'medium', 'high'] if n_bins == 3 else [f'bin{i+1}' for i in range(n_bins)]
                     item = f"{col}_{bin_labels[bin_idx]}"
                     transaction.append(item)
         
@@ -108,7 +122,7 @@ def prepare_feature_transactions(features_df, n_bins=3):
         all_items.update(transaction)
     item_names = sorted(list(all_items))
     
-    return transactions, item_names
+    return transactions, item_names, bin_info
 
 
 def prepare_combined_transactions(spatial_trans, spatial_items, feature_trans, feature_items):
@@ -131,7 +145,7 @@ def prepare_combined_transactions(spatial_trans, spatial_items, feature_trans, f
 # ASSOCIATION RULE MINING
 # ============================================================================
 
-def compute_association_rules(transactions, min_support=0.1, min_confidence=0.5, min_lift=1.0):
+def compute_association_rules(transactions, min_support=0.1, min_confidence=0.5):
     """
     Compute association rules using Apriori algorithm.
     
@@ -139,7 +153,6 @@ def compute_association_rules(transactions, min_support=0.1, min_confidence=0.5,
         transactions: List of transaction lists
         min_support: Minimum support threshold
         min_confidence: Minimum confidence threshold
-        min_lift: Minimum lift threshold
         
     Returns:
         rules_df: DataFrame with rules and metrics
@@ -159,9 +172,6 @@ def compute_association_rules(transactions, min_support=0.1, min_confidence=0.5,
     
     try:
         rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
-        # Filter by lift if specified (keeping this for internal compatibility)
-        if min_lift > 1.0:
-            rules = rules[rules['lift'] >= min_lift]
         rules['antecedents_str'] = rules['antecedents'].apply(lambda x: ', '.join(sorted(list(x))))
         rules['consequents_str'] = rules['consequents'].apply(lambda x: ', '.join(sorted(list(x))))
         # Sort by confidence (primary metric) by default
@@ -271,7 +281,7 @@ def plot_rules_network(rules_df, top_k=20):
     return fig
 
 
-def plot_support_confidence_scatter(rules_df, color_by='lift'):
+def plot_support_confidence_scatter(rules_df, color_by='confidence'):
     """Create scatter plot of support vs confidence."""
     if len(rules_df) == 0:
         fig = go.Figure()
@@ -281,7 +291,7 @@ def plot_support_confidence_scatter(rules_df, color_by='lift'):
     
     hover_text = [
         f"Rule: {row['antecedents_str']} → {row['consequents_str']}<br>"
-        f"Support: {row['support']:.3f}<br>Confidence: {row['confidence']:.3f}<br>Lift: {row['lift']:.3f}"
+        f"Support: {row['support']:.3f}<br>Confidence: {row['confidence']:.3f}"
         for _, row in rules_df.iterrows()
     ]
     
@@ -358,7 +368,7 @@ def plot_mds_projection(distance_matrix, item_names, n_components=2):
     return fig
 
 
-def plot_top_rules_bars(rules_df, metric='lift', top_k=15):
+def plot_top_rules_bars(rules_df, metric='confidence', top_k=15):
     """Create bar chart of top rules by metric."""
     if len(rules_df) == 0:
         fig = go.Figure()
@@ -616,16 +626,16 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     
     st.info("""
     **Discover relationships between trajectory patterns using Association Rules:**
-    
-    *Example: "If a player visits zones A1 and B2, they will likely also visit zone C3."*
-    
-    Association rules find patterns like **{A, B} → {C}** where:
-    - **Antecedent {A, B}**: Starting pattern (zones/features that occur together)
-    - **Consequent {C}**: What typically follows
+
+    *Example: "If an object visits zones A1 and B2, it will likely also visit zone C3."*
+
+    Association rules find patterns like **{A} → {B}** where:
+    - **Antecedent {A}**: Items that appear together (left-hand side of the rule)
+    - **Consequent {B}**: Items that co-occur with the antecedent (right-hand side of the rule)
     
     **Two Primary Metrics (Theoretical Focus):**
     - **Support** ⭐: How common is this pattern? (frequency in all trajectories)
-    - **Confidence** ⭐: How reliable is this rule? (probability that consequent follows antecedent)
+    - **Confidence** ⭐: How reliable is this rule? (probability of finding consequent when antecedent is present)
     
     **Goal**: Find patterns that are both **common enough** (support) and **strong enough** (confidence) to be meaningful
     
@@ -693,8 +703,6 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             Find patterns based on **which zones** are visited.
             
             *Example rule:* "If player visits zones B3 and C4, they will likely visit E4"
-            
-            **Best for:** Spatial movement patterns
             """)
         elif transaction_type == "Feature Bins":
             st.info("""
@@ -704,7 +712,6 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             
             *Example rule:* "If trajectory has high speed and long distance, it will have medium duration"
             
-            **Best for:** Movement behavior patterns
             """)
         else:  # Combined
             st.info("""
@@ -712,7 +719,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             
             Find patterns combining **both zones AND features**.
             
-            *Example rule:* "If player visits B3 with high speed, they will visit E4 with medium duration"
+            *Example rule:* "If object visits B3 with high speed, it will visit E4 with medium duration"
             
             **Best for:** Comprehensive analysis
             """)
@@ -752,16 +759,14 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                                help="Support = P(A ∪ B): Frequency of the pattern in all trajectories. "
                                     "Higher support = more common pattern", 
                                key="ar_min_support")
-        st.caption(f"💡 Patterns must appear in ≥{min_support*100:.0f}% of trajectories")
+        st.caption(f"💡 Pattern must appear in ≥{min_support*100:.0f}% of trajectories")
     
     with col2:
         min_confidence = st.slider("**Min Confidence** ⭐", 0.1, 1.0, 0.5, 0.05,
                                    help="Confidence = P(B|A): Probability that consequent occurs given antecedent. "
                                         "Higher confidence = stronger rule", 
                                    key="ar_min_confidence")
-        st.caption(f"💡 Rules must be correct ≥{min_confidence*100:.0f}% of the time")
-    
-    min_lift = 1.0  # Keep default value for compatibility with mining function
+        st.caption(f"💡 Rule must hold in ≥{min_confidence*100:.0f}% of cases")
     
     st.markdown("---")
     
@@ -801,8 +806,9 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                         features_list.append(features)
                         trajectory_mapping.append(traj_id)
                     features_df = pd.DataFrame(features_list)
-                    transactions, item_names = prepare_feature_transactions(features_df, n_bins)
+                    transactions, item_names, bin_info = prepare_feature_transactions(features_df, n_bins)
                     st.session_state.ar_trajectory_mapping = trajectory_mapping
+                    st.session_state.ar_bin_info = bin_info  # Store bin info for display
                 
                 else:  # Combined
                     grid_info = create_spatial_grid_func('Tennis', grid_rows, grid_cols)
@@ -822,7 +828,8 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                         }
                         features_list.append(features)
                     features_df = pd.DataFrame(features_list)
-                    feature_trans, feature_items = prepare_feature_transactions(features_df, n_bins)
+                    feature_trans, feature_items, bin_info = prepare_feature_transactions(features_df, n_bins)
+                    st.session_state.ar_bin_info = bin_info  # Store bin info for display
                     transactions, item_names = prepare_combined_transactions(
                         spatial_trans, spatial_items, feature_trans, feature_items
                     )
@@ -841,10 +848,32 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 })
                 st.dataframe(trans_df, use_container_width=True)
                 
+                # Show bin ranges if feature binning was used
+                if st.session_state.get('ar_bin_info'):
+                    with st.expander("📊 Feature Bin Ranges", expanded=False):
+                        st.markdown("**Value ranges for each feature bin:**")
+                        bin_info = st.session_state.ar_bin_info
+                        
+                        # Create a formatted table showing bin ranges
+                        bin_rows = []
+                        for feature, bins in bin_info.items():
+                            for bin_label, (bin_start, bin_end) in bins.items():
+                                bin_rows.append({
+                                    'Feature': feature,
+                                    'Bin': bin_label,
+                                    'Range': f"[{bin_start:.3f}, {bin_end:.3f})",
+                                    'Item Name': f"{feature}_{bin_label}"
+                                })
+                        
+                        bin_df = pd.DataFrame(bin_rows)
+                        st.dataframe(bin_df, use_container_width=True, hide_index=True)
+                        
+                        st.caption("💡 These ranges show how continuous feature values were categorized into discrete bins for pattern mining")
+                
                 # Compute association rules
                 st.subheader("⚙️ Mining Association Rules...")
                 rules_df, frequent_itemsets = compute_association_rules(
-                    transactions, min_support, min_confidence, min_lift
+                    transactions, min_support, min_confidence
                 )
                 
                 st.session_state.ar_rules = rules_df
