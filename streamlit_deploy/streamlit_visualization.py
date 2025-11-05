@@ -4,14 +4,16 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import silhouette_score, silhouette_samples
-from scipy.spatial.distance import cdist, euclidean
-from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
-import plotly.express as px
-from itertools import groupby
+from itertools import combinations, groupby
 from collections import Counter
+from scipy.spatial.distance import cdist, euclidean, squareform
+from scipy.cluster.hierarchy import dendrogram, linkage
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import silhouette_score
+
+# Import analysis modules
+from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils
 
 # Common Plotly configuration for interactive charts
 PLOTLY_CONFIG = {
@@ -119,1207 +121,20 @@ if 'uploaded_filenames' not in st.session_state:
 if 'config_sources' not in st.session_state:
     st.session_state.config_sources = []
 
-# Color mapping function
-def get_color(obj_id):
-    """Get color based on object ID"""
-    try:
-        obj_id = int(obj_id)
-        if obj_id == 1:
-            return 'blue'  # Object 1
-        elif obj_id == 2:
-            return 'red'  # Object 2
-        elif 3 <= obj_id <= 11:
-            return 'green'  # Other objects
-        elif 12 <= obj_id <= 22:
-            return 'black'  # Team 2
-        elif obj_id == 0:
-            return 'yellow'  # Ball
-        else:
-            return 'gray'
-    except:
-        return 'gray'
-
-# Douglas-Peucker algorithm for line simplification
-def perpendicular_distance(point, start, end):
-    """Calculate perpendicular distance from point to line"""
-    if start['x'] == end['x'] and start['y'] == end['y']:
-        return np.sqrt((point['x'] - start['x'])**2 + (point['y'] - start['y'])**2)
-    
-    num = abs((end['y'] - start['y']) * point['x'] - 
-              (end['x'] - start['x']) * point['y'] + 
-              end['x'] * start['y'] - end['y'] * start['x'])
-    den = np.sqrt((end['y'] - start['y'])**2 + (end['x'] - start['x'])**2)
-    return num / den if den != 0 else 0
-
-def douglas_peucker(points, tolerance):
-    """Douglas-Peucker line simplification algorithm"""
-    if len(points) < 3:
-        return points
-    
-    max_distance = 0
-    index = 0
-    start = points[0]
-    end = points[-1]
-    
-    for i in range(1, len(points) - 1):
-        distance = perpendicular_distance(points[i], start, end)
-        if distance > max_distance:
-            index = i
-            max_distance = distance
-    
-    if max_distance > tolerance:
-        left = douglas_peucker(points[:index + 1], tolerance)
-        right = douglas_peucker(points[index:], tolerance)
-        return left[:-1] + right
-    else:
-        return [start, end]
-
-def spatiotemporal_distance(point, start, end):
-    """Calculate spatiotemporal distance"""
-    spatial_dist = perpendicular_distance(point, start, end)
-    time_diff = abs(point['timestamp'] - start['timestamp']) / \
-                max(abs(end['timestamp'] - start['timestamp']), 1)
-    return spatial_dist + time_diff
-
-def douglas_peucker_spatiotemporal(points, tolerance):
-    """Douglas-Peucker with spatiotemporal distance"""
-    if len(points) < 3:
-        return points
-    
-    max_distance = 0
-    index = 0
-    start = points[0]
-    end = points[-1]
-    
-    for i in range(1, len(points) - 1):
-        distance = spatiotemporal_distance(points[i], start, end)
-        if distance > max_distance:
-            index = i
-            max_distance = distance
-    
-    if max_distance > tolerance:
-        left = douglas_peucker_spatiotemporal(points[:index + 1], tolerance)
-        right = douglas_peucker_spatiotemporal(points[index:], tolerance)
-        return left[:-1] + right
-    else:
-        return [start, end]
-
-# Load and parse CSV data
-def load_data(uploaded_file, update_state=True, show_success=True):
-    """Load and parse CSV file - supports two formats:
-    Format 1: Multiple files, each is one configuration
-    Format 2: Single file with multiple configurations (column 0), optional config names in column 5
-    """
-    try:
-        # Try to read with header first
-        df_test = pd.read_csv(uploaded_file, nrows=5)
-        uploaded_file.seek(0)  # Reset file pointer
-        
-        # Check if first row looks like a header
-        has_header = False
-        if len(df_test.columns) >= 5:
-            first_col = str(df_test.columns[0]).lower()
-            if 'con' in first_col or 'constant' in first_col or 'timestamp' in str(df_test.columns[1]).lower():
-                has_header = True
-        
-        # Read the CSV - try to read all columns including optional column 5
-        if has_header:
-            df = pd.read_csv(uploaded_file)
-            # Map common column names to our standard names
-            column_mapping = {
-                'constant': 'con',
-                'timestamp': 'tst',
-                'ID': 'obj',
-                'id': 'obj',
-                'con': 'con',
-                'tst': 'tst',
-                'obj': 'obj',
-                'x': 'x',
-                'y': 'y'
-            }
-            # Rename columns if they match known names
-            for old_name, new_name in column_mapping.items():
-                if old_name in df.columns:
-                    df = df.rename(columns={old_name: new_name})
-        else:
-            # No header - check number of columns
-            df = pd.read_csv(uploaded_file, header=None)
-            num_cols = len(df.columns)
-            
-            if num_cols >= 6:
-                # Format with config names in column 5
-                df.columns = ['con', 'tst', 'obj', 'x', 'y', 'config_name'] + [f'col_{i}' for i in range(6, num_cols)]
-            elif num_cols >= 5:
-                df.columns = ['con', 'tst', 'obj', 'x', 'y'] + [f'col_{i}' for i in range(5, num_cols)]
-            else:
-                st.error(f"Expected at least 5 columns, found {num_cols}")
-                return None
-        
-        # Check if required columns exist
-        required_cols = ['con', 'tst', 'obj', 'x', 'y']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            st.error(f"Missing required columns: {', '.join(missing_cols)}")
-            st.error(f"Found columns: {', '.join(df.columns.tolist())}")
-            return None
-        
-        # Check if config_name column exists
-        has_config_names = 'config_name' in df.columns
-        
-        # Convert columns to numeric types
-        df['con'] = pd.to_numeric(df['con'], errors='coerce')
-        df['tst'] = pd.to_numeric(df['tst'], errors='coerce')
-        df['obj'] = pd.to_numeric(df['obj'], errors='coerce')
-        df['x'] = pd.to_numeric(df['x'], errors='coerce')
-        df['y'] = pd.to_numeric(df['y'], errors='coerce')
-        
-        # Remove rows where required numeric columns have NaN values
-        initial_rows = len(df)
-        df = df.dropna(subset=['con', 'tst', 'obj', 'x', 'y'])
-        
-        if len(df) == 0:
-            st.error(f"No valid data rows found. All {initial_rows} rows had invalid or missing values.")
-            st.info("Please ensure your CSV has numeric values in columns: con, tst, obj, x, y")
-            return None
-        
-        if len(df) < initial_rows:
-            st.warning(f"Removed {initial_rows - len(df)} rows with invalid data. {len(df)} rows remaining.")
-        
-        # Create config_source based on format
-        file_name = getattr(uploaded_file, 'name', 'uploaded data')
-        unique_configs = df['con'].unique()
-        
-        if len(unique_configs) > 1:
-            # Format 2: Single file with multiple configurations
-            if has_config_names:
-                # Use config names from column 5
-                df['config_source'] = df['config_name'].astype(str) + ' (c' + df['con'].astype(int).astype(str) + ')'
-            else:
-                # Use configuration numbers
-                df['config_source'] = 'c' + df['con'].astype(int).astype(str) + '.csv'
-            
-            config_sources = df['config_source'].unique().tolist()
-            if show_success:
-                st.success(f"✅ Loaded {len(df)} data points from {file_name} with {len(unique_configs)} configurations!")
-                st.info(f"Configurations found: {', '.join(config_sources)}")
-        else:
-            # Format 1: Single configuration file
-            df['config_source'] = file_name
-            config_sources = [file_name]
-            if show_success:
-                st.success(f"✅ Loaded {len(df)} data points from {file_name} successfully!")
-        
-        # Keep only necessary columns
-        keep_cols = ['con', 'tst', 'obj', 'x', 'y', 'config_source']
-        df = df[keep_cols]
-        
-        # Store data
-        if update_state:
-            st.session_state.data = df
-            st.session_state.max_time = df['tst'].max()
-            st.session_state.filename = file_name
-            st.session_state.uploaded_filenames = [file_name]
-            st.session_state.config_sources = config_sources
-        
-        return df
-        
-    except Exception as e:
-        st.error(f"Error loading file: {str(e)}")
-        import traceback
-        st.error(f"Details: {traceback.format_exc()}")
-        return None
-
-
 # ============================================================================
-# CLUSTERING INFRASTRUCTURE FUNCTIONS
+# NOTE: Utility functions (get_color, douglas_peucker, load_data, etc.)
+# are now imported from modules/utils.py
 # ============================================================================
 
-def format_features_dataframe(features_df):
-    """
-    Format features dataframe with units in column names and 2 decimal places.
-    
-    Parameters:
-    -----------
-    features_df : pd.DataFrame
-        Features dataframe with original column names
-    
-    Returns:
-    --------
-    pd.DataFrame : Formatted dataframe with units and rounded values
-    """
-    # Define column name mapping with units
-    column_units = {
-        'total_distance': 'Total Distance (m)',
-        'duration': 'Duration (s)',
-        'avg_speed': 'Avg Speed (m/s)',
-        'net_displacement': 'Net Displacement (m)',
-        'sinuosity': 'Sinuosity (ratio)',
-        'bbox_area': 'Bbox Area (m²)',
-        'avg_direction': 'Avg Direction (rad)',
-        'max_speed': 'Max Speed (m/s)'
-    }
-    
-    # Create a copy and rename columns
-    formatted_df = features_df.copy()
-    formatted_df = formatted_df.rename(columns=column_units)
-    
-    # Format all values to exactly 2 decimal places
-    for col in formatted_df.columns:
-        formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}")
-    
-    return formatted_df
-
-
-def extract_trajectory_features(traj_df):
-    """
-    Extract 8 statistical features from a single trajectory.
-    
-    Parameters:
-    -----------
-    traj_df : pd.DataFrame
-        Trajectory data with columns: X, Y, tst (or x, y, tst)
-    
-    Returns:
-    --------
-    dict : Dictionary containing 8 features
-    """
-    # Handle both uppercase and lowercase column names
-    if 'X' in traj_df.columns:
-        x_col, y_col = 'X', 'Y'
-    else:
-        x_col, y_col = 'x', 'y'
-    
-    if len(traj_df) < 2:
-        return {
-            'total_distance': 0.0,
-            'duration': 0.0,
-            'avg_speed': 0.0,
-            'net_displacement': 0.0,
-            'sinuosity': 1.0,
-            'bbox_area': 0.0,
-            'avg_direction': 0.0,
-            'max_speed': 0.0
-        }
-    
-    # Sort by time
-    traj_df = traj_df.sort_values('tst').reset_index(drop=True)
-    
-    # Total distance
-    distances = np.sqrt(
-        np.diff(traj_df[x_col])**2 + 
-        np.diff(traj_df[y_col])**2
-    )
-    total_distance = np.sum(distances)
-    
-    # Duration
-    duration = traj_df['tst'].iloc[-1] - traj_df['tst'].iloc[0]
-    if duration == 0:
-        duration = 1.0  # Avoid division by zero
-    
-    # Average speed
-    avg_speed = total_distance / duration if duration > 0 else 0.0
-    
-    # Net displacement (start to end)
-    net_displacement = np.sqrt(
-        (traj_df[x_col].iloc[-1] - traj_df[x_col].iloc[0])**2 +
-        (traj_df[y_col].iloc[-1] - traj_df[y_col].iloc[0])**2
-    )
-    
-    # Sinuosity (path efficiency)
-    sinuosity = total_distance / net_displacement if net_displacement > 0 else 1.0
-    
-    # Bounding box area
-    bbox_area = (traj_df[x_col].max() - traj_df[x_col].min()) * \
-                (traj_df[y_col].max() - traj_df[y_col].min())
-    
-    # Average direction
-    dx = np.diff(traj_df[x_col])
-    dy = np.diff(traj_df[y_col])
-    angles = np.arctan2(dy, dx)
-    avg_direction = np.mean(angles) if len(angles) > 0 else 0.0
-    
-    # Maximum speed
-    time_diffs = np.diff(traj_df['tst'])
-    time_diffs[time_diffs == 0] = 0.01  # Avoid division by zero
-    speeds = distances / time_diffs
-    max_speed = np.max(speeds) if len(speeds) > 0 else 0.0
-    
-    return {
-        'total_distance': float(total_distance),
-        'duration': float(duration),
-        'avg_speed': float(avg_speed),
-        'net_displacement': float(net_displacement),
-        'sinuosity': float(sinuosity),
-        'bbox_area': float(bbox_area),
-        'avg_direction': float(avg_direction),
-        'max_speed': float(max_speed)
-    }
-
-
-@st.cache_data
-def compute_feature_distance_matrix(df, selected_configs, selected_objects, start_time, end_time, selected_features=None):
-    """
-    Compute distance matrix based on trajectory features (Method 1).
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Full trajectory data
-    selected_configs : list
-        Selected configurations
-    selected_objects : list
-        Selected object IDs
-    start_time : float
-        Start time filter
-    end_time : float
-        End time filter
-    selected_features : list, optional
-        List of feature names to use. If None, use all features.
-    
-    Returns:
-    --------
-    tuple : (distance_matrix, trajectory_ids, features_df)
-    """
-    # Filter data
-    filtered_df = df[
-        (df['config_source'].isin(selected_configs)) &
-        (df['obj'].isin(selected_objects)) &
-        (df['tst'] >= start_time) &
-        (df['tst'] <= end_time)
-    ].copy()
-    
-    # Group by configuration and object to get individual trajectories
-    trajectory_groups = filtered_df.groupby(['config_source', 'obj'])
-    
-    # Extract features for each trajectory
-    features_list = []
-    trajectory_ids = []
-    trajectories = []
-    
-    for (config, obj), traj_df in trajectory_groups:
-        features = extract_trajectory_features(traj_df)
-        features_list.append(features)
-        trajectory_ids.append(f"{config}_obj{obj}")
-        # Store trajectory coordinates (handle both uppercase and lowercase column names)
-        if 'X' in traj_df.columns:
-            traj_coords = traj_df[['X', 'Y', 'tst']].values
-        else:
-            traj_coords = traj_df[['x', 'y', 'tst']].values
-        trajectories.append(traj_coords)
-    
-    # Convert to DataFrame
-    features_df = pd.DataFrame(features_list, index=trajectory_ids)
-    
-    # Select only specified features if provided
-    if selected_features is not None and len(selected_features) > 0:
-        features_df = features_df[selected_features]
-    
-    # Normalize features
-    scaler = StandardScaler()
-    features_normalized = scaler.fit_transform(features_df)
-    
-    # Compute Euclidean distance matrix
-    distance_matrix = cdist(features_normalized, features_normalized, metric='euclidean')
-    
-    return distance_matrix, trajectory_ids, features_df, trajectories
-
-
-@st.cache_data
-def compute_chamfer_distance_matrix(df, selected_configs, selected_objects, start_time, end_time):
-    """
-    Compute distance matrix based on Chamfer distance (Method 2).
-    
-    Chamfer distance measures spatial similarity between trajectory paths.
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Full trajectory data
-    selected_configs : list
-        Selected configurations
-    selected_objects : list
-        Selected object IDs
-    start_time : float
-        Start time filter
-    end_time : float
-        End time filter
-    
-    Returns:
-    --------
-    tuple : (distance_matrix, trajectory_ids, trajectories)
-    """
-    # Filter data
-    filtered_df = df[
-        (df['config_source'].isin(selected_configs)) &
-        (df['obj'].isin(selected_objects)) &
-        (df['tst'] >= start_time) &
-        (df['tst'] <= end_time)
-    ].copy()
-    
-    # Group by configuration and object
-    trajectory_groups = filtered_df.groupby(['config_source', 'obj'])
-    
-    # Extract spatial coordinates for each trajectory
-    trajectories = []
-    trajectory_ids = []
-    
-    for (config, obj), traj_df in trajectory_groups:
-        traj_df = traj_df.sort_values('tst').reset_index(drop=True)
-        coords = traj_df[['x', 'y']].values
-        trajectories.append(coords)
-        trajectory_ids.append(f"{config}_obj{obj}")
-    
-    n = len(trajectories)
-    distance_matrix = np.zeros((n, n))
-    
-    # Compute pairwise Chamfer distances
-    for i in range(n):
-        for j in range(i+1, n):
-            traj_A = trajectories[i]
-            traj_B = trajectories[j]
-            
-            # Chamfer distance: average of minimum distances
-            # Distance from A to B
-            dist_A_to_B = np.mean([np.min(cdist([a], traj_B, metric='euclidean')) for a in traj_A])
-            # Distance from B to A
-            dist_B_to_A = np.mean([np.min(cdist([b], traj_A, metric='euclidean')) for b in traj_B])
-            # Symmetric Chamfer distance
-            chamfer_dist = (dist_A_to_B + dist_B_to_A) / 2.0
-            
-            distance_matrix[i, j] = chamfer_dist
-            distance_matrix[j, i] = chamfer_dist
-    
-    return distance_matrix, trajectory_ids, trajectories
-
-
-@st.cache_data
-def compute_dtw_distance_matrix(df, selected_configs, selected_objects, start_time, end_time):
-    """
-    Compute distance matrix based on Dynamic Time Warping (Method 3).
-    
-    DTW measures spatiotemporal similarity considering both space and time.
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Full trajectory data
-    selected_configs : list
-        Selected configurations
-    selected_objects : list
-        Selected object IDs
-    start_time : float
-        Start time filter
-    end_time : float
-        End time filter
-    
-    Returns:
-    --------
-    tuple : (distance_matrix, trajectory_ids, trajectories)
-    """
-    # Filter data
-    filtered_df = df[
-        (df['config_source'].isin(selected_configs)) &
-        (df['obj'].isin(selected_objects)) &
-        (df['tst'] >= start_time) &
-        (df['tst'] <= end_time)
-    ].copy()
-    
-    # Group by configuration and object
-    trajectory_groups = filtered_df.groupby(['config_source', 'obj'])
-    
-    # Extract spatiotemporal coordinates for each trajectory
-    trajectories = []
-    trajectory_ids = []
-    
-    for (config, obj), traj_df in trajectory_groups:
-        traj_df = traj_df.sort_values('tst').reset_index(drop=True)
-        # Include x, y, time as features
-        coords = traj_df[['x', 'y', 'tst']].values
-        trajectories.append(coords)
-        trajectory_ids.append(f"{config}_obj{obj}")
-    
-    n = len(trajectories)
-    distance_matrix = np.zeros((n, n))
-    
-    # Compute pairwise DTW distances
-    for i in range(n):
-        for j in range(i+1, n):
-            dtw_dist = dtw_distance(trajectories[i], trajectories[j])
-            distance_matrix[i, j] = dtw_dist
-            distance_matrix[j, i] = dtw_dist
-    
-    return distance_matrix, trajectory_ids, trajectories
-
-
-def dtw_distance(traj_A, traj_B):
-    """
-    Compute Dynamic Time Warping distance between two trajectories.
-    
-    Parameters:
-    -----------
-    traj_A : np.array
-        Trajectory A with shape (n, 3) - columns: x, y, time
-    traj_B : np.array
-        Trajectory B with shape (m, 3) - columns: x, y, time
-    
-    Returns:
-    --------
-    float : DTW distance
-    """
-    n, m = len(traj_A), len(traj_B)
-    
-    # Initialize DTW matrix
-    dtw_matrix = np.full((n + 1, m + 1), np.inf)
-    dtw_matrix[0, 0] = 0
-    
-    # Fill DTW matrix
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            # Euclidean distance between points (considering x, y, time)
-            cost = euclidean(traj_A[i-1], traj_B[j-1])
-            
-            # Take minimum of three possible paths
-            dtw_matrix[i, j] = cost + min(
-                dtw_matrix[i-1, j],      # insertion
-                dtw_matrix[i, j-1],      # deletion
-                dtw_matrix[i-1, j-1]     # match
-            )
-    
-    return dtw_matrix[n, m]
-
-
-def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=False):
-    """
-    Auto-detect optimal number of clusters using elbow method with silhouette validation.
-    
-    Parameters:
-    -----------
-    distance_matrix : np.array
-        Precomputed distance matrix
-    max_clusters : int
-        Maximum number of clusters to try
-    return_plot_data : bool
-        If True, also return data for plotting the elbow curve
-    
-    Returns:
-    --------
-    int : Optimal number of clusters
-    dict : (optional) Plot data if return_plot_data=True
-    """
-    n_samples = len(distance_matrix)
-    
-    # Edge cases
-    if n_samples < 3:
-        return 2
-    if n_samples < 10:
-        return min(3, n_samples - 1)
-    
-    max_k = min(max_clusters, n_samples - 1)
-    
-    inertias = []
-    silhouette_scores_list = []
-    
-    for k in range(2, max_k + 1):
-        # Perform hierarchical clustering
-        # Note: Ward linkage doesn't work with precomputed distances, so we use 'average' instead
-        clustering = AgglomerativeClustering(
-            n_clusters=k,
-            metric='precomputed',
-            linkage='average'
-        )
-        labels = clustering.fit_predict(distance_matrix)
-        
-        # Calculate within-cluster sum of squares (inertia)
-        inertia = 0
-        for cluster_id in range(k):
-            cluster_mask = labels == cluster_id
-            if np.sum(cluster_mask) > 0:
-                cluster_distances = distance_matrix[cluster_mask][:, cluster_mask]
-                inertia += np.sum(cluster_distances) / (2 * np.sum(cluster_mask))
-        inertias.append(inertia)
-        
-        # Calculate silhouette score
-        try:
-            sil_score = silhouette_score(distance_matrix, labels, metric='precomputed')
-            silhouette_scores_list.append(sil_score)
-        except:
-            silhouette_scores_list.append(0)
-    
-    # Find elbow point using angle method
-    if len(inertias) < 2:
-        return 3
-    
-    # Normalize inertias to 0-1 range
-    inertias_norm = np.array(inertias)
-    inertias_norm = (inertias_norm - inertias_norm.min()) / (inertias_norm.max() - inertias_norm.min() + 1e-10)
-    
-    # Calculate angles
-    angles = []
-    for i in range(1, len(inertias_norm) - 1):
-        p1 = np.array([i-1, inertias_norm[i-1]])
-        p2 = np.array([i, inertias_norm[i]])
-        p3 = np.array([i+1, inertias_norm[i+1]])
-        
-        v1 = p1 - p2
-        v2 = p3 - p2
-        
-        angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-10))
-        angles.append(angle)
-    
-    if len(angles) > 0:
-        elbow_idx = np.argmax(angles) + 1  # +1 because we start from k=2
-        optimal_k = elbow_idx + 2  # +2 to convert back to actual k value
-    else:
-        optimal_k = 3
-    
-    # Validate with silhouette score
-    if len(silhouette_scores_list) > 0:
-        if silhouette_scores_list[optimal_k - 2] < 0.25:
-            # If silhouette is poor, try to find better k
-            best_sil_idx = np.argmax(silhouette_scores_list)
-            if silhouette_scores_list[best_sil_idx] > 0.25:
-                optimal_k = best_sil_idx + 2
-    
-    # Ensure reasonable range
-    optimal_k = max(2, min(optimal_k, max_k))
-    
-    if return_plot_data:
-        k_values = list(range(2, max_k + 1))
-        return optimal_k, {
-            'k_values': k_values,
-            'inertias': inertias,
-            'silhouette_scores': silhouette_scores_list,
-            'optimal_k': optimal_k
-        }
-    
-    return optimal_k
-
-
-def perform_hierarchical_clustering(distance_matrix, n_clusters):
-    """
-    Perform hierarchical clustering with average linkage (compatible with precomputed distances).
-    
-    Parameters:
-    -----------
-    distance_matrix : np.array
-        Precomputed distance matrix
-    n_clusters : int
-        Number of clusters to form
-    
-    Returns:
-    --------
-    tuple : (cluster_labels, linkage_matrix)
-    """
-    # Create linkage matrix for dendrogram - use 'average' instead of 'ward' for precomputed
-    linkage_matrix = linkage(distance_matrix, method='average')
-    
-    # Perform clustering with average linkage (compatible with precomputed distances)
-    clustering = AgglomerativeClustering(
-        n_clusters=n_clusters,
-        metric='precomputed',
-        linkage='average'  # Changed from 'ward' to 'average'
-    )
-    cluster_labels = clustering.fit_predict(distance_matrix)
-    
-    return cluster_labels, linkage_matrix
-
-
-def initialize_clustering_session_state():
-    """
-    Initialize session state variables for clustering.
-    Call this at the start of clustering section.
-    """
-    if 'clustering_method' not in st.session_state:
-        st.session_state.clustering_method = None
-    
-    if 'clustering_distance_matrix' not in st.session_state:
-        st.session_state.clustering_distance_matrix = None
-    
-    if 'clustering_linkage_matrix' not in st.session_state:
-        st.session_state.clustering_linkage_matrix = None
-    
-    if 'clustering_trajectory_ids' not in st.session_state:
-        st.session_state.clustering_trajectory_ids = None
-    
-    if 'clustering_optimal_n' not in st.session_state:
-        st.session_state.clustering_optimal_n = None
-    
-    if 'clustering_current_n' not in st.session_state:
-        st.session_state.clustering_current_n = None
-    
-    if 'clustering_labels' not in st.session_state:
-        st.session_state.clustering_labels = None
-    
-    if 'clustering_features_df' not in st.session_state:
-        st.session_state.clustering_features_df = None
-    
-    if 'clustering_trajectories' not in st.session_state:
-        st.session_state.clustering_trajectories = None
-
-
 # ============================================================================
-# SEQUENCE ANALYSIS FUNCTIONS
+# NOTE: Clustering functions (format_features_dataframe, extract_trajectory_features, etc.)
+# are now imported from modules/clustering.py
 # ============================================================================
 
-def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
-    """
-    Create a spatial grid for the court and return zone mapping function.
-    Includes buffer zones around the court to capture out-of-bounds positions.
-    
-    Parameters:
-    -----------
-    court_type : str
-        'Tennis' or 'Football'
-    grid_rows : int
-        Number of rows in grid (only for the court itself)
-    grid_cols : int
-        Number of columns in grid (only for the court itself)
-    
-    Returns:
-    --------
-    dict with zone_labels, x_bins, y_bins, and get_zone function
-    """
-    dims = get_court_dimensions(court_type)
-    width, height = dims['width'], dims['height']
-    
-    # Add buffer zones around the court (typically 3-5 meters for tennis)
-    # This captures positions when players are outside court boundaries
-    buffer = 5.0  # meters
-    
-    # Extended grid with buffer zones
-    x_min, x_max = -buffer, width + buffer
-    y_min, y_max = -buffer, height + buffer
-    
-    # Create bins - main court gets the specified grid, plus 1 column/row on each side for buffer
-    actual_cols = grid_cols + 2  # +1 left buffer, +1 right buffer
-    actual_rows = grid_rows + 2  # +1 top buffer, +1 bottom buffer
-    
-    x_bins = np.linspace(x_min, x_max, actual_cols + 1)
-    y_bins = np.linspace(y_min, y_max, actual_rows + 1)
-    
-    # Generate zone labels using row-column notation (A1, A2, B1, B2, etc.)
-    # Column letters: A, B, C, ..., Z, AA, AB, AC, ...
-    # Row numbers: 1, 2, 3, ...
-    def get_column_label(col_idx):
-        """Generate column label (A, B, C, ..., Z, AA, AB, ...)"""
-        if col_idx < 26:
-            return chr(65 + col_idx)  # A-Z
-        else:
-            # For more than 26 columns: AA, AB, AC, ...
-            return chr(65 + (col_idx // 26) - 1) + chr(65 + (col_idx % 26))
-    
-    zone_labels = []
-    for row in range(actual_rows):
-        for col in range(actual_cols):
-            col_label = get_column_label(col)
-            row_label = str(row + 1)  # 1-based row numbering
-            zone_labels.append(f"{col_label}{row_label}")
-    
-    def get_zone(x, y):
-        """Map (x, y) coordinate to zone label (e.g., A1, B2, C3)."""
-        if pd.isna(x) or pd.isna(y):
-            return None
-        col_idx = np.digitize(x, x_bins) - 1
-        row_idx = np.digitize(y, y_bins) - 1
-        # Clamp to valid range (handle extreme outliers)
-        col_idx = max(0, min(actual_cols - 1, col_idx))
-        row_idx = max(0, min(actual_rows - 1, row_idx))
-        return zone_labels[row_idx * actual_cols + col_idx]
-    
-    return {
-        'zone_labels': zone_labels,
-        'x_bins': x_bins,
-        'y_bins': y_bins,
-        'get_zone': get_zone,
-        'grid_rows': actual_rows,
-        'grid_cols': actual_cols,
-        'court_width': width,
-        'court_height': height,
-        'buffer': buffer
-    }
-
-
-def build_event_based_sequence(df, config, obj_id, start_time, end_time, grid_info, compress=True):
-    """
-    Build event-based sequence (one token per hit/bounce).
-    For tennis: use all data points as events.
-    
-    Parameters:
-    -----------
-    df : DataFrame
-    config : str
-        Configuration source
-    obj_id : int
-        Object ID
-    start_time, end_time : float
-        Time window
-    grid_info : dict
-        From create_spatial_grid()
-    compress : bool
-        If True, compress runs (AAABBB -> AB)
-    
-    Returns:
-    --------
-    str : sequence of zone tokens (e.g., "AABBBCCC" or "ABC" if compressed)
-    """
-    obj_data = df[(df['config_source'] == config) &
-                  (df['obj'] == obj_id) &
-                  (df['tst'] >= start_time) &
-                  (df['tst'] <= end_time)].sort_values('tst')
-    
-    if len(obj_data) == 0:
-        return ""
-    
-    get_zone = grid_info['get_zone']
-    tokens = [get_zone(row['x'], row['y']) for _, row in obj_data.iterrows()]
-    tokens = [t for t in tokens if t is not None]
-    
-    if compress:
-        # Run-length compression: AAABBB -> AB
-        tokens = [k for k, _ in groupby(tokens)]
-    
-    # Return as list of tokens (not concatenated string)
-    return tokens
-
-
-def build_interval_based_sequence(df, config, obj_id, start_time, end_time, 
-                                  grid_info, delta_t=0.2, compress=True):
-    """
-    Build equal-interval sequence (fixed time steps).
-    
-    Parameters:
-    -----------
-    delta_t : float
-        Time interval in seconds
-    
-    Returns:
-    --------
-    str : sequence of zone tokens
-    """
-    obj_data = df[(df['config_source'] == config) &
-                  (df['obj'] == obj_id) &
-                  (df['tst'] >= start_time) &
-                  (df['tst'] <= end_time)].sort_values('tst')
-    
-    if len(obj_data) == 0:
-        return ""
-    
-    get_zone = grid_info['get_zone']
-    
-    # Sample at fixed intervals
-    time_points = np.arange(start_time, end_time + delta_t, delta_t)
-    tokens = []
-    
-    for t in time_points:
-        # Find closest data point to this time
-        closest_idx = (obj_data['tst'] - t).abs().idxmin()
-        row = obj_data.loc[closest_idx]
-        zone = get_zone(row['x'], row['y'])
-        if zone is not None:
-            tokens.append(zone)
-    
-    if compress:
-        tokens = [k for k, _ in groupby(tokens)]
-    
-    # Return as list of tokens (not concatenated string)
-    return tokens
-
-
-def build_multi_entity_sequence(df, config, entity_ids, start_time, end_time,
-                                grid_info, mode='event', delta_t=0.2, compress=True):
-    """
-    Build joint sequence combining multiple entities (ball, p1, p2).
-    
-    Returns:
-    --------
-    list : joint sequence tokens like ["B:A|P1:C|P2:F", "B:B|P1:C|P2:E", ...]
-    """
-    # Build individual sequences (now returns lists)
-    sequences = {}
-    for entity_id in entity_ids:
-        if mode == 'event':
-            seq = build_event_based_sequence(df, config, entity_id, start_time, 
-                                            end_time, grid_info, compress=False)
-        else:
-            seq = build_interval_based_sequence(df, config, entity_id, start_time, 
-                                               end_time, grid_info, delta_t, compress=False)
-        sequences[entity_id] = seq
-    
-    # Find max length
-    max_len = max(len(s) for s in sequences.values()) if sequences else 0
-    
-    # Pad sequences to same length
-    for eid in sequences:
-        while len(sequences[eid]) < max_len:
-            # Append last zone or 'X' if empty
-            sequences[eid].append(sequences[eid][-1] if sequences[eid] else 'X')
-    
-    # Combine into joint tokens
-    joint_tokens = []
-    for i in range(max_len):
-        token_parts = [f"{eid}:{sequences[eid][i]}" for eid in entity_ids]
-        joint_tokens.append('|'.join(token_parts))
-    
-    if compress:
-        joint_tokens = [k for k, _ in groupby(joint_tokens)]
-    
-    # Return as list of joint tokens
-    return joint_tokens
-
-
-
-def levenshtein_distance(seq1, seq2):
-    """
-    Compute Levenshtein (edit) distance between two sequences.
-    
-    Parameters:
-    -----------
-    seq1, seq2 : list
-        Sequences (lists of tokens) to compare
-    
-    Returns:
-    --------
-    int : edit distance
-    """
-    len1, len2 = len(seq1), len(seq2)
-    
-    # Create DP table
-    dp = np.zeros((len1 + 1, len2 + 1), dtype=int)
-    
-    # Initialize
-    for i in range(len1 + 1):
-        dp[i, 0] = i
-    for j in range(len2 + 1):
-        dp[0, j] = j
-    
-    # Fill table
-    for i in range(1, len1 + 1):
-        for j in range(1, len2 + 1):
-            if seq1[i-1] == seq2[j-1]:
-                cost = 0
-            else:
-                cost = 1
-            
-            dp[i, j] = min(
-                dp[i-1, j] + 1,      # deletion
-                dp[i, j-1] + 1,      # insertion
-                dp[i-1, j-1] + cost  # substitution
-            )
-    
-    return int(dp[len1, len2])
-
-
-def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
-    """
-    Global alignment using Needleman-Wunsch algorithm.
-    
-    Parameters:
-    -----------
-    seq1, seq2 : list
-        Sequences (lists of tokens) to align
-    match : int
-        Score for matching tokens
-    mismatch : int
-        Penalty for mismatch
-    gap : int
-        Penalty for gap (indel)
-    
-    Returns:
-    --------
-    dict with 'score', 'aligned_seq1', 'aligned_seq2' (both are lists)
-    """
-    len1, len2 = len(seq1), len(seq2)
-    
-    # Score matrix
-    score_matrix = np.zeros((len1 + 1, len2 + 1))
-    
-    # Initialize
-    for i in range(len1 + 1):
-        score_matrix[i, 0] = gap * i
-    for j in range(len2 + 1):
-        score_matrix[0, j] = gap * j
-    
-    # Fill matrix
-    for i in range(1, len1 + 1):
-        for j in range(1, len2 + 1):
-            if seq1[i-1] == seq2[j-1]:
-                diagonal = score_matrix[i-1, j-1] + match
-            else:
-                diagonal = score_matrix[i-1, j-1] + mismatch
-            
-            score_matrix[i, j] = max(
-                diagonal,
-                score_matrix[i-1, j] + gap,  # deletion
-                score_matrix[i, j-1] + gap   # insertion
-            )
-    
-    # Traceback
-    aligned1, aligned2 = [], []
-    i, j = len1, len2
-    
-    while i > 0 or j > 0:
-        current_score = score_matrix[i, j]
-        
-        if i > 0 and j > 0:
-            diag_score = match if seq1[i-1] == seq2[j-1] else mismatch
-            if current_score == score_matrix[i-1, j-1] + diag_score:
-                aligned1.append(seq1[i-1])
-                aligned2.append(seq2[j-1])
-                i -= 1
-                j -= 1
-                continue
-        
-        if i > 0 and current_score == score_matrix[i-1, j] + gap:
-            aligned1.append(seq1[i-1])
-            aligned2.append('-')
-            i -= 1
-        elif j > 0 and current_score == score_matrix[i, j-1] + gap:
-            aligned1.append('-')
-            aligned2.append(seq2[j-1])
-            j -= 1
-        else:
-            break
-    
-    return {
-        'score': score_matrix[len1, len2],
-        'aligned_seq1': list(reversed(aligned1)),
-        'aligned_seq2': list(reversed(aligned2))
-    }
-
-
-def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
-    """
-    Local alignment using Smith-Waterman algorithm.
-    
-    Parameters:
-    -----------
-    seq1, seq2 : list
-        Sequences (lists of tokens) to align
-    
-    Returns:
-    --------
-    dict with 'score', 'aligned_seq1', 'aligned_seq2' (lists), 'start1', 'start2'
-    """
-    len1, len2 = len(seq1), len(seq2)
-    
-    # Score matrix
-    score_matrix = np.zeros((len1 + 1, len2 + 1))
-    
-    # Fill matrix (no negative scores)
-    max_score = 0
-    max_pos = (0, 0)
-    
-    for i in range(1, len1 + 1):
-        for j in range(1, len2 + 1):
-            if seq1[i-1] == seq2[j-1]:
-                diagonal = score_matrix[i-1, j-1] + match
-            else:
-                diagonal = score_matrix[i-1, j-1] + mismatch
-            
-            score_matrix[i, j] = max(
-                0,  # Can reset to 0
-                diagonal,
-                score_matrix[i-1, j] + gap,
-                score_matrix[i, j-1] + gap
-            )
-            
-            if score_matrix[i, j] > max_score:
-                max_score = score_matrix[i, j]
-                max_pos = (i, j)
-    
-    # Traceback from max position
-    aligned1, aligned2 = [], []
-    i, j = max_pos
-    
-    while i > 0 and j > 0 and score_matrix[i, j] > 0:
-        current_score = score_matrix[i, j]
-        
-        diag_score = match if seq1[i-1] == seq2[j-1] else mismatch
-        if current_score == score_matrix[i-1, j-1] + diag_score:
-            aligned1.append(seq1[i-1])
-            aligned2.append(seq2[j-1])
-            i -= 1
-            j -= 1
-        elif current_score == score_matrix[i-1, j] + gap:
-            aligned1.append(seq1[i-1])
-            aligned2.append('-')
-            i -= 1
-        elif current_score == score_matrix[i, j-1] + gap:
-            aligned1.append('-')
-            aligned2.append(seq2[j-1])
-            j -= 1
-        else:
-            break
-    
-    return {
-        'score': max_score,
-        'aligned_seq1': list(reversed(aligned1)),
-        'aligned_seq2': list(reversed(aligned2)),
-        'start1': i,
-        'start2': j
-    }
-
-
-def extract_ngrams(sequence, n=2):
-    """
-    Extract n-grams from sequence.
-    
-    Parameters:
-    -----------
-    sequence : list
-        Token sequence (list of zone labels)
-    n : int
-        N-gram size
-    
-    Returns:
-    --------
-    Counter : n-gram frequencies (n-grams are tuples of tokens)
-    """
-    if len(sequence) < n:
-        return Counter()
-    
-    # Extract n-grams as tuples of tokens
-    ngrams = [tuple(sequence[i:i+n]) for i in range(len(sequence) - n + 1)]
-    return Counter(ngrams)
-
-
-def compute_sequence_distance_matrix(sequences, method='levenshtein'):
-    """
-    Compute pairwise distance matrix for sequences.
-    
-    Parameters:
-    -----------
-    sequences : list of str
-        List of token sequences
-    method : str
-        'levenshtein' or 'normalized_levenshtein'
-    
-    Returns:
-    --------
-    np.array : distance matrix
-    """
-    n = len(sequences)
-    dist_matrix = np.zeros((n, n))
-    
-    for i in range(n):
-        for j in range(i + 1, n):
-            dist = levenshtein_distance(sequences[i], sequences[j])
-            
-            if method == 'normalized_levenshtein':
-                max_len = max(len(sequences[i]), len(sequences[j]))
-                if max_len > 0:
-                    dist = dist / max_len
-            
-            dist_matrix[i, j] = dist
-            dist_matrix[j, i] = dist
-    
-    return dist_matrix
-
-
 # ============================================================================
-# END SEQUENCE ANALYSIS FUNCTIONS
+# NOTE: Sequence analysis functions (create_spatial_grid, build_*_sequence, etc.)
+# are now imported from modules/sequence_analysis.py
 # ============================================================================
-
 
 # Draw soccer pitch
 def create_football_pitch():
@@ -1569,10 +384,10 @@ def aggregate_points(points, aggregation_type, temporal_resolution):
         return aggregated
     
     elif aggregation_type == 'Spatially generalise':
-        return douglas_peucker(points, temporal_resolution)
+        return utils.douglas_peucker(points, temporal_resolution)
     
     elif aggregation_type == 'Spatiotemporal generalise':
-        return douglas_peucker_spatiotemporal(points, temporal_resolution)
+        return utils.douglas_peucker_spatiotemporal(points, temporal_resolution)
     
     elif aggregation_type == 'Smoothing average':
         aggregated = []
@@ -1631,7 +446,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = get_color(obj_id)
+            color = utils.get_color(obj_id)
             
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
@@ -1714,7 +529,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = get_color(obj_id)
+            color = utils.get_color(obj_id)
             
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
@@ -1797,7 +612,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                 
                 x_coords = [p['x'] for p in points]
                 y_coords = [p['y'] for p in points]
-                color = get_color(obj_id)
+                color = utils.get_color(obj_id)
                 
                 # Add trajectory trace
                 frame_data.append(go.Scatter(
@@ -1913,7 +728,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = get_color(obj_id)
+            color = utils.get_color(obj_id)
             
             # Draw trajectory
             fig.add_trace(go.Scatter(
@@ -1960,7 +775,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                 all_avg_x.append(avg_x)
                 all_avg_y.append(avg_y)
                 
-                color = get_color(obj_id)
+                color = utils.get_color(obj_id)
                 
                 fig.add_trace(go.Scatter(
                     x=[avg_x], y=[avg_y],
@@ -2348,7 +1163,7 @@ def main():
             uploaded_names = [file.name for file in uploaded_files]
             combined_frames = []
             for file in uploaded_files:
-                single_df = load_data(file, update_state=False, show_success=False)
+                single_df = utils.load_data(file, update_state=False, show_success=False)
                 if single_df is not None:
                     combined_frames.append(single_df.copy())
             if combined_frames:
@@ -2427,7 +1242,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration", "Clustering", "Sequence Analysis", "Heat Maps", "Extra"]
+                ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis", "Outlier Detection", "Heat Maps", "Extra"]
             )
     
     # Main content
@@ -2830,6 +1645,15 @@ def main():
             st.markdown("---")
             st.success("✅ 2SA analysis complete! Use the tabs above to compare aligned and original trajectories.")
     
+    elif analysis_method == "Association Rules":
+        # Call the modular association rules function
+        association_rules.render_association_rules_section(
+            data=st.session_state.data,
+            selected_configs=st.session_state.shared_selected_configs,
+            selected_objects=st.session_state.shared_selected_objects,
+            create_spatial_grid_func=sequence_analysis.create_spatial_grid
+        )
+    
     elif analysis_method == "Sequence Analysis":
         st.header("🔤 Sequence Analysis")
         
@@ -2901,7 +1725,7 @@ def main():
         """)
         
         # Create grid info for visualization
-        grid_info = create_spatial_grid(
+        grid_info = sequence_analysis.create_spatial_grid(
             st.session_state.court_type,
             grid_rows,
             grid_cols
@@ -3059,7 +1883,7 @@ def main():
             st.warning("⚠️ Please select at least one object.")
         else:
             # Create grid
-            grid_info = create_spatial_grid(
+            grid_info = sequence_analysis.create_spatial_grid(
                 court_type=st.session_state.court_type,
                 grid_rows=grid_rows,
                 grid_cols=grid_cols
@@ -3080,12 +1904,12 @@ def main():
                 for config in selected_configs:
                     for obj_id in selected_objects:
                         if mode == 'event':
-                            seq = build_event_based_sequence(
+                            seq = sequence_analysis.build_event_based_sequence(
                                 df, config, obj_id, start_time, end_time,
                                 grid_info, compress=compress_runs
                             )
                         else:
-                            seq = build_interval_based_sequence(
+                            seq = sequence_analysis.build_interval_based_sequence(
                                 df, config, obj_id, start_time, end_time,
                                 grid_info, delta_t=delta_t, compress=compress_runs
                             )
@@ -3102,7 +1926,7 @@ def main():
             else:
                 # Multi-entity sequences
                 for config in selected_configs:
-                    seq = build_multi_entity_sequence(
+                    seq = sequence_analysis.build_multi_entity_sequence(
                         df, config, selected_objects, start_time, end_time,
                         grid_info, mode=mode, delta_t=delta_t, compress=compress_runs
                     )
@@ -3152,7 +1976,7 @@ def main():
                     
                     # Compute distance matrix using raw sequences (lists)
                     method = 'levenshtein' if 'edit' in dist_method else 'normalized_levenshtein'
-                    dist_matrix = compute_sequence_distance_matrix(raw_sequences, method=method)
+                    dist_matrix = sequence_analysis.compute_sequence_distance_matrix(raw_sequences, method=method)
                     
                     # Display matrix
                     fig_dist = go.Figure(data=go.Heatmap(
@@ -3282,7 +2106,7 @@ def main():
                             # Auto-detect optimal clusters button
                             if st.button("🎯 Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters.", key="seq_auto_clusters"):
                                 with st.spinner("Detecting optimal number of clusters..."):
-                                    optimal_k, plot_data = detect_optimal_clusters(dist_matrix, return_plot_data=True)
+                                    optimal_k, plot_data = clustering.detect_optimal_clusters(dist_matrix, return_plot_data=True)
                                     if optimal_k is not None:
                                         st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
                                         
@@ -3725,10 +2549,10 @@ def main():
                         
                         # Perform alignment
                         if align_type.startswith("Global"):
-                            result = needleman_wunsch(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
+                            result = sequence_analysis.needleman_wunsch(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
                             align_method = "Global"
                         else:
-                            result = smith_waterman(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
+                            result = sequence_analysis.smith_waterman(seq1, seq2, match_score, mismatch_penalty, gap_penalty)
                             align_method = "Local"
                         
                         # Display results
@@ -3812,7 +2636,7 @@ def main():
                     all_ngrams = Counter()
                     for seq in raw_sequences:
                         if sequence_type == "Per-entity":  # Only for simple sequences
-                            ngrams = extract_ngrams(seq, n_gram_size)
+                            ngrams = sequence_analysis.extract_ngrams(seq, n_gram_size)
                             all_ngrams.update(ngrams)
                     
                     if sequence_type == "Multi-entity":
@@ -3861,7 +2685,7 @@ def main():
                             # Show preview with delimiter
                             preview = '-'.join(seq[:20]) + ('...' if len(seq) > 20 else '')
                             with st.expander(f"{seq_data['ID']} - {preview}"):
-                                seq_ngrams = extract_ngrams(seq, n_gram_size)
+                                seq_ngrams = sequence_analysis.extract_ngrams(seq, n_gram_size)
                                 if seq_ngrams:
                                     seq_ngram_df = pd.DataFrame(
                                         seq_ngrams.most_common(10),
@@ -3872,6 +2696,14 @@ def main():
                                     st.dataframe(seq_ngram_df, use_container_width=True)
                                 else:
                                     st.info("No n-grams in this sequence.")
+    
+    elif analysis_method == "Outlier Detection":
+        # Call the modular outlier detection function
+        outlier_detection.render_outlier_detection_section(
+            data=st.session_state.data,
+            selected_configs=st.session_state.shared_selected_configs,
+            selected_objects=st.session_state.shared_selected_objects
+        )
     
     elif analysis_method == "Heat Maps":
         st.header("🔥 Heat Maps")
@@ -3902,7 +2734,7 @@ def main():
         """)
         
         # Initialize clustering session state
-        initialize_clustering_session_state()
+        clustering.initialize_clustering_session_state()
         
         # Method selection
         clustering_method = st.radio(
@@ -4008,7 +2840,7 @@ def main():
             if st.button("🔄 Compute Feature Distance Matrix", key="compute_features", disabled=not selected_features):
                 with st.spinner(f"Extracting {len(selected_features)} feature(s) and computing distances..."):
                     try:
-                        distance_matrix, trajectory_ids, features_df, trajectories = compute_feature_distance_matrix(
+                        distance_matrix, trajectory_ids, features_df, trajectories = clustering.compute_feature_distance_matrix(
                             df, selected_configs, selected_objects, start_time, end_time, selected_features
                         )
                         
@@ -4026,7 +2858,7 @@ def main():
             # Show features if computed
             if st.session_state.features_df is not None:
                 with st.expander("📋 Extracted Features"):
-                    formatted_df = format_features_dataframe(st.session_state.features_df)
+                    formatted_df = clustering.format_features_dataframe(st.session_state.features_df)
                     st.dataframe(formatted_df)
         
         elif clustering_method == "Spatial (Chamfer)":
@@ -4037,7 +2869,7 @@ def main():
             if st.button("🔄 Compute Chamfer Distance Matrix", key="compute_chamfer"):
                 with st.spinner("Computing Chamfer distances..."):
                     try:
-                        distance_matrix, trajectory_ids, trajectories = compute_chamfer_distance_matrix(
+                        distance_matrix, trajectory_ids, trajectories = clustering.compute_chamfer_distance_matrix(
                             df, selected_configs, selected_objects, start_time, end_time
                         )
                         
@@ -4059,7 +2891,7 @@ def main():
             if st.button("🔄 Compute DTW Distance Matrix", key="compute_dtw"):
                 with st.spinner("Computing DTW distances... This may take a while for many trajectories."):
                     try:
-                        distance_matrix, trajectory_ids, trajectories = compute_dtw_distance_matrix(
+                        distance_matrix, trajectory_ids, trajectories = clustering.compute_dtw_distance_matrix(
                             df, selected_configs, selected_objects, start_time, end_time
                         )
                         
@@ -4206,9 +3038,9 @@ def main():
             
             with col2:
                     # Auto-detect optimal clusters button
-                    if st.button("� Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters."):
+                    if st.button("🎯 Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters."):
                         with st.spinner("Detecting optimal number of clusters..."):
-                            optimal_k, plot_data = detect_optimal_clusters(st.session_state.distance_matrix, return_plot_data=True)
+                            optimal_k, plot_data = clustering.detect_optimal_clusters(st.session_state.distance_matrix, return_plot_data=True)
                             if optimal_k is not None:
                                 st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
                                 
