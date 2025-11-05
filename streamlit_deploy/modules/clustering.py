@@ -245,9 +245,14 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=F
     n_samples = len(distance_matrix)
     
     if n_samples < 3:
+        if return_plot_data:
+            return 2, {'k_values': [2], 'inertias': [0], 'silhouette_scores': [0], 'optimal_k': 2}
         return 2
     if n_samples < 10:
-        return min(3, n_samples - 1)
+        optimal = min(3, n_samples - 1)
+        if return_plot_data:
+            return optimal, {'k_values': [2, optimal], 'inertias': [0, 0], 'silhouette_scores': [0, 0], 'optimal_k': optimal}
+        return optimal
     
     max_k = min(max_clusters, n_samples - 1)
     
@@ -277,6 +282,9 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=F
             silhouette_scores_list.append(0)
     
     if len(inertias) < 2:
+        if return_plot_data:
+            k_values = list(range(2, max_k + 1)) if max_k > 2 else [2, 3]
+            return 3, {'k_values': k_values, 'inertias': inertias, 'silhouette_scores': silhouette_scores_list, 'optimal_k': 3}
         return 3
     
     inertias_norm = np.array(inertias)

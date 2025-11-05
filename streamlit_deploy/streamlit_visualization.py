@@ -1956,6 +1956,137 @@ def main():
                     "text/csv"
                 )
                 
+                # Trajectory Visualization on Tennis Court
+                st.markdown("---")
+                st.subheader("🎾 Trajectory Visualization on Tennis Court")
+                st.markdown("See the actual movement patterns of the trajectories used to generate sequences")
+                
+                # Let user select which trajectories to visualize
+                viz_mode = st.radio(
+                    "Visualization mode:",
+                    ["Show All", "Select Specific"],
+                    horizontal=True,
+                    key="seq_viz_mode"
+                )
+                
+                trajectories_to_plot = []
+                colors_list = []
+                labels_list = []
+                
+                # Color palette for different trajectories
+                color_palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                
+                if viz_mode == "Show All":
+                    max_trajs = st.slider("Max trajectories to show:", 1, min(20, len(seq_df)), min(10, len(seq_df)), key="seq_max_trajs")
+                    
+                    for idx, row in seq_df.head(max_trajs).iterrows():
+                        config = row['Config']
+                        obj_id = row['Object']
+                        
+                        if obj_id != 'Multi':  # Skip multi-entity sequences
+                            # Get trajectory data
+                            traj_data = df[
+                                (df['config_source'] == config) &
+                                (df['obj'] == obj_id) &
+                                (df['tst'] >= start_time) &
+                                (df['tst'] <= end_time)
+                            ].copy()
+                            
+                            if not traj_data.empty and 'tst' in traj_data.columns:
+                                traj_data = traj_data.sort_values('tst')
+                                trajectories_to_plot.append(traj_data)
+                                colors_list.append(color_palette[idx % len(color_palette)])
+                                labels_list.append(f"{row['ID']} ({row['Sequence'][:30]}...)")
+                
+                else:  # Select Specific
+                    # Filter out multi-entity sequences for selection
+                    selectable_seqs = seq_df[seq_df['Object'] != 'Multi']
+                    
+                    if len(selectable_seqs) > 0:
+                        selected_ids = st.multiselect(
+                            "Select sequences to visualize:",
+                            selectable_seqs['ID'].tolist(),
+                            default=selectable_seqs['ID'].tolist()[:min(5, len(selectable_seqs))],
+                            key="seq_selected_ids"
+                        )
+                        
+                        for idx, traj_id in enumerate(selected_ids):
+                            row = seq_df[seq_df['ID'] == traj_id].iloc[0]
+                            config = row['Config']
+                            obj_id = row['Object']
+                            
+                            # Get trajectory data
+                            traj_data = df[
+                                (df['config_source'] == config) &
+                                (df['obj'] == obj_id) &
+                                (df['tst'] >= start_time) &
+                                (df['tst'] <= end_time)
+                            ].copy()
+                            
+                            if not traj_data.empty and 'tst' in traj_data.columns:
+                                traj_data = traj_data.sort_values('tst')
+                                trajectories_to_plot.append(traj_data)
+                                colors_list.append(color_palette[idx % len(color_palette)])
+                                labels_list.append(f"{row['ID']} ({row['Sequence'][:30]}...)")
+                    else:
+                        st.info("No per-entity sequences available for visualization (only multi-entity sequences)")
+                
+                # Plot trajectories on tennis court
+                if trajectories_to_plot:
+                    fig_court = create_pitch_figure(st.session_state.court_type)
+                    
+                    # Add each trajectory
+                    for traj_data, color, label in zip(trajectories_to_plot, colors_list, labels_list):
+                        # Add trajectory line
+                        fig_court.add_trace(go.Scatter(
+                            x=traj_data['x'],
+                            y=traj_data['y'],
+                            mode='lines+markers',
+                            name=label,
+                            line=dict(color=color, width=2),
+                            marker=dict(size=4, color=color),
+                            hovertemplate=f'<b>{label}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
+                        ))
+                        
+                        # Mark start and end
+                        fig_court.add_trace(go.Scatter(
+                            x=[traj_data['x'].iloc[0]],
+                            y=[traj_data['y'].iloc[0]],
+                            mode='markers',
+                            name=f'{label} (start)',
+                            marker=dict(size=12, color=color, symbol='circle', line=dict(width=2, color='white')),
+                            showlegend=False,
+                            hovertemplate=f'<b>{label} START</b><extra></extra>'
+                        ))
+                        
+                        fig_court.add_trace(go.Scatter(
+                            x=[traj_data['x'].iloc[-1]],
+                            y=[traj_data['y'].iloc[-1]],
+                            mode='markers',
+                            name=f'{label} (end)',
+                            marker=dict(size=12, color=color, symbol='square', line=dict(width=2, color='white')),
+                            showlegend=False,
+                            hovertemplate=f'<b>{label} END</b><extra></extra>'
+                        ))
+                    
+                    fig_court.update_layout(
+                        title=f"Trajectories on Tennis Court (Sequence Analysis)",
+                        height=600,
+                        showlegend=True,
+                        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+                    )
+                    
+                    render_interactive_chart(fig_court, "Trajectories used to generate sequences")
+                    
+                    st.caption("""
+                    **Legend**: Each color represents a different trajectory | 
+                    ● Circle = Start | ■ Square = End | 
+                    Hover over points to see details
+                    """)
+                else:
+                    st.info("No trajectories selected for visualization")
+                
                 # Create tabs for analysis
                 st.markdown("---")
                 seq_tab1, seq_tab2, seq_tab3 = st.tabs([
