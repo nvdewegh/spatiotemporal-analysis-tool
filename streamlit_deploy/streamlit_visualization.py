@@ -2224,14 +2224,18 @@ def main():
                             n_sequences = len(raw_sequences)
                             max_clusters = min(10, n_sequences - 1)
                             
-                            n_clusters = st.slider(
-                                "Number of clusters",
-                                min_value=2,
-                                max_value=max_clusters,
-                                value=min(3, max_clusters),
-                                help="Slide to select how many clusters to create",
-                                key="seq_clusters"
-                            )
+                            if max_clusters > 2:
+                                n_clusters = st.slider(
+                                    "Number of clusters",
+                                    min_value=2,
+                                    max_value=max_clusters,
+                                    value=min(3, max_clusters),
+                                    help="Slide to select how many clusters to create",
+                                    key="seq_clusters"
+                                )
+                            else:
+                                n_clusters = 2
+                                st.info(f"Using {n_clusters} clusters (only {n_sequences} sequences available)")
                         
                         with col2:
                             # Auto-detect optimal clusters button
