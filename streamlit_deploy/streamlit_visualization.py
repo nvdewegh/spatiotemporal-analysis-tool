@@ -1846,24 +1846,24 @@ def main():
             )
             
             # Add detailed explanation in an expander
-            with st.expander("ℹ️ Uitleg Sequence Types"):
+            with st.expander("ℹ️ Sequence Type Explanation"):
                 st.markdown("""
-                **Per-entity (individuele sequenties)**
-                - Elke speler/object krijgt zijn eigen aparte sequentie
-                - Ideaal voor: individuele bewegingspatronen, speler-specifieke analyses
-                - Voorbeeld: 
-                  - Speler 1: `A1 → B2 → C3 → D4`
-                  - Speler 2: `E5 → F4 → G3 → D2`
+                **Per-entity (individual sequences)**
+                - Each player/object gets their own separate sequence
+                - Ideal for: individual movement patterns, player-specific analyses
+                - Example: 
+                  - Player 1: `A1 → B2 → C3 → D4`
+                  - Player 2: `E5 → F4 → G3 → D2`
                 
-                **Multi-entity (gecombineerde sequenties)**
-                - Combineert alle objecten per tijdsmoment in één token
-                - Toont interacties en gezamenlijke posities
-                - Berekening: Op elk moment worden de zones van alle actieve objecten samengevoegd
-                - Voorbeeld op tijdstip t=1: 
-                  - Speler 1 in zone B2, Speler 2 in zone D4 → Token: `B2;D4`
-                - Gebruik voor: teamwork analyse, positie-combinaties, gezamenlijke patronen
+                **Multi-entity (combined sequences)**
+                - Combines all objects per timestamp into one token
+                - Shows interactions and joint positions
+                - Calculation: At each moment, the zones of all active objects are merged
+                - Example at timestamp t=1: 
+                  - Player 1 in zone B2, Player 2 in zone D4 → Token: `B2;D4`
+                - Use for: teamwork analysis, position combinations, joint patterns
                 
-                **💡 Tip**: Start met Per-entity voor individuele analyses, gebruik Multi-entity om interacties te ontdekken.
+                **💡 Tip**: Start with Per-entity for individual analyses, use Multi-entity to discover interactions.
                 """)
         
         
