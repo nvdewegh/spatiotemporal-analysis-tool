@@ -523,25 +523,21 @@ def plot_court_with_grid_and_trajectories(trajectories_dict, supporting_traj_ids
             
             # Add zone label with appropriate styling
             if is_antecedent:
-                # Antecedent zones - red background
+                # Antecedent zones - red background (only in analysis context)
                 bgcolor = 'rgba(200, 0, 0, 0.9)'
                 bordercolor = 'darkred'
                 font_size = 22
             elif is_consequent:
-                # Consequent zones - blue background
+                # Consequent zones - blue background (only in analysis context)
                 bgcolor = 'rgba(0, 0, 200, 0.9)'
                 bordercolor = 'darkblue'
                 font_size = 22
-            elif is_buffer:
-                # Buffer zones - gray
-                bgcolor = 'rgba(150, 150, 150, 0.7)'
-                bordercolor = 'gray'
-                font_size = 16
             else:
-                # Regular court zones - black
+                # All other zones - uniform black (no distinction between buffer and court)
+                # Only use colors when analyzing specific rules
                 bgcolor = 'rgba(0, 0, 0, 0.7)'
-                bordercolor = 'red'
-                font_size = 20
+                bordercolor = 'black'
+                font_size = 18
             
             fig.add_annotation(
                 x=x_center,

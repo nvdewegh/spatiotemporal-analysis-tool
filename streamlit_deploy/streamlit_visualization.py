@@ -1788,16 +1788,11 @@ def main():
                 is_buffer = (col == 0 or col == actual_cols_viz - 1 or 
                            row == 0 or row == actual_rows_viz - 1)
                 
-                # Add zone label with high-contrast background
-                # Use different styling for buffer zones
-                if is_buffer:
-                    bgcolor = 'rgba(150, 150, 150, 0.7)'
-                    bordercolor = 'gray'
-                    font_size = 16
-                else:
-                    bgcolor = 'rgba(0, 0, 0, 0.7)'
-                    bordercolor = 'red'
-                    font_size = 20
+                # Add zone label with uniform styling (no distinction between buffer and court)
+                # All zones get the same appearance
+                bgcolor = 'rgba(0, 0, 0, 0.7)'
+                bordercolor = 'black'
+                font_size = 18
                 
                 fig_grid.add_annotation(
                     x=x_center,
@@ -1847,9 +1842,30 @@ def main():
             sequence_type = st.radio(
                 "Sequence type",
                 ["Per-entity", "Multi-entity"],
-                help="Per-entity: separate sequences for each object. Multi-entity: combined token per moment.",
                 key="seq_type"
             )
+            
+            # Add detailed explanation in an expander
+            with st.expander("ℹ️ Uitleg Sequence Types"):
+                st.markdown("""
+                **Per-entity (individuele sequenties)**
+                - Elke speler/object krijgt zijn eigen aparte sequentie
+                - Ideaal voor: individuele bewegingspatronen, speler-specifieke analyses
+                - Voorbeeld: 
+                  - Speler 1: `A1 → B2 → C3 → D4`
+                  - Speler 2: `E5 → F4 → G3 → D2`
+                
+                **Multi-entity (gecombineerde sequenties)**
+                - Combineert alle objecten per tijdsmoment in één token
+                - Toont interacties en gezamenlijke posities
+                - Berekening: Op elk moment worden de zones van alle actieve objecten samengevoegd
+                - Voorbeeld op tijdstip t=1: 
+                  - Speler 1 in zone B2, Speler 2 in zone D4 → Token: `B2;D4`
+                - Gebruik voor: teamwork analyse, positie-combinaties, gezamenlijke patronen
+                
+                **💡 Tip**: Start met Per-entity voor individuele analyses, gebruik Multi-entity om interacties te ontdekken.
+                """)
+        
         
         # Use selections from sidebar
         selected_configs = st.session_state.shared_selected_configs
@@ -3681,6 +3697,7 @@ def main():
                                             size=15,
                                             angle=angle
                                         ),
+                                        legendgroup=f"cluster_{cluster_id}",
                                         showlegend=False,
                                         hoverinfo='skip'
                                     ))
@@ -3968,6 +3985,7 @@ def main():
                                                         size=15,
                                                         angle=angle
                                                     ),
+                                                    legendgroup=f"cluster_{cluster_id}",
                                                     showlegend=False,
                                                     hoverinfo='skip'
                                                 ))
@@ -4085,6 +4103,7 @@ def main():
                                                         size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
                                                         color=colors[color_idx]
                                                     ),
+                                                    legendgroup=f"traj_{tid}",
                                                     showlegend=False,
                                                     hovertemplate=f'<b>Trajectory {tid}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                                                 ),
@@ -4109,6 +4128,7 @@ def main():
                                                             size=12,
                                                             angle=angle
                                                         ),
+                                                        legendgroup=f"traj_{tid}",
                                                         showlegend=False,
                                                         hoverinfo='skip'
                                                     ),
