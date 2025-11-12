@@ -260,63 +260,105 @@ def needleman_wunsch(seq1, seq2, match=2, mismatch=-1, gap=-1):
     }
 
 
-def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
-    """Local alignment using Smith-Waterman algorithm."""
+def longest_common_subsequence(seq1, seq2):
+    """
+    Find the Longest Common Substring (continuous) between two sequences.
+    
+    The Longest Common Substring is the longest continuous sequence of symbols 
+    that appears in both sequences without any gaps or interruptions.
+    
+    Example:
+        S1: A-B-A-C-B-T-E
+        S2: D-B-A-C-T-E
+        Result: B-A-C (continuous in both, length = 3)
+        
+    Note: This is different from longest common subsequence which allows gaps.
+    """
     len1, len2 = len(seq1), len(seq2)
     
-    score_matrix = np.zeros((len1 + 1, len2 + 1))
+    # Create DP table
+    # dp[i][j] = length of common substring ending at seq1[i-1] and seq2[j-1]
+    dp = [[0] * (len2 + 1) for _ in range(len1 + 1)]
     
-    max_score = 0
-    max_pos = (0, 0)
+    max_length = 0
+    end_pos_seq1 = 0
+    end_pos_seq2 = 0
     
+    # Fill the table
     for i in range(1, len1 + 1):
         for j in range(1, len2 + 1):
             if seq1[i-1] == seq2[j-1]:
-                diagonal = score_matrix[i-1, j-1] + match
+                dp[i][j] = dp[i-1][j-1] + 1
+                if dp[i][j] > max_length:
+                    max_length = dp[i][j]
+                    end_pos_seq1 = i
+                    end_pos_seq2 = j
             else:
-                diagonal = score_matrix[i-1, j-1] + mismatch
-            
-            score_matrix[i, j] = max(
-                0,
-                diagonal,
-                score_matrix[i-1, j] + gap,
-                score_matrix[i, j-1] + gap
-            )
-            
-            if score_matrix[i, j] > max_score:
-                max_score = score_matrix[i, j]
-                max_pos = (i, j)
+                dp[i][j] = 0  # Reset to 0 for substring (must be continuous)
     
-    aligned1, aligned2 = [], []
-    i, j = max_pos
+    # Extract the longest common substring
+    start1 = end_pos_seq1 - max_length
+    start2 = end_pos_seq2 - max_length
+    lcs = seq1[start1:end_pos_seq1] if max_length > 0 else []
     
-    while i > 0 and j > 0 and score_matrix[i, j] > 0:
-        current_score = score_matrix[i, j]
+    # Create aligned sequences with gaps showing the context
+    aligned1 = []
+    aligned2 = []
+    
+    if max_length > 0:
+        # Add symbols before the match with gaps to align
+        prefix_len = max(start1, start2)
+        for i in range(prefix_len):
+            if i < start1:
+                aligned1.append('-')
+            else:
+                aligned1.append(seq1[i])
+            
+            if i < start2:
+                aligned2.append('-')
+            else:
+                aligned2.append(seq2[i])
         
-        diag_score = match if seq1[i-1] == seq2[j-1] else mismatch
-        if current_score == score_matrix[i-1, j-1] + diag_score:
-            aligned1.append(seq1[i-1])
-            aligned2.append(seq2[j-1])
-            i -= 1
-            j -= 1
-        elif current_score == score_matrix[i-1, j] + gap:
-            aligned1.append(seq1[i-1])
-            aligned2.append('-')
-            i -= 1
-        elif current_score == score_matrix[i, j-1] + gap:
-            aligned1.append('-')
-            aligned2.append(seq2[j-1])
-            j -= 1
-        else:
-            break
+        # Add the matching substring
+        for i in range(max_length):
+            aligned1.append(seq1[start1 + i])
+            aligned2.append(seq2[start2 + i])
+        
+        # Add symbols after the match with gaps to align
+        remaining1 = len1 - end_pos_seq1
+        remaining2 = len2 - end_pos_seq2
+        suffix_len = max(remaining1, remaining2)
+        for i in range(suffix_len):
+            if i < remaining1:
+                aligned1.append(seq1[end_pos_seq1 + i])
+            else:
+                aligned1.append('-')
+            
+            if i < remaining2:
+                aligned2.append(seq2[end_pos_seq2 + i])
+            else:
+                aligned2.append('-')
     
     return {
-        'score': max_score,
-        'aligned_seq1': list(reversed(aligned1)),
-        'aligned_seq2': list(reversed(aligned2)),
-        'start1': i,
-        'start2': j
+        'score': max_length,
+        'lcs': lcs,
+        'lcs_length': max_length,
+        'aligned_seq1': aligned1,
+        'aligned_seq2': aligned2,
+        'start1': start1,
+        'start2': start2,
+        'positions_seq1': list(range(start1, end_pos_seq1)) if max_length > 0 else [],
+        'positions_seq2': list(range(start2, end_pos_seq2)) if max_length > 0 else []
     }
+
+
+# Keep the old function name for backwards compatibility
+def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-1):
+    """
+    Wrapper that calls longest_common_subsequence for backwards compatibility.
+    Note: Parameters match, mismatch, gap are ignored as LCS only finds exact matches.
+    """
+    return longest_common_subsequence(seq1, seq2)
 
 
 # =============================================================================

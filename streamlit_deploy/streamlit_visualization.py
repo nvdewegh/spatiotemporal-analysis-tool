@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
 import time
 from itertools import combinations, groupby
@@ -404,7 +405,44 @@ def aggregate_points(points, aggregation_type, temporal_resolution):
     
     return points
 
-# Visualize static trajectories
+def interpolate_points(points, interpolation_steps=5):
+    """
+    Interpolate points to create smooth continuous movement between timestamps.
+    
+    Args:
+        points: List of dicts with 'x', 'y', 'timestamp' keys
+        interpolation_steps: Number of intermediate points to create between each pair
+    
+    Returns:
+        List of interpolated points with smooth transitions
+    """
+    if len(points) < 2 or interpolation_steps < 1:
+        return points
+    
+    interpolated = []
+    
+    for i in range(len(points) - 1):
+        current = points[i]
+        next_point = points[i + 1]
+        
+        # Add the current point
+        interpolated.append(current)
+        
+        # Create intermediate points
+        for step in range(1, interpolation_steps):
+            alpha = step / interpolation_steps
+            interp_point = {
+                'x': current['x'] + alpha * (next_point['x'] - current['x']),
+                'y': current['y'] + alpha * (next_point['y'] - current['y']),
+                'timestamp': current['timestamp'] + alpha * (next_point['timestamp'] - current['timestamp'])
+            }
+            interpolated.append(interp_point)
+    
+    # Add the last point
+    interpolated.append(points[-1])
+    
+    return interpolated
+
 # Visualize static trajectories
 def visualize_static(df, selected_configs, selected_objects, start_time, end_time, 
                      aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football'):
@@ -415,6 +453,19 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
     center_x = court_dims['width'] / 2
     center_y = court_dims['height'] / 2
     
+    # Build a color map per (config, object) so same object in different configs is distinguishable
+    try:
+        palette = px.colors.qualitative.Plotly
+    except Exception:
+        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+
+    color_map = {}
+    ci = 0
+    for config in selected_configs:
+        for obj_id in selected_objects:
+            color_map[(config, obj_id)] = palette[ci % len(palette)]
+            ci += 1
+
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
         
@@ -446,90 +497,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = utils.get_color(obj_id)
-            
-            # Create legend group name
-            legend_group = f'{config} | Obj {obj_id}'
-            
-            # Draw trajectory line and markers, but hide the last marker
-            fig.add_trace(go.Scatter(
-                x=x_coords, y=y_coords,
-                mode='lines+markers',
-                name=f'{config} - Obj {obj_id}',
-                legendgroup=legend_group,
-                line=dict(color=color, width=2),
-                marker=dict(
-                    size=[4] * (len(x_coords) - 1) + [0],  # Hide the last marker
-                    color=color
-                ),
-                hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
-            ))
-
-            # Add arrow at the end using a separate scatter trace
-            if len(x_coords) >= 2:
-                dx = x_coords[-1] - x_coords[-2]
-                dy = y_coords[-1] - y_coords[-2]
-                # Swapping dx and dy in arctan2 rotates the coordinate system by 90 degrees,
-                # aligning the calculation's 0-degree reference (east) with the arrow's default orientation (north).
-                angle = np.degrees(np.arctan2(dx, dy))
-
-                fig.add_trace(go.Scatter(
-                    x=[x_coords[-1]],
-                    y=[y_coords[-1]],
-                    mode='markers',
-                    marker=dict(
-                        symbol='arrow',
-                        color=color,
-                        size=15,
-                        angle=angle
-                    ),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-    
-    # Preserve zoom state on redraw
-    fig.update_layout(uirevision='constant')
-    
-    return fig
-    """Create static trajectory visualization"""
-    fig = create_pitch_figure(court_type)
-    court_dims = get_court_dimensions(court_type)
-    
-    center_x = court_dims['width'] / 2
-    center_y = court_dims['height'] / 2
-    
-    for config in selected_configs:
-        config_data = df[df['config_source'] == config]
-        
-        for obj_id in selected_objects:
-            obj_data = config_data[config_data['obj'] == obj_id]
-            obj_data = obj_data[(obj_data['tst'] >= start_time) & (obj_data['tst'] <= end_time)]
-            obj_data = obj_data.sort_values('tst')
-            
-            if len(obj_data) == 0:
-                continue
-            
-            # Convert to list of dicts
-            points = obj_data[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
-            
-            # Translate to center if in 2SA mode
-            if translate_to_center and points:
-                start_point = points[0]
-                delta_x = center_x - start_point['x']
-                delta_y = center_y - start_point['y']
-                points = [{'x': p['x'] + delta_x, 'y': p['y'] + delta_y, 
-                          'timestamp': p['timestamp']} for p in points]
-            
-            # Apply aggregation
-            points = aggregate_points(points, aggregation_type, temporal_resolution)
-            
-            if len(points) < 2:
-                continue
-            
-            x_coords = [p['x'] for p in points]
-            y_coords = [p['y'] for p in points]
-            
-            color = utils.get_color(obj_id)
+            color = color_map.get((config, obj_id), utils.get_color(obj_id))
             
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
@@ -573,21 +541,60 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
 
 # Create animated visualization with Plotly frames
 def visualize_animated(df, selected_configs, selected_objects, start_time, end_time, 
-                       aggregation_type, temporal_resolution, court_type='Football'):
+                       aggregation_type, temporal_resolution, court_type='Football', 
+                       animation_speed=200, use_interpolation=False, interpolation_steps=5):
     """Create smooth animation using Plotly's built-in animation"""
     
     # Get unique time steps from the data
-    time_steps = sorted(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
-    
-    if len(time_steps) == 0:
+    original_time_steps = sorted(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
+
+    # If there are too many unique time steps, sample them for performance (keep first and last)
+    max_frames = 80
+    if len(original_time_steps) == 0:
         # Fallback to linspace if no data
-        time_steps = np.linspace(start_time, end_time, 50)
+        original_time_steps = list(np.linspace(start_time, end_time, 50))
+    elif len(original_time_steps) > max_frames and not use_interpolation:
+        # Only sample if not using interpolation
+        indices = np.linspace(0, len(original_time_steps) - 1, max_frames).astype(int)
+        original_time_steps = [original_time_steps[i] for i in indices]
+    
+    # If interpolation is enabled, create interpolated time steps for smoother animation
+    if use_interpolation and len(original_time_steps) > 1:
+        time_steps = []
+        for i in range(len(original_time_steps) - 1):
+            t_start = original_time_steps[i]
+            t_end = original_time_steps[i + 1]
+            # Add intermediate time steps
+            for step in range(interpolation_steps):
+                alpha = step / interpolation_steps
+                time_steps.append(t_start + alpha * (t_end - t_start))
+        time_steps.append(original_time_steps[-1])  # Add the last timestamp
+        
+        # Limit total frames to avoid performance issues
+        if len(time_steps) > max_frames * 2:
+            indices = np.linspace(0, len(time_steps) - 1, max_frames * 2).astype(int)
+            time_steps = [time_steps[i] for i in indices]
+    else:
+        time_steps = original_time_steps
     
     # Initialize frames list
     frames = []
     
-    # Create initial figure with fixed court dimensions
-    fig = go.Figure()
+    # Create initial figure with court background and fixed dimensions
+    fig = create_pitch_figure(court_type)
+    
+    # Build color map for consistency
+    try:
+        palette = px.colors.qualitative.Plotly
+    except Exception:
+        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    color_map = {}
+    ci = 0
+    for config in selected_configs:
+        for obj_id in selected_objects:
+            color_map[(config, obj_id)] = palette[ci % len(palette)]
+            ci += 1
     
     # Prepare data for all objects at all times
     for frame_idx, current_time in enumerate(time_steps):
@@ -598,41 +605,64 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
             
             for obj_id in selected_objects:
                 obj_data = config_data[config_data['obj'] == obj_id]
-                obj_data = obj_data[(obj_data['tst'] >= start_time) & (obj_data['tst'] <= current_time)]
-                obj_data = obj_data.sort_values('tst')
+                # Get all data from start to beyond current_time for interpolation
+                obj_data_extended = obj_data[(obj_data['tst'] >= start_time)]
+                obj_data_extended = obj_data_extended.sort_values('tst')
                 
-                if len(obj_data) == 0:
+                if len(obj_data_extended) == 0:
                     continue
                 
-                points = obj_data[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
-                points = aggregate_points(points, aggregation_type, temporal_resolution)
+                # Get all available points for interpolation
+                all_points = obj_data_extended[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
+                all_points = aggregate_points(all_points, aggregation_type, temporal_resolution)
+                
+                if len(all_points) == 0:
+                    continue
+                
+                # Apply interpolation if enabled
+                if use_interpolation and len(all_points) > 1:
+                    all_points = interpolate_points(all_points, interpolation_steps)
+                
+                # Now filter to show only up to current_time
+                points = [p for p in all_points if p['timestamp'] <= current_time]
+                
+                # If current_time is between two points, interpolate to exact current_time
+                if use_interpolation and len(points) > 0 and points[-1]['timestamp'] < current_time:
+                    # Find the next point after current_time
+                    next_points = [p for p in all_points if p['timestamp'] > current_time]
+                    if next_points:
+                        prev_point = points[-1]
+                        next_point = next_points[0]
+                        # Interpolate to exact current_time
+                        time_diff = next_point['timestamp'] - prev_point['timestamp']
+                        if time_diff > 0:
+                            alpha = (current_time - prev_point['timestamp']) / time_diff
+                            interpolated_point = {
+                                'x': prev_point['x'] + alpha * (next_point['x'] - prev_point['x']),
+                                'y': prev_point['y'] + alpha * (next_point['y'] - prev_point['y']),
+                                'timestamp': current_time
+                            }
+                            points.append(interpolated_point)
                 
                 if len(points) == 0:
                     continue
                 
-                x_coords = [p['x'] for p in points]
-                y_coords = [p['y'] for p in points]
-                color = utils.get_color(obj_id)
+                color = color_map.get((config, obj_id), utils.get_color(obj_id))
+                legend_group = f'{config} | Obj {obj_id}'
                 
-                # Add trajectory trace
+                # For animated trajectories, only show the current position marker
+                # No trajectory lines - this keeps the animation clean and smooth
+                current_point = points[-1]
+                
                 frame_data.append(go.Scatter(
-                    x=x_coords, y=y_coords,
-                    mode='lines',
+                    x=[current_point['x']], y=[current_point['y']],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
                     name=f'{config} - Obj {obj_id}',
-                    line=dict(color=color, width=2),
-                    showlegend=(frame_idx == 0)
+                    legendgroup=legend_group,
+                    showlegend=(frame_idx == 0),
+                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
-                
-                # Add current position marker
-                if points:
-                    current_point = points[-1]
-                    frame_data.append(go.Scatter(
-                        x=[current_point['x']], y=[current_point['y']],
-                        mode='markers',
-                        marker=dict(size=10, color=color),
-                        showlegend=False,
-                        hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.0f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
-                    ))
         
         # Create frame with layout that matches initial figure to prevent jumping
         frames.append(go.Frame(
@@ -648,6 +678,10 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     fig.frames = frames
     
     # Add animation controls
+    # Set transition duration to create smooth movement between frames
+    # Use 80% of animation_speed for smooth transitions without overlap
+    transition_duration = int(animation_speed * 0.8)
+    
     fig.update_layout(
         updatemenus=[{
             'type': 'buttons',
@@ -657,10 +691,10 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                     'label': '▶ Play',
                     'method': 'animate',
                     'args': [None, {
-                        'frame': {'duration': 200, 'redraw': False},
+                        'frame': {'duration': animation_speed, 'redraw': False},
                         'fromcurrent': True,
                         'mode': 'immediate',
-                        'transition': {'duration': 0}
+                        'transition': {'duration': transition_duration, 'easing': 'linear'}
                     }]
                 },
                 {
@@ -704,23 +738,67 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
 
 # Visualize at specific time
 def visualize_at_time(df, selected_configs, selected_objects, current_time, 
-                      start_time, aggregation_type, temporal_resolution, court_type='Football'):
+                      start_time, aggregation_type, temporal_resolution, court_type='Football',
+                      use_interpolation=False, interpolation_steps=5):
     """Create visualization at specific time point"""
     fig = create_pitch_figure(court_type)
+    
+    # Build color map for consistency
+    try:
+        palette = px.colors.qualitative.Plotly
+    except Exception:
+        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    color_map = {}
+    ci = 0
+    for config in selected_configs:
+        for obj_id in selected_objects:
+            color_map[(config, obj_id)] = palette[ci % len(palette)]
+            ci += 1
     
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
         
         for obj_id in selected_objects:
             obj_data = config_data[config_data['obj'] == obj_id]
-            obj_data = obj_data[(obj_data['tst'] >= start_time) & (obj_data['tst'] <= current_time)]
-            obj_data = obj_data.sort_values('tst')
+            # Get all data from start to beyond current_time for interpolation
+            obj_data_extended = obj_data[(obj_data['tst'] >= start_time)]
+            obj_data_extended = obj_data_extended.sort_values('tst')
             
-            if len(obj_data) == 0:
+            if len(obj_data_extended) == 0:
                 continue
             
-            points = obj_data[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
-            points = aggregate_points(points, aggregation_type, temporal_resolution)
+            # Get all available points for interpolation
+            all_points = obj_data_extended[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
+            all_points = aggregate_points(all_points, aggregation_type, temporal_resolution)
+            
+            if len(all_points) == 0:
+                continue
+            
+            # Apply interpolation if enabled
+            if use_interpolation and len(all_points) > 1:
+                all_points = interpolate_points(all_points, interpolation_steps)
+            
+            # Now filter to show only up to current_time
+            points = [p for p in all_points if p['timestamp'] <= current_time]
+            
+            # If current_time is between two points, interpolate to exact current_time
+            if use_interpolation and len(points) > 0 and points[-1]['timestamp'] < current_time:
+                # Find the next point after current_time
+                next_points = [p for p in all_points if p['timestamp'] > current_time]
+                if next_points:
+                    prev_point = points[-1]
+                    next_point = next_points[0]
+                    # Interpolate to exact current_time
+                    time_diff = next_point['timestamp'] - prev_point['timestamp']
+                    if time_diff > 0:
+                        alpha = (current_time - prev_point['timestamp']) / time_diff
+                        interpolated_point = {
+                            'x': prev_point['x'] + alpha * (next_point['x'] - prev_point['x']),
+                            'y': prev_point['y'] + alpha * (next_point['y'] - prev_point['y']),
+                            'timestamp': current_time
+                        }
+                        points.append(interpolated_point)
             
             if len(points) == 0:
                 continue
@@ -728,13 +806,15 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = utils.get_color(obj_id)
+            color = color_map.get((config, obj_id), utils.get_color(obj_id))
+            legend_group = f'{config} | Obj {obj_id}'
             
             # Draw trajectory
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines',
                 name=f'{config} - Obj {obj_id}',
+                legendgroup=legend_group,
                 line=dict(color=color, width=2),
                 showlegend=True
             ))
@@ -747,6 +827,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
                     mode='markers',
                     marker=dict(size=10, color=color),
                     name=f'Current Obj {obj_id}',
+                    legendgroup=legend_group,
                     showlegend=False,
                     hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
@@ -760,6 +841,19 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
     
     all_avg_x = []
     all_avg_y = []
+    
+    # Build color map for consistency with other views
+    try:
+        palette = px.colors.qualitative.Plotly
+    except Exception:
+        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    color_map = {}
+    ci = 0
+    for config in selected_configs:
+        for obj_id in selected_objects:
+            color_map[(config, obj_id)] = palette[ci % len(palette)]
+            ci += 1
     
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -775,7 +869,8 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                 all_avg_x.append(avg_x)
                 all_avg_y.append(avg_y)
                 
-                color = utils.get_color(obj_id)
+                color = color_map.get((config, obj_id), utils.get_color(obj_id))
+                legend_group = f'{config} | Obj {obj_id}'
                 
                 fig.add_trace(go.Scatter(
                     x=[avg_x], y=[avg_y],
@@ -784,6 +879,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                     text=[f'Obj {obj_id}'],
                     textposition="top center",
                     name=f'{config} - Obj {obj_id} Avg',
+                    legendgroup=legend_group,
                     hovertemplate=(
                         f'Avg Object {obj_id}<br>Config: {config}<br>'
                         f'x: {avg_x:.2f}m<br>y: {avg_y:.2f}m<extra></extra>'
@@ -1147,7 +1243,10 @@ def main():
     with st.sidebar:
         st.header("📁 File Management")
         uploaded_files = st.file_uploader(
-            "Upload CSV file(s)", type=['csv'], accept_multiple_files=True
+            "Upload CSV file(s)", type=['csv'], accept_multiple_files=True,
+            help="Supports multiple formats:\n"
+                 "• Long format: config, tst, obj, x, y\n"
+                 "• Wide format: config_id, x1, y1, x2, y2, ..."
         )
         
         if uploaded_files is not None and len(uploaded_files) == 0:
@@ -1162,9 +1261,20 @@ def main():
         elif uploaded_files:
             uploaded_names = [file.name for file in uploaded_files]
             combined_frames = []
-            for file in uploaded_files:
+            for file_idx, file in enumerate(uploaded_files):
                 single_df = utils.load_data(file, update_state=False, show_success=False)
                 if single_df is not None:
+                    # Add file source information but preserve original config_source
+                    file_name_base = file.name.rsplit('.', 1)[0]  # Remove .csv extension
+                    single_df['file_source'] = file_name_base
+                    # Prefix config_source with file name if multiple files to keep them unique
+                    if len(uploaded_files) > 1:
+                        single_df['config_source'] = file_name_base + "_" + single_df['config_source'].astype(str)
+                    # Update config to be unique per file when multiple files
+                    if len(uploaded_files) > 1:
+                        single_df['config'] = single_df['config'] + (file_idx * 1000)
+                        # Update rally_id to be unique across files
+                        single_df['rally_id'] = single_df['rally_id'] + (file_idx * 10000)
                     combined_frames.append(single_df.copy())
             if combined_frames:
                 df = pd.concat(combined_frames, ignore_index=True)
@@ -1231,7 +1341,7 @@ def main():
             with st.expander("📋 Current Selection Summary", expanded=False):
                 st.write(f"**Configurations:** {len(selected_configs)} of {len(config_sources)} selected")
                 if selected_configs:
-                    st.write(", ".join(selected_configs))
+                    st.write(", ".join(map(str, selected_configs)))
                 st.write(f"**Objects:** {len(selected_objects)} of {len(objects)} selected")
                 if selected_objects:
                     st.write(", ".join(map(str, selected_objects)))
@@ -1410,12 +1520,46 @@ def main():
                 st.markdown("### Animated Trajectory View")
                 st.info("Watch trajectories evolve over time with smooth animation.")
                 
+                # Add animation controls in two columns
+                anim_col1, anim_col2 = st.columns(2)
+                
+                with anim_col1:
+                    animation_speed = st.slider(
+                        "Animation Speed (ms per frame)",
+                        min_value=50,
+                        max_value=1000,
+                        value=200,
+                        step=50,
+                        help="Lower values = faster animation, higher values = slower animation"
+                    )
+                
+                with anim_col2:
+                    use_interpolation_anim = st.checkbox(
+                        "Smooth continuous movement",
+                        value=False,
+                        help="Interpolate between timestamps for smooth continuous motion"
+                    )
+                    
+                    if use_interpolation_anim:
+                        interpolation_steps_anim = st.slider(
+                            "Interpolation detail",
+                            min_value=2,
+                            max_value=20,
+                            value=5,
+                            help="Number of intermediate points between timestamps (higher = smoother but slower)"
+                        )
+                    else:
+                        interpolation_steps_anim = 5
+                
                 try:
                     fig = visualize_animated(
                         df, selected_configs, selected_objects,
                         start_time, end_time,
                         aggregation_type, temporal_resolution,
-                        court_type
+                        court_type,
+                        animation_speed,
+                        use_interpolation_anim,
+                        interpolation_steps_anim
                     )
                     render_interactive_chart(fig)
                 except Exception as e:
@@ -1425,20 +1569,46 @@ def main():
                 st.markdown("### Time Point View")
                 st.info("Examine trajectories up to a specific point in time.")
                 
-                current_time = st.slider(
-                    "Select time point",
-                    min_value=float(start_time),
-                    max_value=float(end_time),
-                    value=float((start_time + end_time) / 2),
-                    key="visual_current_time"
-                )
+                # Add time control and interpolation option
+                time_col1, time_col2 = st.columns([3, 1])
+                
+                with time_col1:
+                    current_time = st.slider(
+                        "Select time point",
+                        min_value=float(start_time),
+                        max_value=float(end_time),
+                        value=float((start_time + end_time) / 2),
+                        key="visual_current_time"
+                    )
+                
+                with time_col2:
+                    use_interpolation_time = st.checkbox(
+                        "Smooth movement",
+                        value=False,
+                        key="time_interpolation",
+                        help="Interpolate for smooth continuous motion"
+                    )
+                    
+                    if use_interpolation_time:
+                        interpolation_steps_time = st.slider(
+                            "Detail level",
+                            min_value=2,
+                            max_value=20,
+                            value=5,
+                            key="time_interp_steps",
+                            help="Higher values = smoother motion but more computation"
+                        )
+                    else:
+                        interpolation_steps_time = 5
                 
                 try:
                     fig = visualize_at_time(
                         df, selected_configs, selected_objects,
                         current_time, start_time,
                         aggregation_type, temporal_resolution,
-                        court_type
+                        court_type,
+                        use_interpolation_time,
+                        interpolation_steps_time
                     )
                     render_interactive_chart(fig)
                 except Exception as e:
@@ -1660,7 +1830,6 @@ def main():
         st.info("""
         **Translate trajectories to symbolic sequences for pattern mining and comparison:**
         - **Spatial Discretization:** Divide court into zones (A, B, C, ...)
-        - **Temporal Sampling:** Event-based (per hit/bounce) or equal-interval
         - **Sequence Comparison:** Edit distances and alignment (global/local)
         - **Pattern Discovery:** Find common sub-patterns across rallies
         """)
@@ -1815,22 +1984,6 @@ def main():
         render_interactive_chart(fig_grid)
         
         with col2:
-            st.write("**Temporal Resolution**")
-            sampling_mode = st.radio(
-                "Sampling mode",
-                ["Event-based", "Equal-interval"],
-                help="Event-based: one token per data point. Equal-interval: fixed time steps.",
-                key="seq_sampling"
-            )
-            
-            if sampling_mode == "Equal-interval":
-                delta_t = st.slider("Time interval (Δt)", 0.1, 2.0, 0.2, 0.1, key="seq_delta_t")
-                st.caption(f"Sampling every {delta_t}s")
-            else:
-                delta_t = 0.2  # Not used for event-based
-                st.caption("One token per data point")
-        
-        with col3:
             st.write("**Compression**")
             compress_runs = st.checkbox(
                 "Run-length compression",
@@ -1865,7 +2018,6 @@ def main():
                 
                 **💡 Tip**: Start with Per-entity for individual analyses, use Multi-entity to discover interactions.
                 """)
-        
         
         # Use selections from sidebar
         selected_configs = st.session_state.shared_selected_configs
@@ -1910,25 +2062,18 @@ def main():
             st.subheader("🔤 Generated Sequences")
             
             sequences_data = []
-            mode = 'event' if sampling_mode == "Event-based" else 'interval'
             
             # Store both the list (for processing) and string (for display)
             raw_sequences = []  # Store list form
             
             if sequence_type == "Per-entity":
-                # Build per-entity sequences
+                # Build per-entity sequences (event-based: one token per data point)
                 for config in selected_configs:
                     for obj_id in selected_objects:
-                        if mode == 'event':
-                            seq = sequence_analysis.build_event_based_sequence(
-                                df, config, obj_id, start_time, end_time,
-                                grid_info, compress=compress_runs
-                            )
-                        else:
-                            seq = sequence_analysis.build_interval_based_sequence(
-                                df, config, obj_id, start_time, end_time,
-                                grid_info, delta_t=delta_t, compress=compress_runs
-                            )
+                        seq = sequence_analysis.build_event_based_sequence(
+                            df, config, obj_id, start_time, end_time,
+                            grid_info, compress=compress_runs
+                        )
                         
                         if seq:
                             raw_sequences.append(seq)  # Store list
@@ -1940,11 +2085,11 @@ def main():
                                 'Length': len(seq)
                             })
             else:
-                # Multi-entity sequences
+                # Multi-entity sequences (event-based)
                 for config in selected_configs:
                     seq = sequence_analysis.build_multi_entity_sequence(
                         df, config, selected_objects, start_time, end_time,
-                        grid_info, mode=mode, delta_t=delta_t, compress=compress_runs
+                        grid_info, compress=compress_runs
                     )
                     if seq:
                         raw_sequences.append(seq)  # Store list
@@ -1968,7 +2113,7 @@ def main():
                 st.download_button(
                     "📥 Download sequences as CSV",
                     csv_export,
-                    f"sequences_{sampling_mode}_{grid_rows}x{grid_cols}.csv",
+                    f"sequences_{grid_rows}x{grid_cols}.csv",
                     "text/csv"
                 )
                 
@@ -1994,16 +2139,27 @@ def main():
                                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
                 
                 if viz_mode == "Show All":
-                    max_trajs = st.slider("Max trajectories to show:", 1, min(20, len(seq_df)), min(10, len(seq_df)), key="seq_max_trajs")
+                    max_trajs_value = min(20, len(seq_df))
+                    default_trajs = min(10, len(seq_df))
+                    
+                    if max_trajs_value > 1:
+                        max_trajs = st.slider("Max trajectories to show:", 1, max_trajs_value, default_trajs, key="seq_max_trajs")
+                    else:
+                        max_trajs = 1
+                        st.info("Only 1 trajectory available to show.")
                     
                     for idx, row in seq_df.head(max_trajs).iterrows():
-                        config = row['Config']
+                        config_source = row['Config']
                         obj_id = row['Object']
                         
                         if obj_id != 'Multi':  # Skip multi-entity sequences
-                            # Get trajectory data
+                            # Convert obj_id to int if it's stored as string
+                            if isinstance(obj_id, str) and obj_id.isdigit():
+                                obj_id = int(obj_id)
+                            
+                            # Get trajectory data - ensure config_source matches
                             traj_data = df[
-                                (df['config_source'] == config) &
+                                (df['config_source'] == str(config_source)) &
                                 (df['obj'] == obj_id) &
                                 (df['tst'] >= start_time) &
                                 (df['tst'] <= end_time)
@@ -2029,12 +2185,16 @@ def main():
                         
                         for idx, traj_id in enumerate(selected_ids):
                             row = seq_df[seq_df['ID'] == traj_id].iloc[0]
-                            config = row['Config']
+                            config_source = row['Config']
                             obj_id = row['Object']
                             
-                            # Get trajectory data
+                            # Convert obj_id to int if it's stored as string
+                            if isinstance(obj_id, str) and obj_id.isdigit():
+                                obj_id = int(obj_id)
+                            
+                            # Get trajectory data - ensure config_source matches
                             traj_data = df[
-                                (df['config_source'] == config) &
+                                (df['config_source'] == str(config_source)) &
                                 (df['obj'] == obj_id) &
                                 (df['tst'] >= start_time) &
                                 (df['tst'] <= end_time)
@@ -2062,6 +2222,7 @@ def main():
                             name=label,
                             line=dict(color=color, width=2),
                             marker=dict(size=4, color=color),
+                            legendgroup=label,
                             hovertemplate=f'<b>{label}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                         ))
                         
@@ -2072,6 +2233,7 @@ def main():
                             mode='markers',
                             name=f'{label} (start)',
                             marker=dict(size=12, color=color, symbol='circle', line=dict(width=2, color='white')),
+                            legendgroup=label,
                             showlegend=False,
                             hovertemplate=f'<b>{label} START</b><extra></extra>'
                         ))
@@ -2082,6 +2244,7 @@ def main():
                             mode='markers',
                             name=f'{label} (end)',
                             marker=dict(size=12, color=color, symbol='square', line=dict(width=2, color='white')),
+                            legendgroup=label,
                             showlegend=False,
                             hovertemplate=f'<b>{label} END</b><extra></extra>'
                         ))
@@ -2166,7 +2329,7 @@ def main():
                         # Convert square distance matrix to condensed form
                         from scipy.spatial.distance import squareform
                         condensed_dist = squareform(dist_matrix, checks=False)
-                        linkage_matrix = linkage(condensed_dist, method='average')
+                        linkage_matrix = linkage(condensed_dist, method='ward')
                         
                         # Create dendrogram visualization
                         st.markdown("#### Dendrogram")
@@ -2212,7 +2375,7 @@ def main():
                         x_positions = [5 + i * 10 for i in range(n_leaves)]
                         
                         fig_dendro.update_layout(
-                            title="Hierarchical Clustering Dendrogram (Average Linkage)",
+                            title="Hierarchical Clustering Dendrogram (Ward Linkage)",
                             xaxis=dict(
                                 title="Sequence",
                                 tickmode='array',
@@ -2324,7 +2487,110 @@ def main():
                         st.dataframe(cluster_stats, use_container_width=True)
                         
                         st.markdown('---')
-                        st.success(f"✅ Successfully assigned {n_sequences} sequences into {n_clusters} clusters using Average linkage!")
+                        st.success(f"✅ Successfully assigned {n_sequences} sequences into {n_clusters} clusters using Ward linkage!")
+                        
+                        # ===========================
+                        # TRAJECTORY VISUALIZATION BY CLUSTER
+                        # ===========================
+                        st.markdown("---")
+                        st.markdown("### 🎨 Trajectories Colored by Cluster")
+                        
+                        st.info("""
+                        **Cluster Visualization**: View trajectories on the court, colored by their cluster assignment.
+                        This helps you understand which trajectories are grouped together spatially.
+                        """)
+                        
+                        # Create visualization of trajectories colored by cluster
+                        fig_clusters = create_pitch_figure(st.session_state.court_type)
+                        
+                        # Define color palette for clusters
+                        import plotly.express as px
+                        cluster_colors = px.colors.qualitative.Set3[:n_clusters] if n_clusters <= len(px.colors.qualitative.Set3) else \
+                                        px.colors.sample_colorscale("rainbow", [i/(n_clusters-1) for i in range(n_clusters)])
+                        
+                        # Plot trajectories grouped by cluster
+                        for cluster_id in sorted(seq_df_clustered['Cluster'].unique()):
+                            cluster_seqs = seq_df_clustered[seq_df_clustered['Cluster'] == cluster_id]
+                            color = cluster_colors[cluster_id - 1]  # cluster_id starts at 1
+                            
+                            for idx, row in cluster_seqs.iterrows():
+                                config_source = row['Config']
+                                obj_id = row['Object']
+                                
+                                # Skip multi-entity sequences
+                                if obj_id == 'Multi':
+                                    continue
+                                
+                                # Convert obj_id to int if it's stored as string
+                                if isinstance(obj_id, str) and obj_id.isdigit():
+                                    obj_id = int(obj_id)
+                                
+                                # Get trajectory data
+                                traj_data = df[
+                                    (df['config_source'] == str(config_source)) &
+                                    (df['obj'] == obj_id) &
+                                    (df['tst'] >= start_time) &
+                                    (df['tst'] <= end_time)
+                                ].copy()
+                                
+                                if not traj_data.empty and 'tst' in traj_data.columns:
+                                    traj_data = traj_data.sort_values('tst')
+                                    
+                                    # Add trajectory line
+                                    fig_clusters.add_trace(go.Scatter(
+                                        x=traj_data['x'],
+                                        y=traj_data['y'],
+                                        mode='lines',
+                                        name=f"Cluster {cluster_id}",
+                                        line=dict(color=color, width=2),
+                                        legendgroup=f"cluster_{cluster_id}",
+                                        showlegend=bool(idx == cluster_seqs.index[0]),  # Only show legend for first trajectory in cluster
+                                        hovertemplate=f'<b>Cluster {cluster_id} - Seq {row["ID"]}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
+                                    ))
+                                    
+                                    # Mark start point
+                                    fig_clusters.add_trace(go.Scatter(
+                                        x=[traj_data['x'].iloc[0]],
+                                        y=[traj_data['y'].iloc[0]],
+                                        mode='markers',
+                                        marker=dict(size=8, color=color, symbol='circle', line=dict(width=1, color='white')),
+                                        legendgroup=f"cluster_{cluster_id}",
+                                        showlegend=False,
+                                        hovertemplate=f'<b>Cluster {cluster_id} - Seq {row["ID"]} START</b><extra></extra>'
+                                    ))
+                                    
+                                    # Mark end point
+                                    fig_clusters.add_trace(go.Scatter(
+                                        x=[traj_data['x'].iloc[-1]],
+                                        y=[traj_data['y'].iloc[-1]],
+                                        mode='markers',
+                                        marker=dict(size=8, color=color, symbol='square', line=dict(width=1, color='white')),
+                                        legendgroup=f"cluster_{cluster_id}",
+                                        showlegend=False,
+                                        hovertemplate=f'<b>Cluster {cluster_id} - Seq {row["ID"]} END</b><extra></extra>'
+                                    ))
+                        
+                        fig_clusters.update_layout(
+                            title=f"Trajectories Grouped by Cluster ({n_clusters} clusters)",
+                            height=600,
+                            showlegend=True,
+                            legend=dict(
+                                yanchor="top", 
+                                y=0.99, 
+                                xanchor="left", 
+                                x=0.01,
+                                title="Clusters"
+                            )
+                        )
+                        
+                        render_interactive_chart(fig_clusters, "Trajectories colored by cluster assignment")
+                        
+                        st.caption("""
+                        **Legend**: Each color represents a different cluster | 
+                        ● Circle = Start | ■ Square = End | 
+                        Click legend items to show/hide clusters | 
+                        Hover over trajectories to see cluster and sequence ID
+                        """)
                         
                         # ===========================
                         # ANALYSIS TOOLS
@@ -2683,8 +2949,18 @@ def main():
                         # Alignment type
                         align_type = st.radio(
                             "Alignment type",
-                            ["Global (Needleman-Wunsch)", "Local (Smith-Waterman)"],
-                            help="Global: align entire sequences. Local: find best matching sub-sequences.",
+                            ["Global (Needleman-Wunsch)", "Local (Longest Common Substring)"],
+                            help="""
+                            **Global (Needleman-Wunsch)**: Aligns entire sequences from start to end, allowing matches, mismatches, and gaps. Best for similar-length sequences.
+                            
+                            **Local (Longest Common Substring)**: Finds the longest CONTINUOUS sequence that appears in both trajectories without interruptions. Must be 100% exact matches with no gaps within the match.
+                            
+                            Example for Local:
+                            • Seq1: A-B-A-C-B-T-E
+                            • Seq2: D-B-A-C-T-E
+                            • Result: B-A-C (continuous in both, length=3)
+                            • NOT B-A-C-T-E (would skip the B in middle of Seq1)
+                            """,
                             key="seq_align_type"
                         )
                         
@@ -2712,13 +2988,20 @@ def main():
                         
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric("Alignment Score", f"{result['score']:.1f}")
+                            if align_method == "Local":
+                                st.metric("Substring Length", f"{int(result['score'])} symbols")
+                            else:
+                                st.metric("Alignment Score", f"{result['score']:.1f}")
                         with col2:
                             if 'start1' in result:
                                 st.metric("Start positions", f"Seq1:{result['start1']}, Seq2:{result['start2']}")
                             else:
                                 matches = sum(1 for a, b in zip(result['aligned_seq1'], result['aligned_seq2']) if a == b and a != '-')
                                 st.metric("Matches", matches)
+                        
+                        # Show the actual LCS for Local alignment
+                        if align_method == "Local" and 'lcs' in result and result['lcs']:
+                            st.success(f"**Longest Common Substring found:** `{'  →  '.join(result['lcs'])}`")
                         
                         # Display alignment
                         st.write("**Aligned Sequences:**")
@@ -3098,12 +3381,11 @@ def main():
             """)
             
             # Create linkage matrix for hierarchical clustering
-            # Note: Ward linkage requires raw data, not distance matrix
-            # Using 'average' linkage which works with precomputed distance matrices
+            # Using Ward linkage for trajectory clustering
             # Convert square distance matrix to condensed form
             from scipy.spatial.distance import squareform
             condensed_dist = squareform(st.session_state.distance_matrix, checks=False)
-            linkage_matrix = linkage(condensed_dist, method='average')
+            linkage_matrix = linkage(condensed_dist, method='ward')
             
             # Create dendrogram visualization
             st.markdown("#### Dendrogram")
