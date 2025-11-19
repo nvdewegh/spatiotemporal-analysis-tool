@@ -14,7 +14,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 
 # Import analysis modules
-from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils
+from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
 
 # Common Plotly configuration for interactive charts
 PLOTLY_CONFIG = {
@@ -1352,7 +1352,7 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis", "Outlier Detection", "Heat Maps", "Extra"]
+                ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis", "PDP Analysis", "Outlier Detection", "Heat Maps", "Extra"]
             )
     
     # Main content
@@ -3130,6 +3130,1768 @@ def main():
                                     st.dataframe(seq_ngram_df, use_container_width=True)
                                 else:
                                     st.info("No n-grams in this sequence.")
+    
+    elif analysis_method == "PDP Analysis":
+        st.header("🔬 PDP (Qualitative Trajectory Calculus) Analysis")
+        
+        st.info("""
+        **PDP compares trajectories using relative position relationships (qualitative calculus).**
+        
+        Instead of comparing exact coordinates, PDP compares whether objects are relatively 
+        positioned to the left/right/same in x and above/below/same in y.
+        
+        **Four PDP Variants:**
+        - 🔹 **Fundamental:** Basic qualitative comparison
+        - 🔹 **Buffer:** Add tolerance zones around each point
+        - 🔹 **Rough:** Allow approximate equality in comparisons
+        - 🔹 **Buffer + Rough:** Combined approach (most flexible)
+        
+        **💡 Use Cases:**
+        - Compare tactical patterns independent of exact positions
+        - Find similar movement strategies across different court areas
+        - Robust to small measurement noise
+        """)
+        
+        # Initialize PDP session state
+        pdp_analysis.initialize_pdp_session_state()
+        
+        # Use selections from sidebar
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
+        
+        # Time range
+        min_time = float(df['tst'].min())
+        max_time = float(df['tst'].max())
+        
+        st.markdown("---")
+        st.subheader("⚙️ PDP Configuration")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.write("**Time Range**")
+            start_time = st.number_input(
+                "Start time",
+                min_value=min_time,
+                max_value=max_time,
+                value=min_time,
+                step=0.01,
+                format="%.2f",
+                key="pdp_start"
+            )
+            end_time = st.number_input(
+                "End time",
+                min_value=start_time,
+                max_value=max_time,
+                value=max_time,
+                step=0.01,
+                format="%.2f",
+                key="pdp_end"
+            )
+        
+        with col2:
+            st.write("**PDP Variant**")
+            pdp_variant = st.selectbox(
+                "Select PDP type",
+                ["fundamental", "buffer", "rough", "buffer_rough"],
+                format_func=lambda x: {
+                    "fundamental": "🔹 Fundamental",
+                    "buffer": "🔹 Buffer",
+                    "rough": "🔹 Rough",
+                    "buffer_rough": "🔹 Buffer + Rough"
+                }[x],
+                key="pdp_variant_select"
+            )
+            
+            window_length = st.slider(
+                "Window length (timestamps)",
+                min_value=1,
+                max_value=10,
+                value=3,
+                help="Number of consecutive time steps to analyze together",
+                key="pdp_window"
+            )
+        
+        with col3:
+            st.write("**Tolerance Parameters**")
+            
+            if pdp_variant in ["buffer", "buffer_rough"]:
+                buffer_x = st.number_input(
+                    "Buffer X (m)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=1.0,
+                    step=0.1,
+                    help="Buffer zone size in x direction",
+                    key="pdp_buffer_x"
+                )
+                buffer_y = st.number_input(
+                    "Buffer Y (m)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=1.0,
+                    step=0.1,
+                    help="Buffer zone size in y direction",
+                    key="pdp_buffer_y"
+                )
+            else:
+                buffer_x = 0.0
+                buffer_y = 0.0
+            
+            if pdp_variant in ["rough", "buffer_rough"]:
+                rough_x = st.number_input(
+                    "Rough X (m)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=0.5,
+                    step=0.1,
+                    help="Tolerance for 'equal' in x direction",
+                    key="pdp_rough_x"
+                )
+                rough_y = st.number_input(
+                    "Rough Y (m)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=0.5,
+                    step=0.1,
+                    help="Tolerance for 'equal' in y direction",
+                    key="pdp_rough_y"
+                )
+            else:
+                rough_x = 0.0
+                rough_y = 0.0
+        
+        if not selected_configs or not selected_objects:
+            st.warning("⚠️ Please select at least one configuration and one object from the sidebar.")
+        elif len(selected_configs) < 2:
+            st.warning("⚠️ Please select at least 2 configurations to compute distances.")
+        else:
+            # Check if we need to recompute
+            params_changed = (
+                st.session_state.pdp_variant != pdp_variant or
+                st.session_state.pdp_window_length != window_length or
+                st.session_state.pdp_distance_matrix is None
+            )
+            
+            if params_changed:
+                st.session_state.pdp_variant = pdp_variant
+                st.session_state.pdp_window_length = window_length
+                st.session_state.pdp_distance_matrix = None
+                st.session_state.pdp_linkage_matrix = None
+                st.session_state.pdp_optimal_n = None
+            
+            st.markdown("---")
+            
+            # Compute button
+            if st.button("🚀 Compute PDP Analysis", type="primary", key="compute_pdp"):
+                with st.spinner(f"Computing PDP distances ({pdp_variant})..."):
+                    distance_matrix, config_ids = pdp_analysis.compute_pdp_distance_matrix(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        window_length=window_length,
+                        buffer_x=buffer_x, buffer_y=buffer_y,
+                        rough_x=rough_x, rough_y=rough_y,
+                        pdp_variant=pdp_variant
+                    )
+                    
+                    st.session_state.pdp_distance_matrix = distance_matrix
+                    st.session_state.pdp_config_ids = config_ids
+                    
+                    # Perform clustering
+                    optimal_n = pdp_analysis.detect_optimal_clusters(distance_matrix)
+                    st.session_state.pdp_optimal_n = optimal_n
+                    st.session_state.pdp_current_n = optimal_n
+                    
+                    cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
+                        distance_matrix, optimal_n
+                    )
+                    st.session_state.pdp_cluster_labels = cluster_labels
+                    st.session_state.pdp_linkage_matrix = linkage_matrix
+                
+                st.success(f"✅ PDP analysis computed! Optimal clusters: {optimal_n}")
+                st.rerun()
+            
+            # Show results if available
+            if st.session_state.pdp_distance_matrix is not None:
+                
+                # ========================================
+                # SECTION 1: BASIC RESULTS
+                # ========================================
+                with st.expander("📊 Basic Results (Inequality Matrices, Normalization)", expanded=False):
+                    # 1. INEQUALITY MATRICES (Fundamental Representation)
+                    st.markdown("### 🔢 Inequality Matrices (Fundamental Representation)")
+                    
+                    st.info("""
+                    **Inequality matrices are the foundation of PDP analysis.**
+                    
+                    PDP (Qualitative Trajectory Calculus) doesn't compare exact coordinates - it compares **relative positions**:
+                    - **X-matrix**: For each point pair, is object 1 LEFT (0), EQUAL (1), or RIGHT (2) of object 2?
+                    - **Y-matrix**: For each point pair, is object 1 BELOW (0), EQUAL (1), or ABOVE (2) of object 2?
+                    
+                    These matrices capture the **qualitative spatial relationships** between objects over time.
+                    The distance matrix you see below is computed by comparing these inequality matrices between configurations.
+                    
+                    **Color Legend:**
+                    - 🟢 **Green**: Smaller (left/below)
+                    - 🟡 **Yellow**: Equal (within tolerance)
+                    - 🔴 **Red**: Bigger (right/above)
+                    """)
+                    
+                    # Configuration selector for inequality matrices
+                    col_ineq1, col_ineq2 = st.columns([2, 1])
+                    
+                    with col_ineq1:
+                        # Allow selecting multiple configurations
+                        configs_to_compare = st.multiselect(
+                            "Select configurations to view their inequality matrices",
+                            options=st.session_state.pdp_config_ids,
+                            default=st.session_state.pdp_config_ids[:min(2, len(st.session_state.pdp_config_ids))],
+                            help="View the fundamental inequality matrix representation for selected configurations",
+                            key="ineq_matrix_configs"
+                        )
+                    
+                    with col_ineq2:
+                        if len(configs_to_compare) > 0:
+                            st.metric("Configs selected", len(configs_to_compare))
+                            if len(configs_to_compare) > 5:
+                                st.warning("⚠️ Many configs selected - visualization may be large")
+                    
+                    if len(configs_to_compare) > 0:
+                        # Display inequality matrices for selected configurations
+                        from modules.pdp_analysis import visualize_inequality_matrices
+                        
+                        fig_ineq = visualize_inequality_matrices(
+                            df, configs_to_compare, selected_objects,
+                            start_time, end_time,
+                            window_length=window_length,
+                            buffer_x=buffer_x, buffer_y=buffer_y,
+                            rough_x=rough_x, rough_y=rough_y
+                        )
+                        
+                        render_interactive_chart(fig_ineq)
+                        
+                        if len(configs_to_compare) >= 2:
+                            st.caption("""
+                            💡 **Tip**: Compare the configurations above. Differences in colors indicate where 
+                            spatial relationships differ, contributing to their PDP distance.
+                            """)
+                    
+                    st.markdown("---")
+                    
+                    # 2. DISTANCE MATRIX (Derived from Inequality Matrices)
+                    st.markdown("### 📊 PDP Distance Matrix (Computed from Inequality Matrices)")
+                    
+                    st.info("""
+                    **How distances are computed:**
+                    Each configuration has inequality matrices (X and Y) that capture spatial relationships.
+                    The distance between two configurations = number of differing cells in their inequality matrices.
+                    Larger distance → more different spatial relationships → more different trajectory patterns.
+                    """)
+                    
+                    distance_matrix = st.session_state.pdp_distance_matrix
+                    config_ids = st.session_state.pdp_config_ids
+                    n_configs = len(config_ids)
+                    
+                    # Option to show normalized distances
+                    st.markdown("**Display Options:**")
+                    col_display1, col_display2 = st.columns([1, 2])
+                    
+                    with col_display1:
+                        show_normalized = st.checkbox(
+                            "Show normalized distances (0-100%)",
+                            value=False,
+                            key="pdp_show_normalized",
+                            help="Convert raw distances to 0-100% scale for easier interpretation"
+                        )
+                    
+                    with col_display2:
+                        if show_normalized:
+                            st.info("📊 Showing normalized distances (percentage of maximum possible difference)")
+                        else:
+                            st.info("📊 Showing raw PDP distances (sum of inequality matrix differences)")
+                    
+                    # Compute normalized distances if needed
+                    if show_normalized:
+                        norm_info = pdp_analysis.compute_distance_normalization_info(
+                            distance_matrix, config_ids
+                        )
+                        display_matrix = norm_info['normalized_matrix']
+                        colorbar_title = "Distance (%)"
+                    else:
+                        display_matrix = distance_matrix
+                        colorbar_title = "Raw Distance"
+                    
+                    # Provide visualization options for large matrices
+                    st.markdown("**Visualization Options:**")
+                    col_viz_opt1, col_viz_opt2 = st.columns([2, 1])
+                    
+                    with col_viz_opt1:
+                        if n_configs > 30:
+                            show_text = st.checkbox(
+                                "Show numeric values in heatmap", 
+                                value=False, 
+                                key="pdp_show_text",
+                                help="⚠️ Warning: With many configurations, text may be very small or overlap. Use hover for exact values."
+                            )
+                        else:
+                            show_text = st.checkbox(
+                                "Show numeric values in heatmap", 
+                                value=True, 
+                                key="pdp_show_text"
+                            )
+                    
+                    with col_viz_opt2:
+                        # Font size adjustment when text is shown
+                        if show_text:
+                            # Suggest smaller text for larger matrices
+                            default_size = max(4, min(10, 300 // n_configs))
+                            text_size = st.slider("Text size", 2, 12, default_size, key="pdp_text_size",
+                                                help=f"Suggested: {default_size}pt for {n_configs} configs")
+                        else:
+                            text_size = 8
+                    
+                    # Compute optimal size based on number of configurations
+                    # Aim for ~10-15 pixels per cell for good readability
+                    cell_size = max(10, min(30, 600 // n_configs))
+                heatmap_size = max(500, min(1200, n_configs * cell_size))
+                
+                # Create heatmap - respect user's choice regardless of matrix size
+                if show_text:
+                    # With text annotations - user explicitly requested this
+                    fig_heatmap = go.Figure(data=go.Heatmap(
+                        z=display_matrix,
+                        x=config_ids,
+                        y=config_ids,
+                        colorscale='Viridis',
+                        text=display_matrix,
+                        texttemplate='%{text:.1f}',
+                        textfont={"size": text_size},
+                        colorbar=dict(title=colorbar_title),
+                        hovertemplate='From: %{y}<br>To: %{x}<br>Distance: %{z:.2f}<extra></extra>'
+                    ))
+                else:
+                    # Without text - cleaner visualization, use hover for values
+                    fig_heatmap = go.Figure(data=go.Heatmap(
+                        z=display_matrix,
+                        x=config_ids,
+                        y=config_ids,
+                        colorscale='Viridis',
+                        colorbar=dict(title=colorbar_title),
+                        hovertemplate='From: %{y}<br>To: %{x}<br>Distance: %{z:.2f}<extra></extra>'
+                    ))
+                
+                # Smart layout adjustments for axis labels
+                if n_configs > 100:
+                    # Very large matrices: show every 20th label
+                    tick_step = max(1, n_configs // 10)  # ~10 labels total
+                    xaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step,
+                        tickangle=-90,
+                        tickfont=dict(size=8)
+                    )
+                    yaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step,
+                        tickfont=dict(size=8)
+                    )
+                elif n_configs > 50:
+                    # Large matrices: show every 10th label
+                    tick_step = max(1, n_configs // 15)  # ~15 labels total
+                    xaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step,
+                        tickangle=-45,
+                        tickfont=dict(size=9)
+                    )
+                    yaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step,
+                        tickfont=dict(size=9)
+                    )
+                elif n_configs > 30:
+                    # Medium matrices: show every Nth label
+                    tick_step = max(1, n_configs // 20)
+                    xaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step,
+                        tickangle=-45
+                    )
+                    yaxis_config = dict(
+                        title="Configuration",
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=tick_step
+                    )
+                else:
+                    # Small matrices: show all labels
+                    xaxis_config = dict(
+                        title="Configuration",
+                        tickangle=-45 if n_configs > 15 else 0
+                    )
+                    yaxis_config = dict(title="Configuration")
+                
+                # Create title indicating distance type
+                distance_type = "Normalized (%)" if show_normalized else "Raw"
+                
+                fig_heatmap.update_layout(
+                    title=f"PDP Distance Matrix - {distance_type} ({pdp_variant}) - {n_configs} configurations",
+                    xaxis=xaxis_config,
+                    yaxis=yaxis_config,
+                    width=heatmap_size,
+                    height=heatmap_size
+                )
+                
+                render_interactive_chart(fig_heatmap)
+                
+                # Summary statistics
+                st.markdown("**Distance Matrix Statistics:**")
+                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                with col_stat1:
+                    st.metric("Matrix Size", f"{n_configs}×{n_configs}")
+                with col_stat2:
+                    # Get upper triangle (exclude diagonal)
+                    triu_indices = np.triu_indices_from(distance_matrix, k=1)
+                    distances = distance_matrix[triu_indices]
+                    st.metric("Mean Distance", f"{np.mean(distances):.1f}")
+                with col_stat3:
+                    st.metric("Min Distance", f"{np.min(distances):.1f}")
+                with col_stat4:
+                    st.metric("Max Distance", f"{np.max(distances):.1f}")
+                
+                # ========================================
+                # DISTANCE NORMALIZATION & DISTRIBUTION
+                # ========================================
+                with st.expander("📐 Distance Normalization & Distribution Analysis", expanded=False):
+                    st.markdown("""
+                    **Understanding Distance Scale:**
+                    
+                    Raw PDP distances can be hard to interpret - is a distance of 50 large or small?
+                    Normalization helps by scaling distances to a 0-100 range for easier interpretation.
+                    """)
+                    
+                    # Compute normalization info
+                    norm_info = pdp_analysis.compute_distance_normalization_info(
+                        distance_matrix, config_ids
+                    )
+                    
+                    # Display formula
+                    st.markdown("### 📊 Normalization Formula")
+                    st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
+                    
+                    col_formula1, col_formula2 = st.columns(2)
+                    with col_formula1:
+                        st.metric("Max Possible Distance", f"{norm_info['max_possible_distance']:.1f}")
+                    with col_formula2:
+                        st.info("This is the theoretical maximum distance observed in your dataset")
+                    
+                    # Example calculation
+                    st.markdown("### 🔍 Example Calculation")
+                    example = norm_info['example_calculation']
+                    
+                    st.markdown(f"""
+                    **Comparing {example['config_a']} and {example['config_b']}:**
+                    
+                    - Raw Distance: **{example['raw_distance']:.2f}**
+                    - Max Possible: **{example['max_possible']:.2f}**
+                    - Calculation: `{example['formula']}`
+                    - **Result: {example['normalized_distance']:.2f}%** difference
+                    
+                    💡 *Interpretation: These configurations differ by {example['normalized_distance']:.1f}% of the maximum possible difference.*
+                    """)
+                    
+                    # Statistics comparison
+                    st.markdown("### 📈 Distance Statistics")
+                    
+                    col_stats1, col_stats2 = st.columns(2)
+                    
+                    with col_stats1:
+                        st.markdown("**Raw Distances:**")
+                        raw_stats = norm_info['stats']['raw']
+                        st.dataframe({
+                            'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q25', 'Q75'],
+                            'Value': [
+                                f"{raw_stats['mean']:.2f}",
+                                f"{raw_stats['median']:.2f}",
+                                f"{raw_stats['std']:.2f}",
+                                f"{raw_stats['min']:.2f}",
+                                f"{raw_stats['max']:.2f}",
+                                f"{raw_stats['q25']:.2f}",
+                                f"{raw_stats['q75']:.2f}"
+                            ]
+                        }, hide_index=True, use_container_width=True)
+                    
+                    with col_stats2:
+                        st.markdown("**Normalized Distances (0-100):**")
+                        norm_stats = norm_info['stats']['normalized']
+                        st.dataframe({
+                            'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q25', 'Q75'],
+                            'Value': [
+                                f"{norm_stats['mean']:.2f}%",
+                                f"{norm_stats['median']:.2f}%",
+                                f"{norm_stats['std']:.2f}%",
+                                f"{norm_stats['min']:.2f}%",
+                                f"{norm_stats['max']:.2f}%",
+                                f"{norm_stats['q25']:.2f}%",
+                                f"{norm_stats['q75']:.2f}%"
+                            ]
+                        }, hide_index=True, use_container_width=True)
+                    
+                    # Distribution histogram
+                    st.markdown("### 📊 Distance Distribution")
+                    
+                    show_normalized_hist = st.radio(
+                        "Show distances as:",
+                        options=["Normalized (0-100)", "Raw"],
+                        horizontal=True,
+                        key="pdp_hist_type"
+                    )
+                    
+                    fig_hist = pdp_analysis.create_distance_distribution_plot(
+                        norm_info['histogram_data'],
+                        show_normalized=(show_normalized_hist == "Normalized (0-100)")
+                    )
+                    
+                    render_interactive_chart(fig_hist)
+                    
+                    st.caption("""
+                    💡 **Tip**: The distribution shape reveals dataset characteristics:
+                    - **Uniform spread**: Configurations vary gradually
+                    - **Bimodal (two peaks)**: Two distinct groups of configurations
+                    - **Skewed right**: Most configs similar, few outliers very different
+                    """)
+                    
+                    # Download normalized distances
+                    st.markdown("### 💾 Download Data")
+                    
+                    # Create DataFrame with both raw and normalized
+                    export_data = []
+                    for i in range(len(config_ids)):
+                        for j in range(i+1, len(config_ids)):
+                            export_data.append({
+                                'Config_A': config_ids[i],
+                                'Config_B': config_ids[j],
+                                'Raw_Distance': distance_matrix[i, j],
+                                'Normalized_Distance': norm_info['normalized_matrix'][i, j],
+                                'Normalized_%': f"{norm_info['normalized_matrix'][i, j]:.2f}%"
+                            })
+                    
+                    export_df = pd.DataFrame(export_data)
+                    csv_export = export_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download Normalized Distances (CSV)",
+                        data=csv_export,
+                        file_name="pdp_normalized_distances.csv",
+                        mime="text/csv",
+                        help="Download pairwise distances with both raw and normalized values"
+                    )
+                # End of Basic Results expander
+                
+                # ========================================
+                # SECTION 2: CLUSTERING & PROJECTION
+                # ========================================
+                with st.expander("🌳 Clustering & Projection (Dendrogram, MDS, Trajectory Comparison)", expanded=False):
+                    # Dendrogram
+                    st.markdown("### 🌳 Hierarchical Clustering Dendrogram")
+                    
+                    st.info("""
+                    **How to read the dendrogram:**
+                    - **Height of branches** indicates the distance between clusters (higher = more different)
+                    - **Different colors** represent different clusters automatically identified by the algorithm
+                    - Configurations connected at lower heights are more similar
+                    - The x-axis shows each configuration label
+                    """)
+                    
+                    if st.session_state.pdp_linkage_matrix is not None:
+                        fig_dend = pdp_analysis.create_interactive_dendrogram(
+                            st.session_state.pdp_linkage_matrix,
+                            config_ids,
+                            distance_matrix,
+                            st.session_state.pdp_current_n
+                        )
+                        render_interactive_chart(fig_dend)
+                        
+                        # Cluster selection
+                        st.markdown("---")
+                        st.subheader("🎯 Cluster Assignment")
+                        
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            n_clusters = st.slider(
+                                "Number of clusters",
+                                min_value=2,
+                                max_value=min(10, len(config_ids)),
+                                value=st.session_state.pdp_optimal_n,
+                                key="pdp_n_clusters"
+                            )
+                            
+                            if n_clusters != st.session_state.pdp_current_n:
+                                st.session_state.pdp_current_n = n_clusters
+                                new_cluster_labels, _ = pdp_analysis.perform_hierarchical_clustering(
+                                    distance_matrix, n_clusters
+                                )
+                                st.session_state.pdp_cluster_labels = new_cluster_labels
+                        
+                        with col2:
+                            st.metric("Optimal Clusters", st.session_state.pdp_optimal_n)
+                        
+                        # Show cluster assignments
+                        if st.session_state.pdp_cluster_labels is not None:
+                            cluster_df = pd.DataFrame({
+                                'Configuration': config_ids,
+                                'Cluster': st.session_state.pdp_cluster_labels
+                            })
+                            
+                            st.dataframe(
+                                cluster_df.sort_values('Cluster'),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # Cluster statistics
+                            st.markdown("**Cluster Sizes:**")
+                            cluster_counts = pd.Series(st.session_state.pdp_cluster_labels).value_counts().sort_index()
+                            cols = st.columns(min(5, len(cluster_counts)))
+                            for i, (cluster_id, count) in enumerate(cluster_counts.items()):
+                                with cols[i % len(cols)]:
+                                    st.metric(f"Cluster {cluster_id}", count)
+                    
+                    # MDS Visualization
+                    st.markdown("---")
+                    st.subheader("🗺️ MDS Projection")
+                    
+                    st.info("""
+                    **Multidimensional Scaling (MDS) visualization:**
+                    - Reduces high-dimensional distance matrix to 2D or 3D for easy visualization
+                    - **Closer points** = more similar configurations
+                    - **Further apart** = more different configurations
+                    - Colors represent cluster assignments
+                    - **Stress metric**: measures how well the low-dimensional representation preserves distances (lower is better)
+                    """)
+                    
+                    # Dimension selector
+                    mds_dims = st.radio(
+                        "Select MDS dimensions:",
+                        options=[2, 3],
+                        index=0,
+                        horizontal=True,
+                        help="Choose between 2D (easier to read) or 3D (more detail) visualization"
+                    )
+                    
+                    if st.session_state.pdp_cluster_labels is not None:
+                        if mds_dims == 2:
+                            # 2D MDS
+                            fig_mds, stress = pdp_analysis.create_mds_visualization(
+                                distance_matrix,
+                                config_ids,
+                                st.session_state.pdp_cluster_labels
+                            )
+                            render_interactive_chart(fig_mds)
+                            
+                            # Show stress interpretation
+                            with st.expander("📊 Understanding the Stress Value"):
+                                st.markdown(f"""
+                                **Current Stress: {stress:.2f}**
+                                
+                                The stress value indicates how well the 2D projection preserves the original distances:
+                                - **< 0.05**: Excellent representation
+                                - **0.05 - 0.10**: Good representation
+                                - **0.10 - 0.20**: Fair representation
+                                - **> 0.20**: Poor representation (consider using 3D or more clusters)
+                                
+                                Lower stress means the 2D visualization more accurately represents the true distances between configurations.
+                                """)
+                        else:
+                            # 3D MDS
+                            fig_mds_3d, stress = pdp_analysis.create_mds_visualization_3d(
+                                distance_matrix,
+                                config_ids,
+                                st.session_state.pdp_cluster_labels
+                            )
+                            render_interactive_chart(fig_mds_3d)
+                            
+                            st.success(f"💡 **Tip**: Use your mouse to rotate, zoom, and explore the 3D space! Stress: {stress:.2f}")
+                            
+                            # Show stress interpretation
+                            with st.expander("📊 Understanding the Stress Value"):
+                                st.markdown(f"""
+                                **Current Stress: {stress:.2f}**
+                                
+                                The stress value indicates how well the 3D projection preserves the original distances:
+                                - **< 0.05**: Excellent representation
+                                - **0.05 - 0.10**: Good representation
+                                - **0.10 - 0.20**: Fair representation
+                                - **> 0.20**: Poor representation
+                                
+                                3D projections typically have lower stress than 2D, providing a more accurate representation of configuration similarities.
+                                """)
+                    
+                    
+                    # Top-K Similar Configurations
+                    st.markdown("---")
+                    st.subheader("🔍 Find Similar Configurations")
+                    
+                    st.info("""
+                    **Find configurations most similar to a selected one:**
+                    - Select a target configuration
+                    - View the K most similar configurations ranked by PDP distance
+                    - Lower distance = more similar movement patterns
+                    """)
+                    
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        target_config = st.selectbox(
+                            "Select target configuration",
+                            config_ids,
+                            key="pdp_target_config"
+                        )
+                    
+                    with col2:
+                        k_similar = st.slider(
+                            "Number of similar configs (K)",
+                            min_value=1,
+                            max_value=min(10, len(config_ids) - 1),
+                            value=min(5, len(config_ids) - 1),
+                            key="pdp_k_similar"
+                        )
+                    
+                    if target_config:
+                        similar_configs = pdp_analysis.find_top_k_similar(
+                            distance_matrix,
+                            config_ids,
+                            target_config,
+                            k=k_similar
+                        )
+                        
+                        st.markdown(f"**Top {k_similar} configurations most similar to `{target_config}`:**")
+                        
+                        similar_df = pd.DataFrame(similar_configs, columns=['Configuration', 'PDP Distance'])
+                        similar_df['Rank'] = range(1, len(similar_df) + 1)
+                        similar_df = similar_df[['Rank', 'Configuration', 'PDP Distance']]
+                        
+                        st.dataframe(similar_df, use_container_width=True, hide_index=True)
+                        
+                        # Visualize on bar chart
+                        fig_topk = go.Figure(data=[
+                            go.Bar(
+                                x=similar_df['Configuration'],
+                                y=similar_df['PDP Distance'],
+                                marker_color='lightblue',
+                                text=similar_df['PDP Distance'],
+                                textposition='outside'
+                            )
+                        ])
+                    
+                        
+                        fig_topk.update_layout(
+                            title=f"PDP Distances from {target_config}",
+                            xaxis_title="Configuration",
+                            yaxis_title="PDP Distance",
+                            height=400
+                        )
+                        
+                        render_interactive_chart(fig_topk, caption="Lower distance = more similar")
+                    
+                    # ===============================================================
+                    # TRAJECTORY COMPARISON VISUALIZATION
+                    # ===============================================================
+                    st.markdown("---")
+                    st.subheader("🎾 Trajectory Comparison on Tennis Court")
+                    
+                    st.info("""
+                    **Visualize and compare actual trajectories on the tennis court.**
+                    - Select configurations to overlay their movement patterns
+                    - Compare similar or dissimilar configurations side-by-side
+                    - Start points marked with circles ⭕, end points with squares ◼️
+                    """)
+                    
+                    col_traj1, col_traj2 = st.columns([1, 1])
+                    
+                    with col_traj1:
+                        # Configuration selection
+                        num_configs_to_compare = st.slider(
+                            "Number of configurations to compare",
+                            min_value=1,
+                            max_value=min(5, len(config_ids)),
+                            value=min(2, len(config_ids)),
+                            help="Select how many configurations to overlay"
+                        )
+                        
+                        selected_configs_viz = st.multiselect(
+                            "Select configurations to visualize",
+                            options=config_ids,
+                            default=config_ids[:num_configs_to_compare],
+                            max_selections=5,
+                            help="Choose configurations to compare their trajectories"
+                        )
+                    
+                    with col_traj2:
+                        # Object selection - respect global selection from data selection interface
+                        # Get objects from global selection if available
+                        if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
+                            globally_selected_objects = st.session_state.shared_selected_objects
+                        else:
+                            globally_selected_objects = sorted(st.session_state.data['obj'].unique())
+                        
+                        show_all_objects = st.checkbox(
+                            "Show all globally selected objects",
+                            value=True,
+                            help="Uncheck to further filter the objects selected in 'Data Selection Interface'"
+                        )
+                        
+                        if not show_all_objects:
+                            selected_objects_viz = st.multiselect(
+                                "Select objects to show",
+                                options=globally_selected_objects,
+                                default=globally_selected_objects[:3] if len(globally_selected_objects) > 0 else [],
+                                help="Choose which moving objects to display (from globally selected objects)"
+                            )
+                        else:
+                            selected_objects_viz = globally_selected_objects  # Use global selection, not all objects
+                    
+                    # Info about object selection
+                    if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
+                        st.info(f"ℹ️ Using {len(globally_selected_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
+                    else:
+                        st.warning("⚠️ No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
+                    
+                    # Quick selection buttons with customizable parameters
+                    st.markdown("**Quick Selection:**")
+                    st.caption("Use these buttons to automatically select interesting configuration pairs for comparison")
+                    
+                    # Parameter settings row
+                    col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+                    with col_p1:
+                        n_top_similar = st.number_input("Top N similar", min_value=2, max_value=min(10, len(config_ids)), 
+                                                       value=2, step=1, key="pdp_n_top_similar",
+                                                       help="Number of most similar configurations to select")
+                    with col_p2:
+                        n_top_dissimilar = st.number_input("Top N dissimilar", min_value=2, max_value=min(10, len(config_ids)), 
+                                                           value=2, step=1, key="pdp_n_top_dissimilar",
+                                                           help="Number of most dissimilar configurations to select")
+                    with col_p3:
+                        if st.session_state.pdp_cluster_labels is not None:
+                            n_clusters = len(set(st.session_state.pdp_cluster_labels))
+                            n_centroids = st.number_input("N centroids", min_value=1, max_value=n_clusters, 
+                                                         value=min(3, n_clusters), step=1, key="pdp_n_centroids",
+                                                         help="Number of cluster centroids to select")
+                        else:
+                            st.text("(assign clusters first)")
+                            n_centroids = 3
+                    with col_p4:
+                        n_random = st.number_input("N random", min_value=1, max_value=min(10, len(config_ids)), 
+                                                  value=3, step=1, key="pdp_n_random",
+                                                  help="Number of random configurations to select")
+                    
+                    # Button row
+                    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+                    
+                    with col_btn1:
+                        if st.button("📊 Top Similar", use_container_width=True, 
+                                    help=f"Select the {n_top_similar} configurations with smallest PDP distances (most similar trajectories)"):
+                            if len(config_ids) >= n_top_similar:
+                                # Find N most similar configs by sorting all unique pairs
+                                distances_with_pairs = []
+                                for i in range(len(config_ids)):
+                                    for j in range(i+1, len(config_ids)):
+                                        distances_with_pairs.append((distance_matrix[i, j], i, j))
+                                distances_with_pairs.sort()  # Sort by distance (ascending)
+                                
+                                # Collect unique configs from top pairs
+                                selected_indices = set()
+                                for dist, i, j in distances_with_pairs:
+                                    selected_indices.add(i)
+                                    selected_indices.add(j)
+                                    if len(selected_indices) >= n_top_similar:
+                                        break
+                                
+                                selected_indices = sorted(list(selected_indices))[:n_top_similar]
+                                st.session_state['pdp_viz_selection'] = [config_ids[idx] for idx in selected_indices]
+                                avg_dist = np.mean([distance_matrix[i, j] for i in selected_indices for j in selected_indices if i < j])
+                                st.success(f"✅ Selected {len(selected_indices)} most similar configs (avg distance: {avg_dist:.2f})")
+                    
+                    with col_btn2:
+                        if st.button("📊 Top Dissimilar", use_container_width=True,
+                                    help=f"Select the {n_top_dissimilar} configurations with largest PDP distances (most different trajectories)"):
+                            if len(config_ids) >= n_top_dissimilar:
+                                # Find N most dissimilar configs
+                                distances_with_pairs = []
+                                for i in range(len(config_ids)):
+                                    for j in range(i+1, len(config_ids)):
+                                        distances_with_pairs.append((distance_matrix[i, j], i, j))
+                                distances_with_pairs.sort(reverse=True)  # Sort by distance (descending)
+                                
+                                # Collect unique configs from top pairs
+                                selected_indices = set()
+                                for dist, i, j in distances_with_pairs:
+                                    selected_indices.add(i)
+                                    selected_indices.add(j)
+                                    if len(selected_indices) >= n_top_dissimilar:
+                                        break
+                                
+                                selected_indices = sorted(list(selected_indices))[:n_top_dissimilar]
+                                st.session_state['pdp_viz_selection'] = [config_ids[idx] for idx in selected_indices]
+                                avg_dist = np.mean([distance_matrix[i, j] for i in selected_indices for j in selected_indices if i < j])
+                                st.success(f"✅ Selected {len(selected_indices)} most dissimilar configs (avg distance: {avg_dist:.2f})")
+                    
+                    with col_btn3:
+                        if st.session_state.pdp_cluster_labels is not None and st.button("📊 Cluster Centroids", use_container_width=True,
+                                                                                         help=f"Select {n_centroids} representative configurations from different clusters"):
+                            # Select one config from each cluster (the one most central to its cluster)
+                            unique_clusters = sorted(set(st.session_state.pdp_cluster_labels))
+                            centroid_configs = []
+                            for cluster_id in unique_clusters[:min(n_centroids, len(unique_clusters))]:
+                                # Find config closest to cluster center (smallest avg distance to other cluster members)
+                                cluster_indices = [i for i, c in enumerate(st.session_state.pdp_cluster_labels) if c == cluster_id]
+                                cluster_distances = distance_matrix[np.ix_(cluster_indices, cluster_indices)]
+                                avg_distances = cluster_distances.mean(axis=1)
+                                centroid_idx = cluster_indices[np.argmin(avg_distances)]
+                                centroid_configs.append(config_ids[centroid_idx])
+                            st.session_state['pdp_viz_selection'] = centroid_configs
+                            st.success(f"✅ Selected {len(centroid_configs)} cluster centroids from {len(centroid_configs)} different clusters")
+                    
+                    with col_btn4:
+                        if st.button("🔄 Random Sample", use_container_width=True,
+                                    help=f"Randomly select {n_random} configurations for comparison"):
+                            import random
+                            n_sample = min(n_random, len(config_ids))
+                            random_selection = random.sample(config_ids, n_sample)
+                            st.session_state['pdp_viz_selection'] = random_selection
+                            st.success(f"✅ Randomly selected {len(random_selection)} configurations")
+                    
+                    # Use button selection if available, otherwise use multiselect
+                    if 'pdp_viz_selection' in st.session_state and st.session_state['pdp_viz_selection']:
+                        selected_configs_viz = st.session_state['pdp_viz_selection']
+                    
+                    # Visualization options for buffer and rough zones
+                    st.markdown("---")
+                    st.markdown("**🔬 Advanced Visualization Options:**")
+                    st.caption("Visualize how buffer and rough parameters affect PDP computation")
+                    
+                    col_viz1, col_viz2 = st.columns(2)
+                    
+                    with col_viz1:
+                        st.markdown("**Buffer Points (Data Expansion)**")
+                        show_buffers = st.checkbox("Show buffer points", value=False, key="pdp_show_buffers",
+                                                  help="Buffer ADDS extra data points around each original point at cardinal directions (left/right/up/down)")
+                        if show_buffers:
+                            buffer_size = st.slider("Buffer distance (meters)", min_value=0.1, max_value=2.0, 
+                                                   value=0.5, step=0.1, key="pdp_buffer_size",
+                                                   help="Distance of buffer points from original point")
+                        else:
+                            buffer_size = 0.5
+                    
+                    with col_viz2:
+                        st.markdown("**Rough Tolerance (Comparison Zone)**")
+                        show_rough = st.checkbox("Show rough zones", value=False, key="pdp_show_rough",
+                                                help="Rough defines a TOLERANCE ZONE where points are considered 'approximately equal' in comparisons")
+                        if show_rough:
+                            rough_tolerance = st.slider("Rough radius (meters)", min_value=0.1, max_value=2.0, 
+                                                       value=0.3, step=0.1, key="pdp_rough_tolerance",
+                                                       help="Radius of tolerance zone for approximate equality")
+                        else:
+                            rough_tolerance = 0.3
+                    
+                    if show_buffers or show_rough:
+                        st.info(f"""
+                        **Visualization Legend:**
+                        - ✖️ **Buffer points** (small X markers): Actual extra data points added in 'buffer' variant (4 points per original: left, right, up, down)
+                        - 🔶 **Rough zones** (dashed circles): Tolerance zones for 'rough' variant - points within this radius are considered "approximately equal"
+                        
+                        **Key Difference:**
+                        - Buffer = MORE data points (expands dataset)
+                        - Rough = MORE tolerance in comparison (same dataset, different comparison logic)
+                        """)
+                    
+                    st.markdown("---")
+                    
+                    # Generate visualization
+                    if len(selected_configs_viz) > 0:
+                        fig_traj = pdp_analysis.plot_trajectory_comparison(
+                            df=st.session_state.data,
+                            config_ids=config_ids,
+                            selected_configs=selected_configs_viz,
+                            start_time=start_time,
+                            end_time=end_time,
+                            selected_objects=selected_objects_viz,
+                            cluster_labels=st.session_state.pdp_cluster_labels,
+                            distance_matrix=distance_matrix,
+                            show_buffers=show_buffers,
+                            buffer_size=buffer_size,
+                            show_rough=show_rough,
+                            rough_tolerance=rough_tolerance
+                        )
+                        
+                        render_interactive_chart(fig_traj, 
+                                               caption=f"Comparing {len(selected_configs_viz)} configurations | " +
+                                                      f"Time window: {start_time:.1f}s - {end_time:.1f}s")
+                        
+                        # Show pairwise similarities if 2+ configs selected
+                        if len(selected_configs_viz) >= 2:
+                            st.markdown("**Pairwise Similarities:**")
+                            sim_data = []
+                            for i in range(len(selected_configs_viz)):
+                                for j in range(i+1, len(selected_configs_viz)):
+                                    config_i = selected_configs_viz[i]
+                                    config_j = selected_configs_viz[j]
+                                    idx_i = config_ids.index(config_i)
+                                    idx_j = config_ids.index(config_j)
+                                    pdp_dist = distance_matrix[idx_i, idx_j]
+                                    similarity = 100 - pdp_dist
+                                    sim_data.append({
+                                        'Config A': config_i,
+                                        'Config B': config_j,
+                                        'PDP Distance': f"{pdp_dist:.2f}",
+                                        'Similarity %': f"{similarity:.1f}%"
+                                    })
+                            
+                            sim_df = pd.DataFrame(sim_data)
+                            st.dataframe(sim_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("⚠️ Please select at least one configuration to visualize.")
+                    
+                    # ===============================================================
+                    # EXPORT FUNCTIONALITY
+                    # ===============================================================
+                    st.markdown("---")
+                    st.subheader("💾 Export Results")
+                    
+                    st.info("""
+                    **Download PDP analysis results for further processing.**
+                    - Distance matrix (CSV format)
+                    - Cluster assignments
+                    - Similarity rankings for all configurations
+                    """)
+                    
+                    col_exp1, col_exp2, col_exp3 = st.columns(3)
+                    
+                    with col_exp1:
+                        # Export distance matrix
+                        dist_csv, cluster_csv = pdp_analysis.export_pdp_results_to_csv(
+                            distance_matrix=distance_matrix,
+                            config_ids=config_ids,
+                            cluster_labels=st.session_state.pdp_cluster_labels
+                        )
+                        
+                        st.download_button(
+                            label="📊 Download Distance Matrix",
+                            data=dist_csv,
+                            file_name=f"pdp_distance_matrix_{pdp_variant}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            help="Full pairwise PDP distance matrix"
+                        )
+                    
+                    with col_exp2:
+                        # Export cluster assignments
+                        if cluster_csv is not None:
+                            st.download_button(
+                                label="🏷️ Download Cluster Labels",
+                                data=cluster_csv,
+                                file_name=f"pdp_clusters_{pdp_variant}.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                                help="Configuration cluster assignments"
+                            )
+                        else:
+                            st.button(
+                                "🏷️ No Clusters Yet",
+                                disabled=True,
+                                use_container_width=True,
+                                help="Assign clusters first using the slider above"
+                            )
+                    
+                    with col_exp3:
+                        # Export similarity rankings
+                        top_k_export = st.number_input(
+                            "Top K similar per config",
+                            min_value=1,
+                            max_value=len(config_ids)-1,
+                            value=min(10, len(config_ids)-1),
+                            help="Number of similar configs to export for each configuration"
+                        )
+                        
+                        rankings_csv = pdp_analysis.export_similarity_rankings_to_csv(
+                            config_ids=config_ids,
+                            distance_matrix=distance_matrix,
+                            top_k=top_k_export
+                        )
+                        
+                        st.download_button(
+                            label="📋 Download Rankings",
+                            data=rankings_csv,
+                            file_name=f"pdp_similarity_rankings_{pdp_variant}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            help=f"Top {top_k_export} similar configs for each configuration"
+                        )
+                # End of Clustering & Projection expander
+                
+                # ===============================================================
+                # SECTION 3: PARAMETER IMPACT ANALYSIS (FEATURE #2)
+                # ===============================================================
+                with st.expander("🔬 Parameter Impact Analysis (Compare PDP Variants)", expanded=False):
+                    st.markdown("### 🔬 Parameter Impact Analysis")
+                    
+                    st.info("""
+                    **Compare how buffer and rough parameters affect PDP distances.**
+                    
+                    This analysis computes distances using all four PDP variants and visualizes:
+                    - How distances change across variants
+                    - Which configuration pairs are most affected by parameters
+                    - Correlation between variants
+                    
+                    **Use this to:**
+                    - Understand parameter sensitivity in your dataset
+                    - Choose the best variant for your analysis
+                    - Identify configurations that behave differently with parameters
+                    """)
+                    
+                    st.markdown("---")
+                    st.markdown("**This will compute PDP distances for ALL four variants:**")
+                    st.markdown("""
+                    - 🔹 Fundamental (baseline - no parameters)
+                    - 🔹 Buffer (adds tolerance zones)
+                    - 🔹 Rough (approximate equality)
+                    - 🔹 Buffer + Rough (combined)
+                    
+                    ⚠️ **Note:** This may take a moment as it computes 4 distance matrices.
+                    """)
+                    
+                    # Parameter configuration for comparison
+                    st.markdown("---")
+                    st.markdown("#### ⚙️ Set Parameters for Comparison")
+                    st.caption("Define the buffer and rough values to use in the parametrized variants")
+                    
+                    col_comp1, col_comp2 = st.columns(2)
+                    
+                    with col_comp1:
+                        st.markdown("**Buffer Parameters** (Data Expansion)")
+                        buffer_x_comp = st.number_input(
+                            "Buffer X (meters)",
+                            min_value=0.0,
+                            max_value=5.0,
+                            value=0.5,
+                            step=0.1,
+                            key="comp_buffer_x",
+                            help="Horizontal buffer distance - adds extra points left/right of each position"
+                        )
+                        buffer_y_comp = st.number_input(
+                            "Buffer Y (meters)",
+                            min_value=0.0,
+                            max_value=5.0,
+                            value=0.5,
+                            step=0.1,
+                            key="comp_buffer_y",
+                            help="Vertical buffer distance - adds extra points above/below each position"
+                        )
+                    
+                    with col_comp2:
+                        st.markdown("**Rough Parameters** (Comparison Tolerance)")
+                        rough_x_comp = st.number_input(
+                            "Rough X (meters)",
+                            min_value=0.0,
+                            max_value=5.0,
+                            value=0.3,
+                            step=0.1,
+                            key="comp_rough_x",
+                            help="Horizontal tolerance - points within this distance considered equal in X"
+                        )
+                        rough_y_comp = st.number_input(
+                            "Rough Y (meters)",
+                            min_value=0.0,
+                            max_value=5.0,
+                            value=0.3,
+                            step=0.1,
+                            key="comp_rough_y",
+                            help="Vertical tolerance - points within this distance considered equal in Y"
+                        )
+                    
+                    # Show summary of what will be compared
+                    st.markdown("---")
+                    st.markdown("### 📋 Comparison Summary")
+                    
+                    comp_summary = f"""
+                    | Variant | Buffer X | Buffer Y | Rough X | Rough Y |
+                    |---------|----------|----------|---------|---------|
+                    | � Fundamental | 0.0 m | 0.0 m | 0.0 m | 0.0 m |
+                    | 🔹 Buffer | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | 0.0 m | 0.0 m |
+                    | 🔹 Rough | 0.0 m | 0.0 m | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
+                    | 🔹 Buffer + Rough | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
+                    """
+                    st.markdown(comp_summary)
+                    
+                    # Validation check
+                    if buffer_x_comp == 0 and buffer_y_comp == 0 and rough_x_comp == 0 and rough_y_comp == 0:
+                        st.warning("⚠️ All parameters are set to 0. This means all variants will produce identical results. Please set buffer or rough values > 0 to see meaningful differences.")
+                    
+                    st.markdown("---")
+                    
+                    if st.button("�🚀 Compare All PDP Variants", key="compare_variants", type="primary"):
+                        with st.spinner("Computing distances for all 4 variants..."):
+                            # Compare all variants with user-specified parameters
+                            variant_results = pdp_analysis.compare_pdp_variants(
+                                df=st.session_state.data,
+                                selected_configs=selected_configs,
+                                selected_objects=selected_objects,
+                                start_time=start_time,
+                                end_time=end_time,
+                                window_length=window_length,
+                                buffer_x=buffer_x_comp,
+                                buffer_y=buffer_y_comp,
+                                rough_x=rough_x_comp,
+                                rough_y=rough_y_comp
+                            )
+                            
+                            st.session_state['variant_comparison_results'] = variant_results
+                        
+                        st.success("✅ Variant comparison complete!")
+                        st.rerun()
+                    
+                    # Show results if available
+                    if 'variant_comparison_results' in st.session_state and st.session_state['variant_comparison_results']:
+                        variant_results = st.session_state['variant_comparison_results']
+                        
+                        st.markdown("---")
+                        st.markdown("### 📊 Comparison Results")
+                        
+                        # Statistics table
+                        st.markdown("#### Distance Statistics by Variant")
+                        
+                        stats_data = []
+                        for variant_name in ['fundamental', 'buffer', 'rough', 'buffer_rough']:
+                            data = variant_results[variant_name]
+                            stats_data.append({
+                                'Variant': {
+                                    'fundamental': '🔹 Fundamental',
+                                    'buffer': '🔹 Buffer',
+                                    'rough': '🔹 Rough',
+                                    'buffer_rough': '🔹 Buffer + Rough'
+                                }[variant_name],
+                                'Mean': f"{data['mean']:.2f}",
+                                'Median': f"{data['median']:.2f}",
+                                'Std Dev': f"{data['std']:.2f}",
+                                'Min': f"{data['min']:.2f}",
+                                'Max': f"{data['max']:.2f}"
+                            })
+                        
+                        stats_df = pd.DataFrame(stats_data)
+                        st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                        
+                        # Box plot comparison
+                        st.markdown("---")
+                        st.markdown("#### Distribution Comparison")
+                        st.caption("Box plots show the distribution of pairwise distances for each variant")
+                        
+                        fig_box = pdp_analysis.create_parameter_comparison_plot(variant_results)
+                        render_interactive_chart(fig_box)
+                        
+                        # Interpretation
+                        fund_mean = variant_results['fundamental']['mean']
+                        buffer_mean = variant_results['buffer']['mean']
+                        rough_mean = variant_results['rough']['mean']
+                        br_mean = variant_results['buffer_rough']['mean']
+                        
+                        col_interp1, col_interp2 = st.columns(2)
+                        
+                        with col_interp1:
+                            buffer_change = ((buffer_mean - fund_mean) / fund_mean * 100)
+                            if buffer_change > 0:
+                                st.metric("Buffer Impact", f"+{buffer_change:.1f}%", 
+                                         delta="Increases distances", delta_color="normal")
+                            else:
+                                st.metric("Buffer Impact", f"{buffer_change:.1f}%",
+                                         delta="Decreases distances", delta_color="inverse")
+                        
+                        with col_interp2:
+                            rough_change = ((rough_mean - fund_mean) / fund_mean * 100)
+                            if rough_change > 0:
+                                st.metric("Rough Impact", f"+{rough_change:.1f}%",
+                                         delta="Increases distances", delta_color="normal")
+                            else:
+                                st.metric("Rough Impact", f"{rough_change:.1f}%",
+                                         delta="Decreases distances", delta_color="inverse")
+                        
+                        # Scatter plots
+                        st.markdown("---")
+                        st.markdown("#### Pairwise Distance Comparison")
+                        st.caption("Each point is a configuration pair. Points above diagonal: parameter increases distance; below: decreases distance")
+                        
+                        fig_scatter = pdp_analysis.create_parameter_sensitivity_scatter(variant_results)
+                        render_interactive_chart(fig_scatter)
+                        
+                        # Correlation heatmap
+                        st.markdown("---")
+                        st.markdown("#### Variant Correlation")
+                        st.caption("How strongly do variants agree on distance rankings?")
+                        
+                        fig_corr = pdp_analysis.create_correlation_heatmap(variant_results)
+                        render_interactive_chart(fig_corr)
+                        
+                        # Interpretation guide
+                        with st.expander("📚 How to Interpret These Results"):
+                            st.markdown("""
+                            **Statistics Table:**
+                            - **Mean/Median**: Average distance between configurations
+                            - Higher values → configurations are more different on average
+                            - Compare across variants to see parameter impact
+                            
+                            **Box Plot:**
+                            - **Box**: Middle 50% of distances (25th to 75th percentile)
+                            - **Line in box**: Median distance
+                            - **Diamond**: Mean distance
+                            - **Whiskers**: Range of typical distances
+                            - **Outliers**: Unusual configuration pairs
+                            
+                            **Scatter Plots:**
+                            - **Points above diagonal**: Parameter makes distances LARGER
+                            - **Points below diagonal**: Parameter makes distances SMALLER
+                            - **Points on diagonal**: Parameter has no effect on that pair
+                            - Look for systematic patterns or outlier points
+                            
+                            **Correlation Heatmap:**
+                            - **High correlation (red, ~1.0)**: Variants rank configuration pairs similarly
+                            - **Low correlation (blue, ~0)**: Variants disagree on rankings
+                            - Fundamental vs Buffer+Rough: How much do ALL parameters change results?
+                            
+                            **What to look for:**
+                            1. **Large differences in mean**: Parameters significantly affect your data
+                            2. **Points far from diagonal**: Some pairs very sensitive to parameters
+                            3. **Low correlations**: Different variants capture different aspects
+                            4. **High correlations**: Variants largely agree, choose simplest (fundamental)
+                            """)
+                # End of Parameter Impact Analysis expander
+                
+                # =================================================================
+                # SECTION 4: CONFIGURATION SIMILARITY EXPLORER (FEATURE #5)
+                # =================================================================
+                with st.expander("🔍 Configuration Similarity Explorer (Find Similar/Dissimilar Configs)", expanded=False):
+                    st.markdown("### 🔍 Configuration Similarity Explorer")
+                    st.caption("Explore neighborhoods and find similar/dissimilar configurations")
+                    st.markdown("""
+                This tool helps you understand the **similarity landscape** of your configurations:
+                
+                **Use Cases:**
+                - **Find similar configs**: Identify configurations with comparable trajectory behavior
+                - **Find dissimilar configs**: Discover configurations that produce very different results
+                - **Explore neighborhoods**: Visualize which configurations cluster together
+                - **Validate parameter choices**: See if parameter changes create meaningful distinctions
+                
+                **How it works:**
+                1. Select a target configuration to analyze
+                2. The tool finds its k nearest and k farthest neighbors in distance space
+                3. Visualizations show the configuration's position relative to others
+                
+                **When to use:**
+                - After computing PDP distances to explore the configuration space
+                - To understand if certain parameters create distinct behavior patterns
+                - To select representative configurations for further analysis
+                """)
+                
+                    # Check if distance matrix is available
+                    if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
+                        distance_matrix = st.session_state.pdp_distance_matrix
+                        config_ids = st.session_state.get('pdp_config_ids', [])
+                        
+                        if len(config_ids) < 2:
+                            st.warning("⚠️ Need at least 2 configurations for similarity analysis.")
+                        else:
+                            # Configuration selection
+                            st.markdown("### 🎯 Select Target Configuration")
+                            
+                            col_target, col_k = st.columns([3, 1])
+                            
+                            with col_target:
+                                target_config = st.selectbox(
+                                    "Target Configuration",
+                                    options=config_ids,
+                                    key="similarity_target_config",
+                                    help="Configuration to analyze"
+                                )
+                            
+                            with col_k:
+                                k_neighbors = st.number_input(
+                                    "Number of Neighbors",
+                                    min_value=1,
+                                    max_value=min(20, len(config_ids) - 1),
+                                    value=min(5, len(config_ids) - 1),
+                                    key="similarity_k",
+                                    help="How many similar/dissimilar configs to show"
+                                )
+                            
+                            if target_config:
+                                # Find similar and dissimilar configurations
+                                similarity_results = pdp_analysis.find_similar_and_dissimilar_configs(
+                                    distance_matrix=distance_matrix,
+                                    config_ids=config_ids,
+                                    target_config=target_config,
+                                    k=k_neighbors
+                                )
+                                
+                                # Display results in two columns
+                                st.markdown("### 📊 Similar & Dissimilar Configurations")
+                                
+                                col_sim, col_dissim = st.columns(2)
+                                
+                                with col_sim:
+                                    st.markdown("#### ✅ Most Similar")
+                                    st.caption(f"Top {k_neighbors} configurations closest to {target_config}")
+                                    
+                                    similar_data = []
+                                    for rank, (config, dist) in enumerate(similarity_results['similar'], 1):
+                                        similar_data.append({
+                                            'Rank': f"#{rank}",
+                                            'Config': config,
+                                            'Distance': f"{dist:.2f}"
+                                        })
+                                    
+                                    if similar_data:
+                                        similar_df = pd.DataFrame(similar_data)
+                                        st.dataframe(similar_df, use_container_width=True, hide_index=True)
+                                    else:
+                                        st.info("No similar configurations found")
+                                
+                                with col_dissim:
+                                    st.markdown("#### ❌ Most Dissimilar")
+                                    st.caption(f"Top {k_neighbors} configurations farthest from {target_config}")
+                                    
+                                    dissimilar_data = []
+                                    for rank, (config, dist) in enumerate(similarity_results['dissimilar'], 1):
+                                        dissimilar_data.append({
+                                            'Rank': f"#{rank}",
+                                            'Config': config,
+                                            'Distance': f"{dist:.2f}"
+                                        })
+                                    
+                                    if dissimilar_data:
+                                        dissimilar_df = pd.DataFrame(dissimilar_data)
+                                        st.dataframe(dissimilar_df, use_container_width=True, hide_index=True)
+                                    else:
+                                        st.info("No dissimilar configurations found")
+                                
+                                # Neighborhood visualization
+                                st.markdown("---")
+                                st.markdown("### 🕸️ Neighborhood Graph")
+                                st.caption(f"MDS projection showing {target_config}'s neighborhood. Lines connect to {k_neighbors} nearest neighbors.")
+                                
+                                # Check if cluster labels are available
+                                cluster_labels = st.session_state.get('cluster_labels', None)
+                                
+                                fig_neighborhood = pdp_analysis.create_neighborhood_visualization(
+                                    distance_matrix=distance_matrix,
+                                    config_ids=config_ids,
+                                    target_config=target_config,
+                                    cluster_labels=cluster_labels,
+                                    k=k_neighbors
+                                )
+                                render_interactive_chart(fig_neighborhood)
+                                
+                                st.markdown("""
+                                **How to read this:**
+                                - 🔴 **Red star**: Your selected target configuration
+                                - 🟠 **Orange circles**: Nearest neighbors
+                                - **Orange lines**: Connections to neighbors
+                                - **Gray/colored dots**: All other configurations
+                                - **Closer in 2D space** → More similar trajectories
+                                """)
+                                
+                                # Radial distance chart
+                                st.markdown("---")
+                                st.markdown("### 🎯 Distance Radial View")
+                                st.caption(f"Polar chart showing distances from {target_config} to its {k_neighbors} nearest neighbors")
+                                
+                                fig_radial = pdp_analysis.create_distance_radial_chart(
+                                    distance_matrix=distance_matrix,
+                                    config_ids=config_ids,
+                                    target_config=target_config,
+                                    top_k=k_neighbors
+                                )
+                                render_interactive_chart(fig_radial)
+                                
+                                st.markdown("""
+                                **How to read this:**
+                                - **Radius (distance from center)**: Larger = more different from target
+                                - **Color**: Darker = closer, lighter = farther
+                                - **Angular position**: Arbitrary (for layout only)
+                                - Compare bar heights to see relative similarities
+                                """)
+                                
+                                # Interpretation guide
+                                with st.expander("📚 Interpretation Guide"):
+                                    st.markdown(f"""
+                                    **Understanding {target_config}'s Position:**
+                                    
+                                    1. **Similar Configurations (small distances):**
+                                       - These configs produce trajectory patterns very close to {target_config}
+                                       - Parameters likely have similar effects on trajectory behavior
+                                       - Could be grouped together for analysis
+                                       - Consider if parameters differ: meaningful or redundant?
+                                    
+                                    2. **Dissimilar Configurations (large distances):**
+                                       - These configs produce very different trajectory patterns
+                                       - Parameters create distinct behavior
+                                       - Useful for understanding parameter impact boundaries
+                                       - May represent different "regimes" of trajectory behavior
+                                    
+                                    3. **Neighborhood Graph:**
+                                       - **Dense clusters**: Groups of similar configurations
+                                       - **Isolated points**: Unique or extreme parameter combinations
+                                       - **Bridge positions**: Configs connecting different clusters
+                                       - If clusters align with parameter ranges → parameters matter
+                                    
+                                    4. **What to look for:**
+                                       - **Tight neighborhood**: {target_config} in dense cluster → robust pattern
+                                       - **Isolated position**: {target_config} is unique → extreme parameters?
+                                       - **Gradual distances**: Smooth transitions between configs
+                                       - **Distance jumps**: Sudden changes suggest parameter thresholds
+                                    
+                                    5. **Next steps:**
+                                       - Compare parameter values of similar configs
+                                       - Investigate what makes dissimilar configs different
+                                       - Use this to select representative configurations
+                                       - Validate that distance metric captures meaningful differences
+                                    """)
+                        # End of Configuration Similarity Explorer expander
+                    
+                    else:
+                        st.info("📊 Compute a distance matrix first (above) to use the Similarity Explorer.")
+                
+                # =================================================================
+                # SECTION 5: CLUSTER QUALITY METRICS (FEATURE #8)
+                # =================================================================
+                with st.expander("📊 Cluster Quality Metrics (Evaluate Clustering Quality)", expanded=False):
+                    st.markdown("### 📊 Cluster Quality Metrics")
+                    st.caption("Evaluate clustering quality and find optimal number of clusters")
+                    st.markdown("""
+                This tool provides **comprehensive evaluation** of clustering quality using multiple metrics:
+                
+                **Quality Metrics:**
+                1. **Silhouette Score** (-1 to 1, higher is better)
+                   - Measures how similar objects are to their own cluster vs. other clusters
+                   - > 0.7: Strong structure
+                   - 0.5-0.7: Reasonable structure
+                   - < 0.5: Weak structure
+                
+                2. **Davies-Bouldin Index** (≥0, lower is better)
+                   - Ratio of within-cluster to between-cluster distances
+                   - Lower values = better separation between clusters
+                
+                3. **Calinski-Harabasz Score** (≥0, higher is better)
+                   - Ratio of between-cluster to within-cluster dispersion
+                   - Higher values = denser, better-separated clusters
+                
+                4. **Elbow Method (Inertia)**
+                   - Within-cluster sum of squares
+                   - Look for "elbow" where adding clusters yields diminishing returns
+                
+                **Use Cases:**
+                - Determine optimal number of clusters (k)
+                - Validate clustering results
+                - Compare different clustering approaches
+                - Identify if natural clusters exist in your data
+                
+                    **How it works:**
+                    Tests clustering quality for k=2 to k=max_k and identifies optimal k for each metric.
+                    """)
+                    
+                    # Check if distance matrix and clustering are available
+                    if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
+                        distance_matrix = st.session_state.pdp_distance_matrix
+                        config_ids = st.session_state.get('pdp_config_ids', [])
+                        
+                        n_configs = len(config_ids)
+                        
+                        if n_configs < 2:
+                            st.warning("⚠️ Need at least 2 configurations for cluster quality analysis.")
+                        else:
+                            st.markdown("### ⚙️ Configuration")
+                            
+                            col_minK, col_maxK, col_compute = st.columns([1, 1, 2])
+                            
+                            with col_minK:
+                                min_k = st.number_input(
+                                    "Min k (clusters)",
+                                        min_value=2,
+                                        max_value=max(2, n_configs - 1),
+                                        value=2,
+                                        key="cluster_quality_min_k",
+                                        help="Minimum number of clusters to test"
+                                )
+                            
+                            with col_maxK:
+                                max_possible_k = min(10, n_configs - 1)
+                                max_k = st.number_input(
+                                    "Max k (clusters)",
+                                    min_value=min_k,
+                                    max_value=max_possible_k,
+                                    value=min(5, max_possible_k),
+                                    key="cluster_quality_max_k",
+                                    help="Maximum number of clusters to test"
+                                )
+                            
+                            with col_compute:
+                                st.write("")  # Spacing
+                                st.write("")
+                                if st.button("🧪 Evaluate Cluster Quality", type="primary", key="compute_cluster_quality"):
+                                    with st.spinner(f"Computing quality metrics for k={min_k} to k={max_k}..."):
+                                        metrics_results = pdp_analysis.compute_cluster_quality_metrics(
+                                            distance_matrix=distance_matrix,
+                                            min_k=min_k,
+                                            max_k=max_k
+                                        )
+                                        
+                                        st.session_state['cluster_quality_metrics'] = metrics_results
+                                    
+                                    st.success("✅ Quality evaluation complete!")
+                                    st.rerun()
+                            
+                            # Show results if available
+                            if 'cluster_quality_metrics' in st.session_state and st.session_state['cluster_quality_metrics']:
+                                metrics_results = st.session_state['cluster_quality_metrics']
+                                
+                                st.markdown("---")
+                                st.markdown("### 📈 Quality Metrics Comparison")
+                                
+                                # Create and show the multi-panel plot
+                                fig_metrics = pdp_analysis.create_quality_metrics_plot(metrics_results)
+                                render_interactive_chart(fig_metrics)
+                                
+                                st.markdown("""
+                                **How to read this:**
+                                - 🔴 **Red stars**: Optimal k for each metric
+                                - Look for **agreement** across metrics
+                                - **Silhouette & CH**: Higher peaks = better clustering
+                                - **Davies-Bouldin**: Lower valleys = better clustering
+                                - **Inertia**: Look for "elbow" where curve flattens
+                                """)
+                                
+                                # Get optimal k consensus
+                                st.markdown("---")
+                                st.markdown("### 🎯 Optimal Cluster Recommendations")
+                                
+                                consensus = pdp_analysis.get_optimal_k_consensus(metrics_results)
+                                
+                                col_consensus, col_details = st.columns([1, 2])
+                                
+                                with col_consensus:
+                                    st.metric(
+                                        "Consensus Recommendation",
+                                        f"k = {consensus['consensus_k']}",
+                                        delta=consensus['consensus_strength'],
+                                        help="Most commonly recommended k across all metrics"
+                                    )
+                                
+                                with col_details:
+                                    st.markdown("#### Optimal k by Metric")
+                                    optimal_k_data = []
+                                    for metric_name, k_val in consensus['optimal_k_per_metric'].items():
+                                        optimal_k_data.append({
+                                            'Metric': {
+                                                'silhouette': '🔹 Silhouette Score',
+                                                'davies_bouldin': '🔹 Davies-Bouldin Index',
+                                                'calinski_harabasz': '🔹 Calinski-Harabasz Score',
+                                                'elbow': '🔹 Elbow Method'
+                                            }[metric_name],
+                                            'Optimal k': k_val,
+                                            'Match': '✓' if k_val == consensus['consensus_k'] else ''
+                                        })
+                                    
+                                    optimal_df = pd.DataFrame(optimal_k_data)
+                                    st.dataframe(optimal_df, use_container_width=True, hide_index=True)
+                                
+                                # Detailed silhouette analysis for current clustering
+                                if 'pdp_cluster_labels' in st.session_state and st.session_state['pdp_cluster_labels'] is not None:
+                                    st.markdown("---")
+                                    st.markdown("### 🔬 Detailed Silhouette Analysis")
+                                    st.caption("Per-configuration silhouette scores for current clustering")
+                                    
+                                    cluster_labels = st.session_state['pdp_cluster_labels']
+                                    
+                                    fig_silhouette = pdp_analysis.create_silhouette_per_cluster_plot(
+                                        distance_matrix=distance_matrix,
+                                        cluster_labels=cluster_labels,
+                                        config_ids=config_ids
+                                    )
+                                    render_interactive_chart(fig_silhouette)
+                                    
+                                    st.markdown("""
+                                    **Interpretation:**
+                                    - **Each bar**: One configuration's silhouette score
+                                    - **Grouped by cluster**: Colors show different clusters
+                                    - **Red dashed line**: Average silhouette across all configs
+                                    - **Wide bars above average**: Well-clustered configurations
+                                    - **Bars below zero**: Configs may be in wrong cluster
+                                    - **Uneven cluster sizes**: Some clusters may dominate
+                                    """)
+                                
+                                # Interpretation guide
+                                with st.expander("📚 Understanding the Metrics"):
+                                    st.markdown(f"""
+                                    **Metric Interpretations:**
+                                    
+                                    1. **Silhouette Score:**
+                                       - Range: -1 (wrong cluster) to +1 (perfect cluster)
+                                       - > 0.7: Strong, well-separated clusters
+                                       - 0.5-0.7: Reasonable structure
+                                       - 0.25-0.5: Weak structure, clusters overlap
+                                       - < 0.25: No substantial structure
+                                    
+                                    2. **Davies-Bouldin Index:**
+                                       - Lower is better (minimum = 0)
+                                       - Measures cluster separation
+                                       - < 1.0: Good separation
+                                       - 1.0-2.0: Moderate separation
+                                       - > 2.0: Poor separation
+                                    
+                                    3. **Calinski-Harabasz Score:**
+                                       - Higher is better
+                                       - Ratio of between/within cluster dispersion
+                                       - No absolute threshold, compare across k values
+                                       - Sharp peak suggests natural cluster count
+                                    
+                                    4. **Elbow Method (Inertia):**
+                                       - Always decreases as k increases
+                                       - Look for "elbow" point where improvement slows
+                                       - Point of diminishing returns
+                                       - Subjective interpretation
+                                    
+                                    **When Metrics Disagree:**
+                                    - Common in real data (no perfect clusters)
+                                    - Consider consensus recommendation
+                                    - Test multiple k values in your analysis
+                                    - Think about domain knowledge: does k make sense?
+                                    - Look at dendrogram and MDS for visual validation
+                                    
+                                    **Red Flags:**
+                                    - All metrics suggest k=2: May indicate one outlier cluster
+                                    - Metrics wildly disagree: Weak cluster structure
+                                    - Silhouette < 0.25 for all k: Configurations may not cluster naturally
+                                    - Monotonic trends (no peaks/elbows): Consider other analysis methods
+                                    
+                                    **Next Steps:**
+                                    1. Use recommended k in clustering analysis
+                                    2. Examine dendrogram with this k in mind
+                                    3. Check MDS projection for visual cluster separation
+                                    4. Investigate configurations with low silhouette scores
+                                    5. Consider if parameter choices drive clustering
+                                    """)
+                        # End of Cluster Quality Metrics expander
+                    
+                    else:
+                        st.info("📊 Compute a distance matrix first (above) to use Cluster Quality Metrics.")
     
     elif analysis_method == "Outlier Detection":
         # Call the modular outlier detection function
