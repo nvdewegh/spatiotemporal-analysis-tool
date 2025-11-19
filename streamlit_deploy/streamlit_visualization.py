@@ -3357,24 +3357,132 @@ def main():
                                 st.warning("⚠️ Many configs selected - visualization may be large")
                     
                     if len(configs_to_compare) > 0:
-                        # Display inequality matrices for selected configurations
+                        # Get window information first
                         from modules.pdp_analysis import visualize_inequality_matrices
                         
-                        fig_ineq = visualize_inequality_matrices(
+                        window_info = visualize_inequality_matrices(
                             df, configs_to_compare, selected_objects,
                             start_time, end_time,
                             window_length=window_length,
                             buffer_x=buffer_x, buffer_y=buffer_y,
-                            rough_x=rough_x, rough_y=rough_y
+                            rough_x=rough_x, rough_y=rough_y,
+                            window_indices=None  # Get metadata
                         )
                         
-                        render_interactive_chart(fig_ineq)
+                        # Determine maximum available windows
+                        max_available_windows = 0
+                        if window_info:
+                            max_available_windows = max([info['max_windows'] for info in window_info.values() if info['max_windows'] > 0], default=0)
                         
-                        if len(configs_to_compare) >= 2:
-                            st.caption("""
-                            💡 **Tip**: Compare the configurations above. Differences in colors indicate where 
-                            spatial relationships differ, contributing to their PDP distance.
+                        if max_available_windows == 0:
+                            st.warning("⚠️ Not enough timestamps to create windows with the current window_length setting.")
+                        else:
+                            # Show sliding window explanation
+                            st.info(f"""
+                            **Sliding Window Analysis:**
+                            
+                            With **window_length = {window_length}**, the PDP distance calculation uses a **sliding window approach** 
+                            that computes inequality matrices across multiple overlapping time segments.
+                            
+                            **Available windows**: {max_available_windows} (Window 0 to Window {max_available_windows-1})
+                            
+                            Each window captures a snapshot of spatial relationships at different points in time:
+                            - **Window 0**: First {window_length} timestamp(s)
+                            - **Window 1**: Timestamps starting from the 2nd position
+                            - ... and so on (each window slides by 1 timestamp)
+                            
+                            💡 **Tip**: By default, only the first window is shown to avoid overwhelming visualizations. 
+                            The final PDP distance accumulates differences across **all** windows.
                             """)
+                            
+                            # Window selection interface
+                            st.markdown("**Select Time Windows to Display:**")
+                            
+                            col_win1, col_win2 = st.columns([3, 1])
+                            
+                            with col_win1:
+                                # Multi-select for windows
+                                available_windows = list(range(max_available_windows))
+                                
+                                if max_available_windows <= 10:
+                                    # For small number of windows, allow full selection
+                                    default_windows = [0]  # Default to first window
+                                    selected_windows = st.multiselect(
+                                        "Choose which time windows to visualize",
+                                        options=available_windows,
+                                        default=default_windows,
+                                        format_func=lambda x: f"Window {x}",
+                                        help=f"Select one or more windows from 0 to {max_available_windows-1}",
+                                        key="selected_inequality_windows"
+                                    )
+                                else:
+                                    # For many windows, use slider to select range
+                                    st.caption(f"⚠️ Many windows available ({max_available_windows}). Select a range:")
+                                    window_range = st.slider(
+                                        "Window range",
+                                        min_value=0,
+                                        max_value=max_available_windows-1,
+                                        value=(0, min(2, max_available_windows-1)),
+                                        help="Select start and end window indices",
+                                        key="inequality_window_range"
+                                    )
+                                    selected_windows = list(range(window_range[0], window_range[1] + 1))
+                                    st.caption(f"Displaying windows: {', '.join([str(w) for w in selected_windows])}")
+                            
+                            with col_win2:
+                                if selected_windows:
+                                    st.metric("Windows to show", len(selected_windows))
+                                    total_matrices = len(configs_to_compare) * len(selected_windows) * 2
+                                    st.caption(f"{total_matrices} matrices total")
+                                    if total_matrices > 20:
+                                        st.warning("⚠️ Large visualization!")
+                            
+                            if not selected_windows:
+                                st.warning("⚠️ Please select at least one window to visualize.")
+                            else:
+                                # Display inequality matrices for selected configurations and windows
+                                fig_ineq = visualize_inequality_matrices(
+                                    df, configs_to_compare, selected_objects,
+                                    start_time, end_time,
+                                    window_length=window_length,
+                                    buffer_x=buffer_x, buffer_y=buffer_y,
+                                    rough_x=rough_x, rough_y=rough_y,
+                                    window_indices=selected_windows
+                                )
+                                
+                                render_interactive_chart(fig_ineq)
+                                
+                                # Detailed explanation of what's shown
+                                with st.expander("📖 Understanding the Visualization"):
+                                    st.markdown(f"""
+                                    **What you're seeing:**
+                                    
+                                    Each row shows inequality matrices for one configuration at one time window:
+                                    - **Left matrix (X dimension)**: Horizontal spatial relationships (left/equal/right)
+                                    - **Right matrix (Y dimension)**: Vertical spatial relationships (below/equal/above)
+                                    
+                                    **Matrix dimensions:**
+                                    - With {len(selected_objects)} object(s) and window_length={window_length}
+                                    - Each matrix is {len(selected_objects) * window_length}×{len(selected_objects) * window_length}
+                                    - Rows/columns labeled as "O<object>_T<time_index>"
+                                    
+                                    **How to read the matrix:**
+                                    - Cell (row i, column j) compares position of point i vs point j
+                                    - 🟢 **0 (Green)**: Point i is LEFT/BELOW point j
+                                    - 🟡 **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
+                                    - 🔴 **2 (Red)**: Point i is RIGHT/ABOVE point j
+                                    
+                                    **Distance calculation:**
+                                    The PDP distance between two configurations is the **sum of differences** 
+                                    across ALL {max_available_windows} windows. This visualization shows {len(selected_windows)} 
+                                    of those windows.
+                                    """)
+                                
+                                if len(configs_to_compare) >= 2:
+                                    st.caption("""
+                                    💡 **Tip**: Compare the configurations above. Differences in colors indicate where 
+                                    spatial relationships differ, contributing to their PDP distance.
+                                    """)
                     
                     st.markdown("---")
                     

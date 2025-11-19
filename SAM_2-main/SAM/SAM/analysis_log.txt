@@ -1,0 +1,103 @@
+============================================================
+🔍 DEBUG: Function started
+📂 Results dir: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM
+📊 Dataset param: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+🗂️ Current working dir: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM
+============================================================
+============================================================
+🚀 STARTING ANALYSIS
+============================================================
+📊 Dataset: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+📂 Results: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM
+============================================================
+Time elapsed for running module "av": 0.009 sec.
+✅ Configuration loaded successfully
+🔢 Configurations: 140, Timestamps: 3, Points: 3
+============================================================
+Time elapsed for running module "N_VA_StaticAbsolute": 24.377 sec.
+Time elapsed for running module "N_VA_TennisCourt": 4.536 sec.
+Created 140 tennis court visualizations in /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/TennisCourt
+
+============================================================
+🚀 STARTING PDP: FUNDAMENTAL
+============================================================
+📂 Current working directory: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM
+🐍 Python path includes: False
+🔧 AV_SKIP_LOAD env var: 0
+📊 AV_DATASET env var: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+📂 av.dataset_name: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_C_PDPg_fundamental_Dataset.csv
+🔄 Reloading av module to pick up environment changes...
+Time elapsed for running module "av": 0.004 sec.
+✅ av reloaded. New dataset_name: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+Time elapsed for running module "N_PDP": 154.748 sec.
+✅ N_PDP imported successfully
+Time elapsed for running module "N_VA_HClust": 0.481 sec.
+/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/.venv/lib/python3.10/site-packages/sklearn/manifold/_mds.py:677: FutureWarning:
+
+The default value of `n_init` will change from 4 to 1 in 1.9.
+
+Time elapsed for running module "N_VA_Mds": 0.540 sec.
+Time elapsed for running module "N_VA_TopK": 78.771 sec.
+
+============================================================
+🚀 STARTING PDP: BUFFER
+============================================================
+🔧 Buffer transformation: buffer_x=1, buffer_y=1
+📂 Reading dataset: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+📋 Header detected: True
+💾 Saving buffer dataset to: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_C_PDPg_buffer_Dataset.csv
+Time elapsed for running module "N_T_OB": 0.009 sec.
+✅ Buffer dataset created: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_C_PDPg_buffer_Dataset.csv
+Time elapsed for running module "N_PDP": 261.033 sec.
+Time elapsed for running module "N_VA_HClust": 0.507 sec.
+/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/.venv/lib/python3.10/site-packages/sklearn/manifold/_mds.py:677: FutureWarning:
+
+The default value of `n_init` will change from 4 to 1 in 1.9.
+
+Time elapsed for running module "N_VA_Mds": 0.553 sec.
+Time elapsed for running module "N_VA_TopK": 79.939 sec.
+
+============================================================
+✅ ALL PDP PROCESSING COMPLETE!
+============================================================
+⏱️  Total time elapsed: 606.738 sec (10.11 min)
+============================================================
+
+
+============================================================
+🚀 STARTING PDP: FUNDAMENTAL
+============================================================
+📂 Current working directory: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM
+🐍 Python path includes: False
+🔧 AV_SKIP_LOAD env var: 0
+📊 AV_DATASET env var: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+📂 av.dataset_name: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_C_PDPg_fundamental_Dataset.csv
+🔄 Reloading av module to pick up environment changes...
+Time elapsed for running module "av": 0.004 sec.
+✅ av reloaded. New dataset_name: /var/folders/_r/trp85vsj5v7851ljnlgf6rvc0000gn/T/tmpxnakuliq.csv
+✅ N_PDP imported successfully
+
+============================================================
+🚀 STARTING PDP: BUFFER
+============================================================
+✅ Buffer dataset created: /Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_C_PDPg_buffer_Dataset.csv
+❌ Error during buffer transformation: Argument must be an image or collection in this Axes
+Traceback (most recent call last):
+  File "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_Moving_Objects.py", line 244, in <module>
+    importlib.reload(N_PDP)
+  File "/Users/nicovandeweghe/anaconda3/lib/python3.10/importlib/__init__.py", line 169, in reload
+    _bootstrap._exec(spec, module)
+  File "<frozen importlib._bootstrap>", line 619, in _exec
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/SAM_2-main/SAM/SAM/N_PDP.py", line 123, in <module>
+    plt.imshow(Df_inequality, cmap=cmap, norm=cNorm)
+  File "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/.venv/lib/python3.10/site-packages/matplotlib/pyplot.py", line 3621, in imshow
+    sci(__ret)
+  File "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/.venv/lib/python3.10/site-packages/matplotlib/pyplot.py", line 4379, in sci
+    gca()._sci(im)
+  File "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(titularis)/1Lop/(VanAJ2021)SpatiotemporalAnalysisAndModelling(Code C004177)/TennisprojecT/tennis_infer_rf/.venv/lib/python3.10/site-packages/matplotlib/axes/_base.py", line 2289, in _sci
+    raise ValueError("Argument must be an image or collection in this Axes")
+ValueError: Argument must be an image or collection in this Axes
+
+✅ Analysis completed successfully!

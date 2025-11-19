@@ -274,7 +274,8 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
 
 
 def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, end_time,
-                                   window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0):
+                                   window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                                   window_indices=None):
     """
     Visualize inequality matrices for multiple configurations.
     
@@ -289,9 +290,10 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         window_length: Window size
         buffer_x, buffer_y: Buffer parameters
         rough_x, rough_y: Rough parameters
+        window_indices: List of window indices to display (None = first window only)
     
     Returns:
-        Plotly figure with inequality matrix heatmaps
+        Plotly figure with inequality matrix heatmaps, or dict with metadata if window_indices is None
     """
     from plotly.subplots import make_subplots
     
@@ -302,25 +304,43 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         (df['obj'].isin(selected_objects))
     ].copy()
     
-    n_configs = len(config_ids)
+    # If window_indices is None, return metadata about available windows
+    if window_indices is None:
+        # Return info about available windows per configuration
+        window_info = {}
+        for config_id in config_ids:
+            config_data = filtered_df[filtered_df['config_source'] == config_id].copy()
+            if len(config_data) > 0:
+                timestamps = sorted(config_data['tst'].unique())
+                max_windows = len(timestamps) - window_length + 1
+                window_info[config_id] = {
+                    'n_timestamps': len(timestamps),
+                    'max_windows': max(0, max_windows),
+                    'timestamps': timestamps
+                }
+        return window_info
     
-    # Create subplots: 2 columns (X and Y) × n_configs rows
+    n_configs = len(config_ids)
+    n_windows = len(window_indices)
+    
+    # Create subplots: 2 columns (X and Y) × (n_configs * n_windows) rows
+    # Each config gets n_windows rows, one per selected time window
     subplot_titles = []
     for config_id in config_ids:
-        subplot_titles.extend([f"Config {config_id} - X dimension", f"Config {config_id} - Y dimension"])
+        for window_idx in window_indices:
+            subplot_titles.extend([
+                f"Config {config_id} - Window {window_idx} - X dimension",
+                f"Config {config_id} - Window {window_idx} - Y dimension"
+            ])
     
-    # Use row_heights to give each row equal absolute height (not proportional!)
-    # Each row gets equal weight, and we'll set total height large enough
-    row_heights = [1] * n_configs  # Equal weight for all rows
+    total_rows = n_configs * n_windows
+    row_heights = [1] * total_rows  # Equal weight for all rows
     
-    # Vertical spacing: use inverse scaling to keep absolute spacing constant
-    # As n_configs increases, we want smaller fraction but same absolute pixels
-    # Target: ~50px spacing regardless of n_configs
-    # Formula: spacing_fraction ≈ 50px / (total_height / n_configs) = 50 / 700 ≈ 0.07
-    vertical_spacing = max(0.02, 0.07 / n_configs)  # Smaller fraction for more configs
+    # Vertical spacing: smaller fraction for more rows
+    vertical_spacing = max(0.02, 0.07 / total_rows)
     
     fig = make_subplots(
-        rows=n_configs,
+        rows=total_rows,
         cols=2,
         subplot_titles=subplot_titles,
         row_heights=row_heights,
@@ -340,10 +360,13 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         [1, '#e74c3c']       # hold red
     ]
     
-    for row_idx, config_id in enumerate(config_ids, start=1):
+    current_row = 1
+    
+    for config_id in config_ids:
         config_data = filtered_df[filtered_df['config_source'] == config_id].copy()
         
         if len(config_data) == 0:
+            current_row += n_windows
             continue
         
         # Apply buffer if needed
@@ -355,62 +378,73 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         # Get timestamps
         timestamps = sorted(config_data['tst'].unique())
         if len(timestamps) < window_length:
+            current_row += n_windows
             continue
         
-        # Use first time window for visualization
-        window_times = timestamps[:window_length]
-        window_data = config_data[config_data['tst'].isin(window_times)].sort_values(['tst', 'obj'])
-        
-        x_vals = window_data['x'].values
-        y_vals = window_data['y'].values
-        
-        # Compute inequality matrices
-        ineq_x = compute_inequality_matrix(x_vals, x_vals, window_length, rough_x)
-        ineq_y = compute_inequality_matrix(y_vals, y_vals, window_length, rough_y)
-        
-        # Create labels for axes (object-timestamp pairs)
-        labels = []
-        for t_idx, t in enumerate(window_times):
-            for obj in sorted(config_data[config_data['tst'] == t]['obj'].unique()):
-                labels.append(f"O{obj}_T{t_idx}")
-        
-        # X dimension heatmap (without text annotations and without colorbar)
-        fig.add_trace(
-            go.Heatmap(
-                z=ineq_x,
-                x=labels,
-                y=labels,
-                colorscale=colorscale,
-                zmin=0,
-                zmax=2,
-                showscale=False,  # No colorbar - legend is in text above
-                hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
-            ),
-            row=row_idx,
-            col=1
-        )
-        
-        # Y dimension heatmap (without text annotations and without colorbar)
-        fig.add_trace(
-            go.Heatmap(
-                z=ineq_y,
-                x=labels,
-                y=labels,
-                colorscale=colorscale,
-                zmin=0,
-                zmax=2,
-                showscale=False,  # No colorbar - legend is in text above
-                hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
-            ),
-            row=row_idx,
-            col=2
-        )
+        # Process each selected window
+        for window_idx in window_indices:
+            # Check if window_idx is valid
+            max_window_idx = len(timestamps) - window_length
+            if window_idx > max_window_idx:
+                current_row += 1
+                continue
+            
+            # Get data for this time window
+            window_times = timestamps[window_idx:window_idx + window_length]
+            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(['tst', 'obj'])
+            
+            x_vals = window_data['x'].values
+            y_vals = window_data['y'].values
+            
+            # Compute inequality matrices
+            ineq_x = compute_inequality_matrix(x_vals, x_vals, window_length, rough_x)
+            ineq_y = compute_inequality_matrix(y_vals, y_vals, window_length, rough_y)
+            
+            # Create labels for axes (object-timestamp pairs)
+            labels = []
+            for t_idx, t in enumerate(window_times):
+                for obj in sorted(config_data[config_data['tst'] == t]['obj'].unique()):
+                    labels.append(f"O{obj}_T{t_idx}")
+            
+            # X dimension heatmap (without text annotations and without colorbar)
+            fig.add_trace(
+                go.Heatmap(
+                    z=ineq_x,
+                    x=labels,
+                    y=labels,
+                    colorscale=colorscale,
+                    zmin=0,
+                    zmax=2,
+                    showscale=False,  # No colorbar - legend is in text above
+                    hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
+                ),
+                row=current_row,
+                col=1
+            )
+            
+            # Y dimension heatmap (without text annotations and without colorbar)
+            fig.add_trace(
+                go.Heatmap(
+                    z=ineq_y,
+                    x=labels,
+                    y=labels,
+                    colorscale=colorscale,
+                    zmin=0,
+                    zmax=2,
+                    showscale=False,  # No colorbar - legend is in text above
+                    hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
+                ),
+                row=current_row,
+                col=2
+            )
+            
+            current_row += 1
     
     # Update layout - each matrix needs LARGE fixed height to maintain size
     # With subplots, Plotly divides space proportionally, so we need generous height
-    # to ensure matrices don't shrink when adding more configs
-    height_per_config = 700  # Large fixed height per configuration row
-    total_height = height_per_config * n_configs
+    # to ensure matrices don't shrink when adding more rows
+    height_per_row = 700  # Large fixed height per row
+    total_height = height_per_row * total_rows
     
     # Fixed width for consistent display
     width = 1400

@@ -1,0 +1,227 @@
+"""
+Tennis Court Drawing Function
+=============================
+
+Standalone functie om een tennisbaan te tekenen met Plotly.
+Kan eenvoudig geïmporteerd worden in andere projecten.
+
+Auteur: Tennis Analysis Project
+Datum: November 2025
+"""
+
+import plotly.graph_objects as go
+
+
+def create_tennis_court():
+    """
+    Creëert een Plotly figuur met een complete tennisbaan inclusief alle lijnen.
+    
+    Returns:
+        plotly.graph_objects.Figure: Een Plotly figure object met de tennisbaan
+        
+    Gebruik:
+        fig = create_tennis_court()
+        fig.show()  # Voor directe weergave
+        
+        # Of voeg je eigen data toe:
+        fig.add_trace(go.Scatter(x=[4.0], y=[12.0], mode='markers', 
+                                 marker=dict(size=10, color='red')))
+        fig.show()
+    """
+    fig = go.Figure()
+    
+    # Baan afmetingen (in meters)
+    court_width = 8.23  # Singles baan breedte
+    court_length = 23.77  # Totale lengte
+    
+    # Doubles baan afmetingen
+    doubles_width = 10.97
+    doubles_alley_width = (doubles_width - court_width) / 2  # 1.37m aan elke kant
+    
+    # Service box en andere metingen
+    service_line_distance = 6.40  # Afstand van net tot service lijn
+    net_position = court_length / 2  # 11.885m (midden van de baan)
+    
+    # Oorsprong is linksonder van SINGLES baan
+    # Doubles alleys strekken zich uit in negatieve x (links) en voorbij court_width (rechts)
+    
+    # LIJNEN TEKENEN
+    # ===============
+    
+    # Buitenste grens (doubles baan)
+    fig.add_shape(
+        type="rect", 
+        x0=-doubles_alley_width, y0=0, 
+        x1=court_width + doubles_alley_width, y1=court_length,
+        line=dict(color="white", width=3)
+    )
+    
+    # Singles zijlijnen (op x=0 en x=8.23)
+    fig.add_shape(
+        type="line", 
+        x0=0, y0=0, x1=0, y1=court_length,
+        line=dict(color="white", width=2)
+    )
+    fig.add_shape(
+        type="line", 
+        x0=court_width, y0=0, x1=court_width, y1=court_length,
+        line=dict(color="white", width=2)
+    )
+    
+    # Basislijnen (volledige breedte inclusief doubles alleys)
+    fig.add_shape(
+        type="line", 
+        x0=-doubles_alley_width, y0=0, 
+        x1=court_width + doubles_alley_width, y1=0,
+        line=dict(color="white", width=3)
+    )
+    fig.add_shape(
+        type="line", 
+        x0=-doubles_alley_width, y0=court_length, 
+        x1=court_width + doubles_alley_width, y1=court_length,
+        line=dict(color="white", width=3)
+    )
+    
+    # Net (middenlijn) - volledige breedte inclusief doubles alleys
+    fig.add_shape(
+        type="line", 
+        x0=-doubles_alley_width, y0=net_position, 
+        x1=court_width + doubles_alley_width, y1=net_position,
+        line=dict(color="white", width=2)
+    )
+    
+    # Service lijnen (6.40m van net aan elke kant) - alleen binnen singles baan
+    service_line_bottom = net_position - service_line_distance
+    service_line_top = net_position + service_line_distance
+    
+    fig.add_shape(
+        type="line", 
+        x0=0, y0=service_line_bottom, 
+        x1=court_width, y1=service_line_bottom,
+        line=dict(color="white", width=2)
+    )
+    fig.add_shape(
+        type="line", 
+        x0=0, y0=service_line_top, 
+        x1=court_width, y1=service_line_top,
+        line=dict(color="white", width=2)
+    )
+    
+    # Center service lijn (verdeelt service boxes) - midden van singles baan
+    center_x = court_width / 2  # 4.115m
+    fig.add_shape(
+        type="line", 
+        x0=center_x, y0=service_line_bottom, 
+        x1=center_x, y1=service_line_top,
+        line=dict(color="white", width=2)
+    )
+    
+    # Center marks op basislijnen (kleine streepjes)
+    center_mark_length = 0.10  # 10cm
+    fig.add_shape(
+        type="line", 
+        x0=center_x, y0=0, 
+        x1=center_x, y1=center_mark_length,
+        line=dict(color="white", width=2)
+    )
+    fig.add_shape(
+        type="line", 
+        x0=center_x, y0=court_length - center_mark_length, 
+        x1=center_x, y1=court_length,
+        line=dict(color="white", width=2)
+    )
+    
+    # Net palen (singles) - op de randen van de singles baan
+    fig.add_trace(
+        go.Scatter(
+            x=[0, court_width], 
+            y=[net_position, net_position],
+            mode='markers', 
+            marker=dict(size=8, color='white', symbol='square'),
+            showlegend=False, 
+            hoverinfo='skip'
+        )
+    )
+    
+    # LAYOUT INSTELLINGEN
+    # ===================
+    
+    # Marge rondom baan voor spelersbeweging
+    x_margin = 3.0  # 3 meters aan elke kant
+    y_margin = 4.0  # 4 meters achter elke baseline 
+    
+    fig.update_layout(
+        width=500,
+        height=900,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(
+            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Baan Breedte (m)",
+            constrain='domain',
+            fixedrange=False
+        ),
+        yaxis=dict(
+            range=[-y_margin, court_length + y_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Baan Lengte (m)",
+            scaleanchor="x",
+            scaleratio=1,
+            constrain='domain',
+            fixedrange=False
+        ),
+        plot_bgcolor='#25D366',  # WhatsApp groen voor grasbaan
+        showlegend=True,
+        hovermode='closest',
+        dragmode='pan',
+        uirevision='tennis-court'
+    )
+    
+    return fig
+
+
+def get_court_dimensions():
+    """
+    Geeft de belangrijkste afmetingen van de tennisbaan terug.
+    
+    Returns:
+        dict: Dictionary met baan afmetingen
+    """
+    return {
+        'singles_width': 8.23,
+        'singles_length': 23.77,
+        'doubles_width': 10.97,
+        'doubles_alley_width': 1.37,
+        'service_line_distance': 6.40,
+        'net_position': 11.885,
+        'net_height': 0.914  # hoogte in het midden
+    }
+
+
+# VOORBEELD GEBRUIK
+# =================
+if __name__ == "__main__":
+    # Maak de tennisbaan
+    fig = create_tennis_court()
+    
+    # Voorbeeld: voeg een punt toe op de baan
+    fig.add_trace(
+        go.Scatter(
+            x=[4.115],  # Midden van de baan (breedte)
+            y=[11.885],  # Bij het net
+            mode='markers',
+            marker=dict(size=15, color='yellow', symbol='circle'),
+            name='Speler positie'
+        )
+    )
+    
+    # Toon de figuur
+    fig.show()
+    
+    # Print de afmetingen
+    dims = get_court_dimensions()
+    print("\nTennisbaan afmetingen:")
+    for key, value in dims.items():
+        print(f"  {key}: {value} meter")
