@@ -337,7 +337,8 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
     row_heights = [1] * total_rows  # Equal weight for all rows
     
     # Vertical spacing: smaller fraction for more rows
-    vertical_spacing = max(0.02, 0.07 / total_rows)
+    # Increased spacing to prevent overlap between rotated x-axis labels and subplot titles
+    vertical_spacing = max(0.05, 0.15 / total_rows)
     
     fig = make_subplots(
         rows=total_rows,
@@ -456,18 +457,11 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         showlegend=False
     )
     
-    # Update axes - simple settings, no constraints
-    for i in range(1, n_configs + 1):
-        fig.update_xaxes(
-            tickangle=-45,
-            row=i, 
-            col=1
-        )
-        fig.update_xaxes(
-            tickangle=-45,
-            row=i, 
-            col=2
-        )
+    # Update axes - synchronize zooming and set tick angle
+    # We use matches='x' and matches='y' to ensure that zooming on one matrix
+    # updates all other matrices simultaneously.
+    fig.update_xaxes(matches='x', tickangle=-45)
+    fig.update_yaxes(matches='y')
     
     return fig
 
@@ -965,7 +959,76 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
     Returns:
         plotly.graph_objects.Figure: Tennis court with trajectories
     """
-    fig = create_tennis_court_base()
+    # Handle object selection - if None or empty list, use empty list (show nothing)
+    # Make a COPY of the list to avoid reference issues
+    if selected_objects is None:
+        selected_objects = []
+    else:
+        selected_objects = list(selected_objects)  # Create a copy
+    
+    # Create a BRAND NEW figure from scratch - don't reuse anything
+    fig = go.Figure()
+    
+    # Add tennis court shapes directly (not using cached base)
+    court_width = 8.23
+    court_length = 23.77
+    doubles_width = 10.97
+    doubles_alley_width = (doubles_width - court_width) / 2
+    service_line_distance = 6.40
+    net_position = court_length / 2
+    x_margin = 2.0
+    y_margin = 3.0
+    
+    # Court boundary
+    fig.add_shape(type="rect", x0=-doubles_alley_width, y0=0, 
+                  x1=court_width + doubles_alley_width, y1=court_length,
+                  line=dict(color="white", width=3))
+    # Singles sidelines
+    fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=court_length,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="line", x0=court_width, y0=0, x1=court_width, y1=court_length,
+                  line=dict(color="white", width=2))
+    # Baselines
+    fig.add_shape(type="line", x0=-doubles_alley_width, y0=0, 
+                  x1=court_width + doubles_alley_width, y1=0,
+                  line=dict(color="white", width=3))
+    fig.add_shape(type="line", x0=-doubles_alley_width, y0=court_length, 
+                  x1=court_width + doubles_alley_width, y1=court_length,
+                  line=dict(color="white", width=3))
+    # Net
+    fig.add_shape(type="line", x0=-doubles_alley_width, y0=net_position, 
+                  x1=court_width + doubles_alley_width, y1=net_position,
+                  line=dict(color="white", width=2))
+    # Service lines
+    service_line_bottom = net_position - service_line_distance
+    service_line_top = net_position + service_line_distance
+    fig.add_shape(type="line", x0=0, y0=service_line_bottom, 
+                  x1=court_width, y1=service_line_bottom,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="line", x0=0, y0=service_line_top, 
+                  x1=court_width, y1=service_line_top,
+                  line=dict(color="white", width=2))
+    # Center service line
+    center_x = court_width / 2
+    fig.add_shape(type="line", x0=center_x, y0=service_line_bottom, 
+                  x1=center_x, y1=service_line_top,
+                  line=dict(color="white", width=2))
+    
+    # Set layout
+    fig.update_layout(
+        width=500, height=900,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
+                   showgrid=False, zeroline=False, title="Court Width (m)",
+                   constrain='domain', fixedrange=False),
+        yaxis=dict(range=[-y_margin, court_length + y_margin],
+                   showgrid=False, zeroline=False, title="Court Length (m)",
+                   scaleanchor="x", scaleratio=1, constrain='domain', fixedrange=False),
+        plot_bgcolor='#25D366',
+        showlegend=True,
+        hovermode='closest',
+        dragmode='pan'
+    )
     
     # Color palette for configurations
     colors = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
@@ -974,12 +1037,6 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
     if cluster_labels is not None:
         config_to_cluster = {config_ids[i]: cluster_labels[i] for i in range(len(config_ids))}
         cluster_colors = px.colors.qualitative.Bold
-    
-    # Handle object selection - if None or empty list, use empty list (show nothing)
-    if selected_objects is None:
-        selected_objects = []
-    elif len(selected_objects) == 0:
-        selected_objects = []
     
     # Plot each configuration's trajectories
     for config_idx, config in enumerate(selected_configs):
@@ -1005,6 +1062,9 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
             
             if len(obj_data) < 2:
                 continue
+            
+            # Define legend group for this object to ensure all parts hide/show together
+            legend_group = f"{config}_{obj_id}"
             
             # Add buffer POINTS if requested (visualize buffer parameter)
             # Buffer adds actual extra points to the data at cardinal directions
@@ -1034,6 +1094,7 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                     mode='markers',
                     marker=dict(size=3, color=color, symbol='x', opacity=0.4),
                     showlegend=False,
+                    legendgroup=legend_group,
                     hovertemplate="<b>Buffer Point</b><br>X: %{x:.2f}m<br>Y: %{y:.2f}m<extra></extra>"
                 ))
             
@@ -1060,6 +1121,7 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                 y=obj_data['y'].values,
                 mode='lines+markers',
                 name=f"{config_label} - Obj {obj_id}",
+                legendgroup=legend_group,
                 line=dict(color=color, width=2),
                 marker=dict(size=6, color=color),
                 opacity=0.8,
@@ -1077,6 +1139,7 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                 marker=dict(size=12, color=color, symbol='circle', 
                            line=dict(color='white', width=2)),
                 showlegend=False,
+                legendgroup=legend_group,
                 hovertemplate=f"<b>START: {config} - Obj {obj_id}</b><extra></extra>"
             ))
             
@@ -1087,6 +1150,7 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                 marker=dict(size=12, color=color, symbol='square',
                            line=dict(color='white', width=2)),
                 showlegend=False,
+                legendgroup=legend_group,
                 hovertemplate=f"<b>END: {config} - Obj {obj_id}</b><extra></extra>"
             ))
     
@@ -1099,13 +1163,15 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         fig.update_layout(
             title=f"Trajectory Comparison<br>" +
                   f"<sub>Configs: {selected_configs[0]} vs {selected_configs[1]} | " +
-                  f"Similarity: {similarity:.1f}%</sub>"
+                  f"Similarity: {similarity:.1f}%</sub>",
+            uirevision=f"traj-{'-'.join(map(str, selected_configs))}-{'-'.join(map(str, selected_objects))}"
         )
     else:
         fig.update_layout(
             title=f"Trajectory Comparison<br>" +
                   f"<sub>{len(selected_configs)} configurations, " +
-                  f"Time: {start_time:.1f}s - {end_time:.1f}s</sub>"
+                  f"Time: {start_time:.1f}s - {end_time:.1f}s</sub>",
+            uirevision=f"traj-{'-'.join(map(str, selected_configs))}-{'-'.join(map(str, selected_objects))}"
         )
     
     return fig

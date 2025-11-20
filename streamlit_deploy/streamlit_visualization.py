@@ -1,4 +1,13 @@
 import streamlit as st
+import locale
+try:
+    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+except:
+    try:
+        locale.setlocale(locale.LC_ALL, 'C')
+    except:
+        pass
+
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -15,6 +24,7 @@ from sklearn.metrics import silhouette_score
 
 # Import analysis modules
 from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
+from ui_components import configuration_selector
 
 # Common Plotly configuration for interactive charts
 PLOTLY_CONFIG = {
@@ -34,9 +44,9 @@ PLOTLY_CONFIG = {
 }
 
 
-def render_interactive_chart(fig, caption="Use the toolbar to zoom, pan, or reset (double-click)."):
+def render_interactive_chart(fig, caption="Use the toolbar to zoom, pan, or reset (double-click).", key=None):
     """Render a Plotly figure with consistent interactive controls."""
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
     if caption:
         st.caption(caption)
 
@@ -1461,6 +1471,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(min_time),
+                step=0.01,
+                format="%.2f",
                 key="visual_start"
             )
         
@@ -1470,6 +1482,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(max_time),
+                step=0.01,
+                format="%.2f",
                 key="visual_end"
             )
         
@@ -1489,6 +1503,7 @@ def main():
                 min_value=0.1,
                 value=1.0,
                 step=0.1,
+                format="%.2f",
                 key="visual_temp_res"
             )
         
@@ -1702,6 +1717,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(min_time),
+                step=0.01,
+                format="%.2f",
                 key="2sa_start"
             )
         
@@ -1711,6 +1728,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(max_time),
+                step=0.01,
+                format="%.2f",
                 key="2sa_end"
             )
         
@@ -1730,6 +1749,7 @@ def main():
                 min_value=0.1,
                 value=1.0,
                 step=0.1,
+                format="%.2f",
                 key="2sa_temp_res"
             )
         
@@ -2033,6 +2053,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(min_time),
+                step=0.01,
+                format="%.2f",
                 key="seq_start"
             )
         
@@ -2042,6 +2064,8 @@ def main():
                 min_value=float(min_time),
                 max_value=float(max_time),
                 value=float(max_time),
+                step=0.01,
+                format="%.2f",
                 key="seq_end"
             )
         
@@ -3132,25 +3156,24 @@ def main():
                                     st.info("No n-grams in this sequence.")
     
     elif analysis_method == "PDP Analysis":
-        st.header("🔬 PDP (Qualitative Trajectory Calculus) Analysis")
-        
-        st.info("""
-        **PDP compares trajectories using relative position relationships (qualitative calculus).**
-        
-        Instead of comparing exact coordinates, PDP compares whether objects are relatively 
-        positioned to the left/right/same in x and above/below/same in y.
-        
-        **Four PDP Variants:**
-        - 🔹 **Fundamental:** Basic qualitative comparison
-        - 🔹 **Buffer:** Add tolerance zones around each point
-        - 🔹 **Rough:** Allow approximate equality in comparisons
-        - 🔹 **Buffer + Rough:** Combined approach (most flexible)
-        
-        **💡 Use Cases:**
-        - Compare tactical patterns independent of exact positions
-        - Find similar movement strategies across different court areas
-        - Robust to small measurement noise
-        """)
+        st.header("🔬 PDP (Point Descriptor Precedence)", help="""
+**PDP compares trajectories using relative position relationships (qualitative calculus).**
+
+Instead of comparing exact coordinates, PDP compares whether objects are relatively positioned to the left/right/same in x and above/below/same in y.
+
+**Four PDP Variants:**
+
+🔹 **Fundamental**: Basic qualitative comparison
+🔹 **Buffer**: Add tolerance zones around each point
+🔹 **Rough**: Allow approximate equality in comparisons
+🔹 **Buffer + Rough**: Combined approach (most flexible)
+
+**💡 Use Cases:**
+
+- Compare tactical patterns independent of exact positions
+- Find similar movement strategies across different court areas
+- Robust to small measurement noise
+""")
         
         # Initialize PDP session state
         pdp_analysis.initialize_pdp_session_state()
@@ -3203,12 +3226,26 @@ def main():
                 key="pdp_variant_select"
             )
             
+            # Calculate maximum window length based on actual data
+            # Filter data to get unique timestamps in the selected time range and configs
+            filtered_df = df[
+                (df['tst'] >= start_time) & 
+                (df['tst'] <= end_time) & 
+                (df['config_source'].isin(selected_configs)) &
+                (df['obj'].isin(selected_objects))
+            ]
+            max_window_length = len(filtered_df['tst'].unique()) if len(filtered_df) > 0 else 10
+            max_window_length = max(1, max_window_length)  # Ensure at least 1
+            
+            # Set default value, capped by max available
+            default_window = min(3, max_window_length)
+            
             window_length = st.slider(
                 "Window length (timestamps)",
                 min_value=1,
-                max_value=10,
-                value=3,
-                help="Number of consecutive time steps to analyze together",
+                max_value=max_window_length,
+                value=default_window,
+                help=f"Number of consecutive time steps to analyze together (max: {max_window_length} timestamps available)",
                 key="pdp_window"
             )
         
@@ -3222,6 +3259,7 @@ def main():
                     max_value=5.0,
                     value=1.0,
                     step=0.1,
+                    format="%.2f",
                     help="Buffer zone size in x direction",
                     key="pdp_buffer_x"
                 )
@@ -3231,6 +3269,7 @@ def main():
                     max_value=5.0,
                     value=1.0,
                     step=0.1,
+                    format="%.2f",
                     help="Buffer zone size in y direction",
                     key="pdp_buffer_y"
                 )
@@ -3245,6 +3284,7 @@ def main():
                     max_value=5.0,
                     value=0.5,
                     step=0.1,
+                    format="%.2f",
                     help="Tolerance for 'equal' in x direction",
                     key="pdp_rough_x"
                 )
@@ -3254,6 +3294,7 @@ def main():
                     max_value=5.0,
                     value=0.5,
                     step=0.1,
+                    format="%.2f",
                     help="Tolerance for 'equal' in y direction",
                     key="pdp_rough_y"
                 )
@@ -3317,25 +3358,29 @@ def main():
                 # ========================================
                 # SECTION 1: BASIC RESULTS
                 # ========================================
-                with st.expander("📊 Basic Results (Inequality Matrices, Normalization)", expanded=False):
+                with st.expander("📊 Inequality Matrices", expanded=False):
                     # 1. INEQUALITY MATRICES (Fundamental Representation)
-                    st.markdown("### 🔢 Inequality Matrices (Fundamental Representation)")
-                    
-                    st.info("""
-                    **Inequality matrices are the foundation of PDP analysis.**
-                    
-                    PDP (Qualitative Trajectory Calculus) doesn't compare exact coordinates - it compares **relative positions**:
-                    - **X-matrix**: For each point pair, is object 1 LEFT (0), EQUAL (1), or RIGHT (2) of object 2?
-                    - **Y-matrix**: For each point pair, is object 1 BELOW (0), EQUAL (1), or ABOVE (2) of object 2?
-                    
-                    These matrices capture the **qualitative spatial relationships** between objects over time.
-                    The distance matrix you see below is computed by comparing these inequality matrices between configurations.
-                    
-                    **Color Legend:**
-                    - 🟢 **Green**: Smaller (left/below)
-                    - 🟡 **Yellow**: Equal (within tolerance)
-                    - 🔴 **Red**: Bigger (right/above)
-                    """)
+                    st.markdown("### 🔢 Inequality Matrices (Fundamental Representation)", help=f"""
+**What you're seeing:**
+
+Each row shows inequality matrices for one configuration at one time window:
+- **Left matrix (X dimension)**: Horizontal spatial relationships (left/equal/right)
+- **Right matrix (Y dimension)**: Vertical spatial relationships (below/equal/above)
+
+**Matrix dimensions:**
+- With {len(selected_objects)} object(s) and window_length={window_length}
+- Each matrix is {len(selected_objects) * window_length}×{len(selected_objects) * window_length}
+- Rows/columns labeled as "O<object>_T<time_index>"
+
+**How to read the matrix:**
+- Cell (row i, column j) compares position of point i vs point j
+- 🟢 **0 (Green)**: Point i is LEFT/BELOW point j
+- 🟡 **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
+- 🔴 **2 (Red)**: Point i is RIGHT/ABOVE point j
+
+**Distance calculation:**
+The PDP distance between two configurations is the **sum of differences** across ALL {max(1, max_window_length - window_length + 1)} windows. This visualization shows one of those windows.
+""")
                     
                     # Configuration selector for inequality matrices
                     col_ineq1, col_ineq2 = st.columns([2, 1])
@@ -3377,26 +3422,22 @@ def main():
                         if max_available_windows == 0:
                             st.warning("⚠️ Not enough timestamps to create windows with the current window_length setting.")
                         else:
-                            # Show sliding window explanation
-                            st.info(f"""
-                            **Sliding Window Analysis:**
-                            
-                            With **window_length = {window_length}**, the PDP distance calculation uses a **sliding window approach** 
-                            that computes inequality matrices across multiple overlapping time segments.
-                            
-                            **Available windows**: {max_available_windows} (Window 0 to Window {max_available_windows-1})
-                            
-                            Each window captures a snapshot of spatial relationships at different points in time:
-                            - **Window 0**: First {window_length} timestamp(s)
-                            - **Window 1**: Timestamps starting from the 2nd position
-                            - ... and so on (each window slides by 1 timestamp)
-                            
-                            💡 **Tip**: By default, only the first window is shown to avoid overwhelming visualizations. 
-                            The final PDP distance accumulates differences across **all** windows.
-                            """)
-                            
                             # Window selection interface
-                            st.markdown("**Select Time Windows to Display:**")
+                            st.markdown("**Select Time Windows to Display:**", help=f"""
+**Sliding Window Analysis:**
+
+With **window_length = {window_length}**, the PDP distance calculation uses a **sliding window approach** that computes inequality matrices across multiple overlapping time segments.
+
+**Available windows**: {max_available_windows} (Window 0 to Window {max_available_windows-1})
+
+Each window captures a snapshot of spatial relationships at different points in time:
+
+- **Window 0**: First {window_length} timestamp(s)
+- **Window 1**: Timestamps starting from the 2nd position
+- ... and so on (each window slides by 1 timestamp)
+
+💡 **Tip**: By default, only the first window is shown to avoid overwhelming visualizations. The final PDP distance accumulates differences across **all** windows.
+""")
                             
                             col_win1, col_win2 = st.columns([3, 1])
                             
@@ -3450,117 +3491,78 @@ def main():
                                     window_indices=selected_windows
                                 )
                                 
-                                render_interactive_chart(fig_ineq)
-                                
-                                # Detailed explanation of what's shown
-                                with st.expander("📖 Understanding the Visualization"):
-                                    st.markdown(f"""
-                                    **What you're seeing:**
-                                    
-                                    Each row shows inequality matrices for one configuration at one time window:
-                                    - **Left matrix (X dimension)**: Horizontal spatial relationships (left/equal/right)
-                                    - **Right matrix (Y dimension)**: Vertical spatial relationships (below/equal/above)
-                                    
-                                    **Matrix dimensions:**
-                                    - With {len(selected_objects)} object(s) and window_length={window_length}
-                                    - Each matrix is {len(selected_objects) * window_length}×{len(selected_objects) * window_length}
-                                    - Rows/columns labeled as "O<object>_T<time_index>"
-                                    
-                                    **How to read the matrix:**
-                                    - Cell (row i, column j) compares position of point i vs point j
-                                    - 🟢 **0 (Green)**: Point i is LEFT/BELOW point j
-                                    - 🟡 **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
-                                    - 🔴 **2 (Red)**: Point i is RIGHT/ABOVE point j
-                                    
-                                    **Distance calculation:**
-                                    The PDP distance between two configurations is the **sum of differences** 
-                                    across ALL {max_available_windows} windows. This visualization shows {len(selected_windows)} 
-                                    of those windows.
-                                    """)
-                                
-                                if len(configs_to_compare) >= 2:
-                                    st.caption("""
-                                    💡 **Tip**: Compare the configurations above. Differences in colors indicate where 
-                                    spatial relationships differ, contributing to their PDP distance.
-                                    """)
+                                render_interactive_chart(fig_ineq, caption=None)
                     
-                    st.markdown("---")
-                    
-                    # 2. DISTANCE MATRIX (Derived from Inequality Matrices)
-                    st.markdown("### 📊 PDP Distance Matrix (Computed from Inequality Matrices)")
-                    
-                    st.info("""
-                    **How distances are computed:**
-                    Each configuration has inequality matrices (X and Y) that capture spatial relationships.
-                    The distance between two configurations = number of differing cells in their inequality matrices.
-                    Larger distance → more different spatial relationships → more different trajectory patterns.
-                    """)
-                    
-                    distance_matrix = st.session_state.pdp_distance_matrix
-                    config_ids = st.session_state.pdp_config_ids
-                    n_configs = len(config_ids)
-                    
-                    # Option to show normalized distances
-                    st.markdown("**Display Options:**")
-                    col_display1, col_display2 = st.columns([1, 2])
-                    
-                    with col_display1:
-                        show_normalized = st.checkbox(
-                            "Show normalized distances (0-100%)",
-                            value=False,
-                            key="pdp_show_normalized",
-                            help="Convert raw distances to 0-100% scale for easier interpretation"
-                        )
-                    
-                    with col_display2:
-                        if show_normalized:
-                            st.info("📊 Showing normalized distances (percentage of maximum possible difference)")
-                        else:
-                            st.info("📊 Showing raw PDP distances (sum of inequality matrix differences)")
-                    
-                    # Compute normalized distances if needed
+                st.markdown("---")
+                
+                # 2. DISTANCE MATRIX (Derived from Inequality Matrices)
+                st.markdown("### 📊 PDP Distance Matrix (Computed from Inequality Matrices)", help="How distances are computed: Each configuration has inequality matrices (X and Y) that capture spatial relationships. The distance between two configurations = number of differing cells in their inequality matrices. Larger distance → more different spatial relationships → more different trajectory patterns.")
+                
+                distance_matrix = st.session_state.pdp_distance_matrix
+                config_ids = st.session_state.pdp_config_ids
+                n_configs = len(config_ids)
+                
+                # Option to show normalized distances
+                st.markdown("**Display Options:**")
+                col_display1, col_display2 = st.columns([1, 2])
+                
+                with col_display1:
+                    show_normalized = st.checkbox(
+                        "Show normalized distances (0-100%)",
+                        value=False,
+                        key="pdp_show_normalized",
+                        help="Convert raw distances to 0-100% scale for easier interpretation"
+                    )
+                
+                with col_display2:
                     if show_normalized:
-                        norm_info = pdp_analysis.compute_distance_normalization_info(
-                            distance_matrix, config_ids
-                        )
-                        display_matrix = norm_info['normalized_matrix']
-                        colorbar_title = "Distance (%)"
+                        st.info("📊 Showing normalized distances (percentage of maximum possible difference)")
                     else:
-                        display_matrix = distance_matrix
-                        colorbar_title = "Raw Distance"
-                    
-                    # Provide visualization options for large matrices
-                    st.markdown("**Visualization Options:**")
-                    col_viz_opt1, col_viz_opt2 = st.columns([2, 1])
-                    
-                    with col_viz_opt1:
-                        if n_configs > 30:
-                            show_text = st.checkbox(
-                                "Show numeric values in heatmap", 
-                                value=False, 
-                                key="pdp_show_text",
-                                help="⚠️ Warning: With many configurations, text may be very small or overlap. Use hover for exact values."
-                            )
-                        else:
-                            show_text = st.checkbox(
-                                "Show numeric values in heatmap", 
-                                value=True, 
-                                key="pdp_show_text"
-                            )
-                    
-                    with col_viz_opt2:
-                        # Font size adjustment when text is shown
-                        if show_text:
-                            # Suggest smaller text for larger matrices
-                            default_size = max(4, min(10, 300 // n_configs))
-                            text_size = st.slider("Text size", 2, 12, default_size, key="pdp_text_size",
-                                                help=f"Suggested: {default_size}pt for {n_configs} configs")
-                        else:
-                            text_size = 8
-                    
-                    # Compute optimal size based on number of configurations
-                    # Aim for ~10-15 pixels per cell for good readability
-                    cell_size = max(10, min(30, 600 // n_configs))
+                        st.info("📊 Showing raw PDP distances (sum of inequality matrix differences)")
+                
+                # Compute normalized distances if needed
+                if show_normalized:
+                    norm_info = pdp_analysis.compute_distance_normalization_info(
+                        distance_matrix, config_ids
+                    )
+                    display_matrix = norm_info['normalized_matrix']
+                    colorbar_title = "Distance (%)"
+                else:
+                    display_matrix = distance_matrix
+                    colorbar_title = "Raw Distance"
+                
+                # Provide visualization options for large matrices
+                st.markdown("**Visualization Options:**")
+                col_viz_opt1, col_viz_opt2 = st.columns([2, 1])
+                
+                with col_viz_opt1:
+                    if n_configs > 30:
+                        show_text = st.checkbox(
+                            "Show numeric values in heatmap", 
+                            value=False, 
+                            key="pdp_show_text",
+                            help="⚠️ Warning: With many configurations, text may be very small or overlap. Use hover for exact values."
+                        )
+                    else:
+                        show_text = st.checkbox(
+                            "Show numeric values in heatmap", 
+                            value=True, 
+                            key="pdp_show_text"
+                        )
+                
+                with col_viz_opt2:
+                    # Font size adjustment when text is shown
+                    if show_text:
+                        # Suggest smaller text for larger matrices
+                        default_size = max(4, min(10, 300 // n_configs))
+                        text_size = st.slider("Text size", 2, 12, default_size, key="pdp_text_size",
+                                            help=f"Suggested: {default_size}pt for {n_configs} configs")
+                    else:
+                        text_size = 8
+                
+                # Compute optimal size based on number of configurations
+                # Aim for ~10-15 pixels per cell for good readability
+                cell_size = max(10, min(30, 600 // n_configs))
                 heatmap_size = max(500, min(1200, n_configs * cell_size))
                 
                 # Create heatmap - respect user's choice regardless of matrix size
@@ -3660,9 +3662,122 @@ def main():
                     height=heatmap_size
                 )
                 
-                render_interactive_chart(fig_heatmap)
+                render_interactive_chart(fig_heatmap, caption="")
+                
+                # ========================================
+                # INTERACTIVE CONFIGURATION SELECTOR (using reusable component)
+                # ========================================
+                st.markdown("---")
+                st.markdown("### 🎯 Inspect Individual Configurations")
+                st.info("""
+                **Click to explore configurations from the distance matrix:**
+                
+                Select one or more configurations to visualize their trajectories on the tennis court.
+                This helps you understand what the distance patterns in the matrix actually represent.
+                """)
+                
+                # Use reusable configuration selector component
+                selected_configs_inspect = configuration_selector(
+                    config_ids=config_ids,
+                    key_prefix="pdp_matrix_inspect",
+                    default_configs=[],
+                    max_selections=5,
+                    label="Select configurations to visualize",
+                    help_text="Choose configurations from the distance matrix to see their actual trajectories",
+                    show_metrics=True
+                )
+                
+                # Visualize selected configurations
+                if len(selected_configs_inspect) > 0:
+                    st.markdown("---")
+                    
+                    # Show distance information if 2+ configs selected
+                    if len(selected_configs_inspect) >= 2:
+                        st.markdown("**📏 Pairwise Distances Between Selected Configurations:**")
+                        
+                        # Create distance table
+                        selected_indices = [config_ids.index(cfg) for cfg in selected_configs_inspect]
+                        
+                        dist_pairs = []
+                        for i, cfg1 in enumerate(selected_configs_inspect):
+                            for j, cfg2 in enumerate(selected_configs_inspect):
+                                if i < j:
+                                    idx1 = config_ids.index(cfg1)
+                                    idx2 = config_ids.index(cfg2)
+                                    dist_val = distance_matrix[idx1, idx2]
+                                    
+                                    if show_normalized:
+                                        dist_pairs.append({
+                                            'Config A': cfg1,
+                                            'Config B': cfg2,
+                                            'Distance': f"{norm_info['normalized_matrix'][idx1, idx2]:.1f}%",
+                                            'Raw': f"{dist_val:.1f}"
+                                        })
+                                    else:
+                                        dist_pairs.append({
+                                            'Config A': cfg1,
+                                            'Config B': cfg2,
+                                            'Distance': f"{dist_val:.1f}"
+                                        })
+                        
+                        if dist_pairs:
+                            dist_df = pd.DataFrame(dist_pairs)
+                            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                    
+                    # Plot trajectories
+                    st.markdown("**🎾 Trajectory Visualization:**")
+                    
+                    # Get objects from global selection if available
+                    if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
+                        inspect_objects = st.session_state.shared_selected_objects
+                    else:
+                        inspect_objects = selected_objects
+                    
+                    fig_inspect = pdp_analysis.plot_trajectory_comparison(
+                        df=st.session_state.data,
+                        config_ids=config_ids,
+                        selected_configs=selected_configs_inspect,
+                        start_time=start_time,
+                        end_time=end_time,
+                        selected_objects=inspect_objects,
+                        cluster_labels=st.session_state.pdp_cluster_labels,
+                        distance_matrix=distance_matrix,
+                        show_buffers=False,
+                        buffer_size=0.5,
+                        show_rough=False,
+                        rough_tolerance=0.3
+                    )
+                    
+                    # Create a unique key based on selections to force chart recreation
+                    chart_key = f"pdp_inspect_chart_{'-'.join(map(str, selected_configs_inspect))}_{'-'.join(map(str, inspect_objects))}"
+                    
+                    render_interactive_chart(fig_inspect, 
+                                           caption=f"Showing {len(selected_configs_inspect)} configuration(s) | " +
+                                                  f"Time: {start_time:.1f}s - {end_time:.1f}s",
+                                           key=chart_key)
+                    
+                    # Interpretation help
+                    with st.expander("💡 How to interpret this visualization"):
+                        st.markdown("""
+                        **What you're seeing:**
+                        - Each color represents a different configuration
+                        - Trajectories show the movement paths of all selected objects
+                        - Start points: ⭕ (circles), End points: ◼️ (squares)
+                        
+                        **Compare with the distance matrix:**
+                        - **Small distances** → Similar trajectory patterns (paths overlap or follow similar patterns)
+                        - **Large distances** → Very different trajectory patterns (paths diverge significantly)
+                        
+                        **Tips:**
+                        - Hover over points to see configuration, object, and timestamp details
+                        - Use the quick selection buttons to explore interesting patterns
+                        - Compare 2-3 configurations to understand what causes high/low distances
+                        """)
+                else:
+                    st.info("👆 Select one or more configurations above to visualize their trajectories")
                 
                 # Summary statistics
+                st.markdown("---")
                 st.markdown("**Distance Matrix Statistics:**")
                 col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
                 with col_stat1:
