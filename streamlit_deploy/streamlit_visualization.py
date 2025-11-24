@@ -3315,7 +3315,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             selected_variant_keys = [variant_map_reverse[v] for v in variants_to_compute]
             
             # Compute button
-            if st.button("🚀 Compute PDP Analysis", type="primary", key="compute_pdp"):
+            if st.button("Compute PDP Analysis", type="primary", key="compute_pdp"):
                 if not selected_variant_keys:
                     st.error("Please select at least one variant to compute.")
                 else:
@@ -3509,12 +3509,20 @@ The PDP distance between two configurations is the **sum of differences** across
                         # Get window information first
                         from modules.pdp_analysis import visualize_inequality_matrices
                         
+                        # Determine parameters based on active variant
+                        active_variant = st.session_state.get('pdp_active_variant', 'fundamental')
+                        
+                        viz_buffer_x = buffer_x if active_variant in ['buffer', 'buffer_rough'] else 0
+                        viz_buffer_y = buffer_y if active_variant in ['buffer', 'buffer_rough'] else 0
+                        viz_rough_x = rough_x if active_variant in ['rough', 'buffer_rough'] else 0
+                        viz_rough_y = rough_y if active_variant in ['rough', 'buffer_rough'] else 0
+                        
                         window_info = visualize_inequality_matrices(
                             df, configs_to_compare, selected_objects,
                             start_time, end_time,
                             window_length=window_length,
-                            buffer_x=buffer_x, buffer_y=buffer_y,
-                            rough_x=rough_x, rough_y=rough_y,
+                            buffer_x=viz_buffer_x, buffer_y=viz_buffer_y,
+                            rough_x=viz_rough_x, rough_y=viz_rough_y,
                             window_indices=None  # Get metadata
                         )
                         
@@ -3590,8 +3598,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     df, configs_to_compare, selected_objects,
                                     start_time, end_time,
                                     window_length=window_length,
-                                    buffer_x=buffer_x, buffer_y=buffer_y,
-                                    rough_x=rough_x, rough_y=rough_y,
+                                    buffer_x=viz_buffer_x, buffer_y=viz_buffer_y,
+                                    rough_x=viz_rough_x, rough_y=viz_rough_y,
                                     window_indices=selected_windows
                                 )
                                 
