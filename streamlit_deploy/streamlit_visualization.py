@@ -3349,7 +3349,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     st.session_state.pdp_cluster_labels = cluster_labels
                     st.session_state.pdp_linkage_matrix = linkage_matrix
                 
-                st.success(f"✅ PDP analysis computed! Optimal clusters: {optimal_n}")
+                st.success(f"PDP analysis computed! Optimal clusters: {optimal_n}")
                 st.rerun()
             
             # Show results if available
@@ -3358,9 +3358,9 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 # ========================================
                 # SECTION 1: BASIC RESULTS
                 # ========================================
-                with st.expander("📊 Inequality Matrices", expanded=False):
+                with st.expander("Inequality Matrices", expanded=False):
                     # 1. INEQUALITY MATRICES (Fundamental Representation)
-                    st.markdown("### 🔢 Inequality Matrices (Fundamental Representation)", help=f"""
+                    st.markdown("### Inequality Matrices (Fundamental Representation)", help=f"""
 **What you're seeing:**
 
 Each row shows inequality matrices for one configuration at one time window:
@@ -3374,9 +3374,9 @@ Each row shows inequality matrices for one configuration at one time window:
 
 **How to read the matrix:**
 - Cell (row i, column j) compares position of point i vs point j
-- 🟢 **0 (Green)**: Point i is LEFT/BELOW point j
-- 🟡 **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
-- 🔴 **2 (Red)**: Point i is RIGHT/ABOVE point j
+- **0 (Green)**: Point i is LEFT/BELOW point j
+- **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
+- **2 (Red)**: Point i is RIGHT/ABOVE point j
 
 **Distance calculation:**
 The PDP distance between two configurations is the **sum of differences** across ALL {max(1, max_window_length - window_length + 1)} windows. This visualization shows one of those windows.
@@ -3399,7 +3399,7 @@ The PDP distance between two configurations is the **sum of differences** across
                         if len(configs_to_compare) > 0:
                             st.metric("Configs selected", len(configs_to_compare))
                             if len(configs_to_compare) > 5:
-                                st.warning("⚠️ Many configs selected - visualization may be large")
+                                st.warning("Many configs selected - visualization may be large")
                     
                     if len(configs_to_compare) > 0:
                         # Get window information first
@@ -3420,7 +3420,7 @@ The PDP distance between two configurations is the **sum of differences** across
                             max_available_windows = max([info['max_windows'] for info in window_info.values() if info['max_windows'] > 0], default=0)
                         
                         if max_available_windows == 0:
-                            st.warning("⚠️ Not enough timestamps to create windows with the current window_length setting.")
+                            st.warning("Not enough timestamps to create windows with the current window_length setting.")
                         else:
                             # Window selection interface
                             st.markdown("**Select Time Windows to Display:**", help=f"""
@@ -3436,7 +3436,7 @@ Each window captures a snapshot of spatial relationships at different points in 
 - **Window 1**: Timestamps starting from the 2nd position
 - ... and so on (each window slides by 1 timestamp)
 
-💡 **Tip**: By default, only the first window is shown to avoid overwhelming visualizations. The final PDP distance accumulates differences across **all** windows.
+**Tip**: By default, only the first window is shown to avoid overwhelming visualizations. The final PDP distance accumulates differences across **all** windows.
 """)
                             
                             col_win1, col_win2 = st.columns([3, 1])
@@ -3458,7 +3458,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     )
                                 else:
                                     # For many windows, use slider to select range
-                                    st.caption(f"⚠️ Many windows available ({max_available_windows}). Select a range:")
+                                    st.caption(f"Many windows available ({max_available_windows}). Select a range:")
                                     window_range = st.slider(
                                         "Window range",
                                         min_value=0,
@@ -3476,10 +3476,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     total_matrices = len(configs_to_compare) * len(selected_windows) * 2
                                     st.caption(f"{total_matrices} matrices total")
                                     if total_matrices > 20:
-                                        st.warning("⚠️ Large visualization!")
+                                        st.warning("Large visualization!")
                             
                             if not selected_windows:
-                                st.warning("⚠️ Please select at least one window to visualize.")
+                                st.warning("Please select at least one window to visualize.")
                             else:
                                 # Display inequality matrices for selected configurations and windows
                                 fig_ineq = visualize_inequality_matrices(
@@ -3496,7 +3496,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("---")
                 
                 # 2. DISTANCE MATRIX (Derived from Inequality Matrices)
-                st.markdown("### 📊 PDP Distance Matrix (Computed from Inequality Matrices)", help="How distances are computed: Each configuration has inequality matrices (X and Y) that capture spatial relationships. The distance between two configurations = number of differing cells in their inequality matrices. Larger distance → more different spatial relationships → more different trajectory patterns.")
+                st.markdown("### PDP Distance Matrix (Computed from Inequality Matrices)", help="How distances are computed: Each configuration has inequality matrices (X and Y) that capture spatial relationships. The distance between two configurations = number of differing cells in their inequality matrices. Larger distance → more different spatial relationships → more different trajectory patterns.")
                 
                 distance_matrix = st.session_state.pdp_distance_matrix
                 config_ids = st.session_state.pdp_config_ids
