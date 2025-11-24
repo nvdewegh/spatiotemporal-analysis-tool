@@ -372,8 +372,7 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         
         # Apply buffer if needed
         if buffer_x > 0 or buffer_y > 0:
-            buffer_data = apply_buffer_to_trajectories(config_data, buffer_x, buffer_y)
-            config_data = pd.concat([config_data, buffer_data], ignore_index=True)
+            config_data = apply_buffer_to_trajectories(config_data, buffer_x, buffer_y)
             config_data = config_data.sort_values(['tst', 'obj'])
         
         # Get timestamps
