@@ -239,35 +239,44 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
         Expanded DataFrame with buffer points
     """
     if buffer_x == 0 and buffer_y == 0:
-        return df
+        # Add sub_type column for consistency
+        df_copy = df.copy()
+        df_copy['sub_type'] = 'orig'
+        return df_copy
     
     buffer_points = []
     
     for _, row in df.iterrows():
         # Original point
-        buffer_points.append(row.to_dict())
+        p = row.to_dict()
+        p['sub_type'] = 'orig'
+        buffer_points.append(p)
         
         # Add buffer points
         if buffer_x > 0:
             # Left buffer point
             left_point = row.to_dict()
             left_point['x'] = row['x'] - buffer_x
+            left_point['sub_type'] = 'left'
             buffer_points.append(left_point)
             
             # Right buffer point
             right_point = row.to_dict()
             right_point['x'] = row['x'] + buffer_x
+            right_point['sub_type'] = 'right'
             buffer_points.append(right_point)
         
         if buffer_y > 0:
             # Bottom buffer point
             bottom_point = row.to_dict()
             bottom_point['y'] = row['y'] - buffer_y
+            bottom_point['sub_type'] = 'bottom'
             buffer_points.append(bottom_point)
             
             # Top buffer point
             top_point = row.to_dict()
             top_point['y'] = row['y'] + buffer_y
+            top_point['sub_type'] = 'top'
             buffer_points.append(top_point)
     
     return pd.DataFrame(buffer_points)
@@ -402,9 +411,28 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             
             # Create labels for axes (object-timestamp pairs)
             labels = []
-            for t_idx, t in enumerate(window_times):
-                for obj in sorted(config_data[config_data['tst'] == t]['obj'].unique()):
-                    labels.append(f"O{obj}_T{t_idx}")
+            # Iterate through the actual data rows to ensure labels match the matrix dimensions
+            for _, row in window_data.iterrows():
+                # Find relative time index
+                try:
+                    t_idx = list(window_times).index(row['tst'])
+                except ValueError:
+                    continue
+                    
+                obj = row['obj']
+                
+                # Add suffix for buffer points if present
+                if 'sub_type' in row and row['sub_type'] != 'orig':
+                    # Use short suffix to keep labels compact
+                    suffix_map = {
+                        'left': '_L', 'right': '_R', 
+                        'top': '_T', 'bottom': '_B'
+                    }
+                    suffix = suffix_map.get(row['sub_type'], f"_{row['sub_type']}")
+                else:
+                    suffix = ""
+                
+                labels.append(f"O{obj}_T{t_idx}{suffix}")
             
             # X dimension heatmap (without text annotations and without colorbar)
             fig.add_trace(
