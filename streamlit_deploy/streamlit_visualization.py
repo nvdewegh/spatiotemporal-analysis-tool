@@ -3213,18 +3213,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             )
         
         with col2:
-            st.write("**PDP Variant**")
-            pdp_variant = st.selectbox(
-                "Select PDP type",
-                ["fundamental", "buffer", "rough", "buffer_rough"],
-                format_func=lambda x: {
-                    "fundamental": "Fundamental",
-                    "buffer": "Buffer",
-                    "rough": "Rough",
-                    "buffer_rough": "Buffer + Rough"
-                }[x],
-                key="pdp_variant_select"
-            )
+            st.write("**Window Settings**")
             
             # Calculate maximum window length based on actual data
             # Filter data to get unique timestamps in the selected time range and configs
@@ -3251,56 +3240,49 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         
         with col3:
             st.write("**Tolerance Parameters**")
+            st.caption("Used for Buffer/Rough variants")
             
-            if pdp_variant in ["buffer", "buffer_rough"]:
-                buffer_x = st.number_input(
-                    "Buffer X (m)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.0,
-                    step=0.1,
-                    format="%.2f",
-                    help="Buffer zone size in x direction",
-                    key="pdp_buffer_x"
-                )
-                buffer_y = st.number_input(
-                    "Buffer Y (m)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.0,
-                    step=0.1,
-                    format="%.2f",
-                    help="Buffer zone size in y direction",
-                    key="pdp_buffer_y"
-                )
-            else:
-                buffer_x = 0.0
-                buffer_y = 0.0
+            buffer_x = st.number_input(
+                "Buffer X (m)",
+                min_value=0.0,
+                max_value=5.0,
+                value=1.0,
+                step=0.1,
+                format="%.2f",
+                help="Buffer zone size in x direction",
+                key="pdp_buffer_x"
+            )
+            buffer_y = st.number_input(
+                "Buffer Y (m)",
+                min_value=0.0,
+                max_value=5.0,
+                value=1.0,
+                step=0.1,
+                format="%.2f",
+                help="Buffer zone size in y direction",
+                key="pdp_buffer_y"
+            )
             
-            if pdp_variant in ["rough", "buffer_rough"]:
-                rough_x = st.number_input(
-                    "Rough X (m)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=0.5,
-                    step=0.1,
-                    format="%.2f",
-                    help="Tolerance for 'equal' in x direction",
-                    key="pdp_rough_x"
-                )
-                rough_y = st.number_input(
-                    "Rough Y (m)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=0.5,
-                    step=0.1,
-                    format="%.2f",
-                    help="Tolerance for 'equal' in y direction",
-                    key="pdp_rough_y"
-                )
-            else:
-                rough_x = 0.0
-                rough_y = 0.0
+            rough_x = st.number_input(
+                "Rough X (m)",
+                min_value=0.0,
+                max_value=5.0,
+                value=0.5,
+                step=0.1,
+                format="%.2f",
+                help="Tolerance for 'equal' in x direction",
+                key="pdp_rough_x"
+            )
+            rough_y = st.number_input(
+                "Rough Y (m)",
+                min_value=0.0,
+                max_value=5.0,
+                value=0.5,
+                step=0.1,
+                format="%.2f",
+                help="Tolerance for 'equal' in y direction",
+                key="pdp_rough_y"
+            )
         
         if not selected_configs or not selected_objects:
             st.warning("Please select at least one configuration and one object from the sidebar.")
@@ -3308,49 +3290,120 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             st.warning("Please select at least 2 configurations to compute distances.")
         else:
             # Check if we need to recompute
-            params_changed = (
-                st.session_state.pdp_variant != pdp_variant or
-                st.session_state.pdp_window_length != window_length or
-                st.session_state.pdp_distance_matrix is None
-            )
-            
-            if params_changed:
-                st.session_state.pdp_variant = pdp_variant
-                st.session_state.pdp_window_length = window_length
-                st.session_state.pdp_distance_matrix = None
-                st.session_state.pdp_linkage_matrix = None
-                st.session_state.pdp_optimal_n = None
+            if 'pdp_results_all' not in st.session_state:
+                st.info("Click Compute to analyze all variants.")
             
             st.markdown("---")
             
             # Compute button
-            if st.button("🚀 Compute PDP Analysis", type="primary", key="compute_pdp"):
-                with st.spinner(f"Computing PDP distances ({pdp_variant})..."):
-                    distance_matrix, config_ids = pdp_analysis.compute_pdp_distance_matrix(
+            if st.button("🚀 Compute PDP Analysis (All Variants)", type="primary", key="compute_pdp"):
+                with st.spinner("Computing PDP distances for all variants..."):
+                    results_all = {}
+                    
+                    # 1. Fundamental
+                    dist_fund, config_ids = pdp_analysis.compute_pdp_distance_matrix(
                         df, selected_configs, selected_objects,
                         start_time, end_time,
                         window_length=window_length,
-                        buffer_x=buffer_x, buffer_y=buffer_y,
-                        rough_x=rough_x, rough_y=rough_y,
-                        pdp_variant=pdp_variant
+                        buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                        pdp_variant="fundamental"
                     )
+                    results_all['fundamental'] = dist_fund
                     
-                    st.session_state.pdp_distance_matrix = distance_matrix
+                    # 2. Buffer
+                    dist_buff, _ = pdp_analysis.compute_pdp_distance_matrix(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        window_length=window_length,
+                        buffer_x=buffer_x, buffer_y=buffer_y, rough_x=0, rough_y=0,
+                        pdp_variant="buffer"
+                    )
+                    results_all['buffer'] = dist_buff
+                    
+                    # 3. Rough
+                    dist_rough, _ = pdp_analysis.compute_pdp_distance_matrix(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        window_length=window_length,
+                        buffer_x=0, buffer_y=0, rough_x=rough_x, rough_y=rough_y,
+                        pdp_variant="rough"
+                    )
+                    results_all['rough'] = dist_rough
+                    
+                    # 4. Buffer + Rough
+                    dist_br, _ = pdp_analysis.compute_pdp_distance_matrix(
+                        df, selected_configs, selected_objects,
+                        start_time, end_time,
+                        window_length=window_length,
+                        buffer_x=buffer_x, buffer_y=buffer_y, rough_x=rough_x, rough_y=rough_y,
+                        pdp_variant="buffer_rough"
+                    )
+                    results_all['buffer_rough'] = dist_br
+                    
+                    # Store results
+                    st.session_state.pdp_results_all = results_all
                     st.session_state.pdp_config_ids = config_ids
                     
-                    # Perform clustering
-                    optimal_n = pdp_analysis.detect_optimal_clusters(distance_matrix)
+                    # Set default active variant
+                    st.session_state.pdp_active_variant = 'fundamental'
+                    st.session_state.pdp_distance_matrix = results_all['fundamental']
+                    
+                    # Perform initial clustering
+                    optimal_n = pdp_analysis.detect_optimal_clusters(results_all['fundamental'])
                     st.session_state.pdp_optimal_n = optimal_n
                     st.session_state.pdp_current_n = optimal_n
                     
                     cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
-                        distance_matrix, optimal_n
+                        results_all['fundamental'], optimal_n
                     )
                     st.session_state.pdp_cluster_labels = cluster_labels
                     st.session_state.pdp_linkage_matrix = linkage_matrix
                 
-                st.success(f"PDP analysis computed! Optimal clusters: {optimal_n}")
+                st.success(f"PDP analysis computed for all variants!")
                 st.rerun()
+            
+            # SELECTION LOGIC
+            if 'pdp_results_all' in st.session_state and st.session_state.pdp_results_all:
+                st.markdown("### Analysis View Settings")
+                
+                # Determine current selection index
+                current_key = st.session_state.get('pdp_active_variant', 'fundamental')
+                variant_options = ["Fundamental", "Buffer", "Rough", "Buffer + Rough"]
+                variant_keys = ["fundamental", "buffer", "rough", "buffer_rough"]
+                
+                try:
+                    default_index = variant_keys.index(current_key)
+                except ValueError:
+                    default_index = 0
+                
+                selected_view = st.radio(
+                    "Select Variant to Visualize:",
+                    variant_options,
+                    index=default_index,
+                    key="pdp_view_selector",
+                    horizontal=True
+                )
+                
+                variant_map = dict(zip(variant_options, variant_keys))
+                active_variant_key = variant_map[selected_view]
+                
+                # Check if we need to update the active view
+                if st.session_state.get('pdp_active_variant') != active_variant_key:
+                    st.session_state.pdp_active_variant = active_variant_key
+                    st.session_state.pdp_distance_matrix = st.session_state.pdp_results_all[active_variant_key]
+                    
+                    # Re-run clustering for the new matrix
+                    matrix = st.session_state.pdp_distance_matrix
+                    optimal_n = pdp_analysis.detect_optimal_clusters(matrix)
+                    st.session_state.pdp_optimal_n = optimal_n
+                    st.session_state.pdp_current_n = optimal_n
+                    
+                    cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
+                        matrix, optimal_n
+                    )
+                    st.session_state.pdp_cluster_labels = cluster_labels
+                    st.session_state.pdp_linkage_matrix = linkage_matrix
+                    st.rerun()
             
             # Show results if available
             if st.session_state.pdp_distance_matrix is not None:
@@ -3655,7 +3708,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 distance_type = "Normalized (%)" if show_normalized else "Raw"
                 
                 fig_heatmap.update_layout(
-                    title=f"PDP Distance Matrix - {distance_type} ({pdp_variant}) - {n_configs} configurations",
+                    title=f"PDP Distance Matrix - {distance_type} ({st.session_state.get('pdp_active_variant', 'fundamental')}) - {n_configs} configurations",
                     xaxis=xaxis_config,
                     yaxis=yaxis_config,
                     width=heatmap_size,
@@ -4377,6 +4430,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # ===============================================================
                     st.markdown("---")
                     st.subheader("Export Results")
+                    pdp_variant = st.session_state.get('pdp_active_variant', 'fundamental')
                     
                     st.info("""
                     **Download PDP analysis results for further processing.**
