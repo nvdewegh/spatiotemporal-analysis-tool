@@ -3291,101 +3291,152 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         else:
             # Check if we need to recompute
             if 'pdp_results_all' not in st.session_state:
-                st.info("Click Compute to analyze all variants.")
+                st.info("Select variants and click Compute to start analysis.")
             
             st.markdown("---")
             
+            # Variant Selection
+            st.subheader("Analysis Options")
+            variants_to_compute = st.multiselect(
+                "Select PDP Variants to Compute",
+                options=["Fundamental", "Buffer", "Rough", "Buffer + Rough"],
+                default=["Fundamental", "Buffer", "Rough", "Buffer + Rough"],
+                help="Choose which variants to calculate. Fewer variants = faster computation."
+            )
+            
+            # Map display names to internal keys
+            variant_map_reverse = {
+                "Fundamental": "fundamental",
+                "Buffer": "buffer",
+                "Rough": "rough",
+                "Buffer + Rough": "buffer_rough"
+            }
+            
+            selected_variant_keys = [variant_map_reverse[v] for v in variants_to_compute]
+            
             # Compute button
-            if st.button("🚀 Compute PDP Analysis (All Variants)", type="primary", key="compute_pdp"):
-                with st.spinner("Computing PDP distances for all variants..."):
-                    results_all = {}
+            if st.button("🚀 Compute PDP Analysis", type="primary", key="compute_pdp"):
+                if not selected_variant_keys:
+                    st.error("Please select at least one variant to compute.")
+                else:
+                    with st.spinner(f"Computing PDP distances for {len(selected_variant_keys)} variants..."):
+                        results_all = {}
+                        config_ids = None
+                        
+                        # 1. Fundamental
+                        if "fundamental" in selected_variant_keys:
+                            dist_fund, c_ids = pdp_analysis.compute_pdp_distance_matrix(
+                                df, selected_configs, selected_objects,
+                                start_time, end_time,
+                                window_length=window_length,
+                                buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                                pdp_variant="fundamental"
+                            )
+                            results_all['fundamental'] = dist_fund
+                            config_ids = c_ids
+                        
+                        # 2. Buffer
+                        if "buffer" in selected_variant_keys:
+                            dist_buff, c_ids = pdp_analysis.compute_pdp_distance_matrix(
+                                df, selected_configs, selected_objects,
+                                start_time, end_time,
+                                window_length=window_length,
+                                buffer_x=buffer_x, buffer_y=buffer_y, rough_x=0, rough_y=0,
+                                pdp_variant="buffer"
+                            )
+                            results_all['buffer'] = dist_buff
+                            if config_ids is None: config_ids = c_ids
+                        
+                        # 3. Rough
+                        if "rough" in selected_variant_keys:
+                            dist_rough, c_ids = pdp_analysis.compute_pdp_distance_matrix(
+                                df, selected_configs, selected_objects,
+                                start_time, end_time,
+                                window_length=window_length,
+                                buffer_x=0, buffer_y=0, rough_x=rough_x, rough_y=rough_y,
+                                pdp_variant="rough"
+                            )
+                            results_all['rough'] = dist_rough
+                            if config_ids is None: config_ids = c_ids
+                        
+                        # 4. Buffer + Rough
+                        if "buffer_rough" in selected_variant_keys:
+                            dist_br, c_ids = pdp_analysis.compute_pdp_distance_matrix(
+                                df, selected_configs, selected_objects,
+                                start_time, end_time,
+                                window_length=window_length,
+                                buffer_x=buffer_x, buffer_y=buffer_y, rough_x=rough_x, rough_y=rough_y,
+                                pdp_variant="buffer_rough"
+                            )
+                            results_all['buffer_rough'] = dist_br
+                            if config_ids is None: config_ids = c_ids
+                        
+                        # Store results
+                        st.session_state.pdp_results_all = results_all
+                        st.session_state.pdp_config_ids = config_ids
+                        
+                        # Set default active variant (first available)
+                        first_key = selected_variant_keys[0]
+                        st.session_state.pdp_active_variant = first_key
+                        st.session_state.pdp_distance_matrix = results_all[first_key]
+                        
+                        # Perform initial clustering
+                        optimal_n = pdp_analysis.detect_optimal_clusters(results_all[first_key])
+                        st.session_state.pdp_optimal_n = optimal_n
+                        st.session_state.pdp_current_n = optimal_n
+                        
+                        cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
+                            results_all[first_key], optimal_n
+                        )
+                        st.session_state.pdp_cluster_labels = cluster_labels
+                        st.session_state.pdp_linkage_matrix = linkage_matrix
                     
-                    # 1. Fundamental
-                    dist_fund, config_ids = pdp_analysis.compute_pdp_distance_matrix(
-                        df, selected_configs, selected_objects,
-                        start_time, end_time,
-                        window_length=window_length,
-                        buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                        pdp_variant="fundamental"
-                    )
-                    results_all['fundamental'] = dist_fund
-                    
-                    # 2. Buffer
-                    dist_buff, _ = pdp_analysis.compute_pdp_distance_matrix(
-                        df, selected_configs, selected_objects,
-                        start_time, end_time,
-                        window_length=window_length,
-                        buffer_x=buffer_x, buffer_y=buffer_y, rough_x=0, rough_y=0,
-                        pdp_variant="buffer"
-                    )
-                    results_all['buffer'] = dist_buff
-                    
-                    # 3. Rough
-                    dist_rough, _ = pdp_analysis.compute_pdp_distance_matrix(
-                        df, selected_configs, selected_objects,
-                        start_time, end_time,
-                        window_length=window_length,
-                        buffer_x=0, buffer_y=0, rough_x=rough_x, rough_y=rough_y,
-                        pdp_variant="rough"
-                    )
-                    results_all['rough'] = dist_rough
-                    
-                    # 4. Buffer + Rough
-                    dist_br, _ = pdp_analysis.compute_pdp_distance_matrix(
-                        df, selected_configs, selected_objects,
-                        start_time, end_time,
-                        window_length=window_length,
-                        buffer_x=buffer_x, buffer_y=buffer_y, rough_x=rough_x, rough_y=rough_y,
-                        pdp_variant="buffer_rough"
-                    )
-                    results_all['buffer_rough'] = dist_br
-                    
-                    # Store results
-                    st.session_state.pdp_results_all = results_all
-                    st.session_state.pdp_config_ids = config_ids
-                    
-                    # Set default active variant
-                    st.session_state.pdp_active_variant = 'fundamental'
-                    st.session_state.pdp_distance_matrix = results_all['fundamental']
-                    
-                    # Perform initial clustering
-                    optimal_n = pdp_analysis.detect_optimal_clusters(results_all['fundamental'])
-                    st.session_state.pdp_optimal_n = optimal_n
-                    st.session_state.pdp_current_n = optimal_n
-                    
-                    cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
-                        results_all['fundamental'], optimal_n
-                    )
-                    st.session_state.pdp_cluster_labels = cluster_labels
-                    st.session_state.pdp_linkage_matrix = linkage_matrix
-                
-                st.success(f"PDP analysis computed for all variants!")
-                st.rerun()
+                    st.success(f"PDP analysis computed for {len(selected_variant_keys)} variants!")
+                    st.rerun()
             
             # SELECTION LOGIC
             if 'pdp_results_all' in st.session_state and st.session_state.pdp_results_all:
                 st.markdown("### Analysis View Settings")
                 
-                # Determine current selection index
-                current_key = st.session_state.get('pdp_active_variant', 'fundamental')
-                variant_options = ["Fundamental", "Buffer", "Rough", "Buffer + Rough"]
-                variant_keys = ["fundamental", "buffer", "rough", "buffer_rough"]
+                # Get available variants from results
+                available_keys = list(st.session_state.pdp_results_all.keys())
+                
+                variant_map = {
+                    "fundamental": "Fundamental",
+                    "buffer": "Buffer",
+                    "rough": "Rough",
+                    "buffer_rough": "Buffer + Rough"
+                }
+                
+                # Filter options based on what was computed
+                available_options = [variant_map[k] for k in available_keys if k in variant_map]
+                
+                # Determine current selection
+                current_key = st.session_state.get('pdp_active_variant')
+                
+                # If current key is not in available results (e.g. recomputed with different set), reset
+                if current_key not in available_keys:
+                    current_key = available_keys[0]
+                    st.session_state.pdp_active_variant = current_key
+                
+                current_option = variant_map.get(current_key, available_options[0])
                 
                 try:
-                    default_index = variant_keys.index(current_key)
+                    default_index = available_options.index(current_option)
                 except ValueError:
                     default_index = 0
                 
                 selected_view = st.radio(
                     "Select Variant to Visualize:",
-                    variant_options,
+                    available_options,
                     index=default_index,
                     key="pdp_view_selector",
                     horizontal=True
                 )
                 
-                variant_map = dict(zip(variant_options, variant_keys))
-                active_variant_key = variant_map[selected_view]
+                # Reverse map for lookup
+                variant_map_reverse = {v: k for k, v in variant_map.items()}
+                active_variant_key = variant_map_reverse[selected_view]
                 
                 # Check if we need to update the active view
                 if st.session_state.get('pdp_active_variant') != active_variant_key:
