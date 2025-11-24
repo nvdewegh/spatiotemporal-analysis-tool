@@ -3410,51 +3410,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 
                 # Filter options based on what was computed
                 available_options = [variant_map[k] for k in available_keys if k in variant_map]
-                
-                # Determine current selection
-                current_key = st.session_state.get('pdp_active_variant')
-                
-                # If current key is not in available results (e.g. recomputed with different set), reset
-                if current_key not in available_keys:
-                    current_key = available_keys[0]
-                    st.session_state.pdp_active_variant = current_key
-                
-                current_option = variant_map.get(current_key, available_options[0])
-                
-                try:
-                    default_index = available_options.index(current_option)
-                except ValueError:
-                    default_index = 0
-                
-                selected_view = st.radio(
-                    "Select Variant to Visualize:",
-                    available_options,
-                    index=default_index,
-                    key="pdp_view_selector",
-                    horizontal=True
-                )
-                
-                # Reverse map for lookup
                 variant_map_reverse = {v: k for k, v in variant_map.items()}
-                active_variant_key = variant_map_reverse[selected_view]
-                
-                # Check if we need to update the active view
-                if st.session_state.get('pdp_active_variant') != active_variant_key:
-                    st.session_state.pdp_active_variant = active_variant_key
-                    st.session_state.pdp_distance_matrix = st.session_state.pdp_results_all[active_variant_key]
-                    
-                    # Re-run clustering for the new matrix
-                    matrix = st.session_state.pdp_distance_matrix
-                    optimal_n = pdp_analysis.detect_optimal_clusters(matrix)
-                    st.session_state.pdp_optimal_n = optimal_n
-                    st.session_state.pdp_current_n = optimal_n
-                    
-                    cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
-                        matrix, optimal_n
-                    )
-                    st.session_state.pdp_cluster_labels = cluster_labels
-                    st.session_state.pdp_linkage_matrix = linkage_matrix
-                    st.rerun()
             
             # Show results if available
             if st.session_state.pdp_distance_matrix is not None:
@@ -3487,12 +3443,21 @@ The PDP distance between two configurations is the **sum of differences** across
 """)
                     
                     # Configuration selector for inequality matrices
-                    col_ineq1, col_ineq2 = st.columns([2, 1])
+                    col_var, col_ineq1, col_ineq2 = st.columns([1, 2, 1])
                     
+                    with col_var:
+                        ineq_variant_name = st.selectbox(
+                            "Variant",
+                            available_options,
+                            key="pdp_ineq_variant",
+                            help="Select which PDP variant to visualize"
+                        )
+                        active_variant_ineq = variant_map_reverse[ineq_variant_name]
+
                     with col_ineq1:
                         # Allow selecting multiple configurations
                         configs_to_compare = st.multiselect(
-                            "Select configurations to view their inequality matrices",
+                            "Select configurations",
                             options=st.session_state.pdp_config_ids,
                             default=st.session_state.pdp_config_ids[:min(2, len(st.session_state.pdp_config_ids))],
                             help="View the fundamental inequality matrix representation for selected configurations",
@@ -3510,7 +3475,7 @@ The PDP distance between two configurations is the **sum of differences** across
                         from modules.pdp_analysis import visualize_inequality_matrices
                         
                         # Determine parameters based on active variant
-                        active_variant = st.session_state.get('pdp_active_variant', 'fundamental')
+                        active_variant = active_variant_ineq
                         
                         viz_buffer_x = buffer_x if active_variant in ['buffer', 'buffer_rough'] else 0
                         viz_buffer_y = buffer_y if active_variant in ['buffer', 'buffer_rough'] else 0
@@ -3610,7 +3575,17 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # 2. DISTANCE MATRIX (Derived from Inequality Matrices)
                 st.markdown("### PDP Distance Matrix (Computed from Inequality Matrices)", help="How distances are computed: Each configuration has inequality matrices (X and Y) that capture spatial relationships. The distance between two configurations = number of differing cells in their inequality matrices. Larger distance → more different spatial relationships → more different trajectory patterns.")
                 
-                distance_matrix = st.session_state.pdp_distance_matrix
+                # Variant selector for Distance Matrix
+                col_dm_var, _ = st.columns([1, 3])
+                with col_dm_var:
+                    dm_variant_name = st.selectbox(
+                        "Variant for Distance Matrix",
+                        available_options,
+                        key="pdp_dm_variant"
+                    )
+                    active_variant_dm = variant_map_reverse[dm_variant_name]
+                
+                distance_matrix = st.session_state.pdp_results_all[active_variant_dm]
                 config_ids = st.session_state.pdp_config_ids
                 n_configs = len(config_ids)
                 
@@ -3767,7 +3742,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 distance_type = "Normalized (%)" if show_normalized else "Raw"
                 
                 fig_heatmap.update_layout(
-                    title=f"PDP Distance Matrix - {distance_type} ({st.session_state.get('pdp_active_variant', 'fundamental')}) - {n_configs} configurations",
+                    title=f"PDP Distance Matrix - {distance_type} ({active_variant_dm}) - {n_configs} configurations",
                     xaxis=xaxis_config,
                     yaxis=yaxis_config,
                     width=heatmap_size,
@@ -4023,6 +3998,30 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 2: CLUSTERING & PROJECTION
                 # ========================================
                 with st.expander("Clustering & Projection (Dendrogram, MDS, Trajectory Comparison)", expanded=False):
+                    
+                    # Variant selector for Clustering
+                    col_clust_var, _ = st.columns([1, 3])
+                    with col_clust_var:
+                        clust_variant_name = st.selectbox(
+                            "Variant for Clustering",
+                            available_options,
+                            key="pdp_clust_variant"
+                        )
+                        active_variant_clust = variant_map_reverse[clust_variant_name]
+                    
+                    # Get matrix for this variant
+                    clust_distance_matrix = st.session_state.pdp_results_all[active_variant_clust]
+                    
+                    # Compute initial clustering for this variant (to get linkage matrix)
+                    # We use a default N (optimal) to generate the linkage matrix
+                    optimal_n_clust = pdp_analysis.detect_optimal_clusters(clust_distance_matrix)
+                    
+                    # Perform clustering to get linkage matrix
+                    # Note: We don't strictly need labels yet, just linkage for dendrogram
+                    _, linkage_matrix_clust = pdp_analysis.perform_hierarchical_clustering(
+                        clust_distance_matrix, optimal_n_clust
+                    )
+
                     # Dendrogram
                     st.markdown("### Hierarchical Clustering Dendrogram")
                     
@@ -4034,12 +4033,16 @@ Each window captures a snapshot of spatial relationships at different points in 
                     - The x-axis shows each configuration label
                     """)
                     
-                    if st.session_state.pdp_linkage_matrix is not None:
+                    if linkage_matrix_clust is not None:
+                        # We need to know the current N clusters to color the dendrogram
+                        # We'll use the session state value if it exists, otherwise optimal
+                        current_n = st.session_state.get('pdp_current_n', optimal_n_clust)
+                        
                         fig_dend = pdp_analysis.create_interactive_dendrogram(
-                            st.session_state.pdp_linkage_matrix,
+                            linkage_matrix_clust,
                             config_ids,
-                            distance_matrix,
-                            st.session_state.pdp_current_n
+                            clust_distance_matrix,
+                            current_n
                         )
                         render_interactive_chart(fig_dend)
                         
@@ -4054,25 +4057,26 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 "Number of clusters",
                                 min_value=2,
                                 max_value=min(10, len(config_ids)),
-                                value=st.session_state.pdp_optimal_n,
+                                value=optimal_n_clust, # Default to optimal for this variant
                                 key="pdp_n_clusters"
                             )
                             
-                            if n_clusters != st.session_state.pdp_current_n:
-                                st.session_state.pdp_current_n = n_clusters
-                                new_cluster_labels, _ = pdp_analysis.perform_hierarchical_clustering(
-                                    distance_matrix, n_clusters
-                                )
-                                st.session_state.pdp_cluster_labels = new_cluster_labels
+                            # Update current N in session state (optional, but good for consistency)
+                            st.session_state.pdp_current_n = n_clusters
+                            
+                            # Re-compute labels based on slider
+                            cluster_labels_clust, _ = pdp_analysis.perform_hierarchical_clustering(
+                                clust_distance_matrix, n_clusters
+                            )
                         
                         with col2:
-                            st.metric("Optimal Clusters", st.session_state.pdp_optimal_n)
+                            st.metric("Optimal Clusters", optimal_n_clust)
                         
                         # Show cluster assignments
-                        if st.session_state.pdp_cluster_labels is not None:
+                        if cluster_labels_clust is not None:
                             cluster_df = pd.DataFrame({
                                 'Configuration': config_ids,
-                                'Cluster': st.session_state.pdp_cluster_labels
+                                'Cluster': cluster_labels_clust
                             })
                             
                             st.dataframe(
@@ -4083,7 +4087,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             
                             # Cluster statistics
                             st.markdown("**Cluster Sizes:**")
-                            cluster_counts = pd.Series(st.session_state.pdp_cluster_labels).value_counts().sort_index()
+                            cluster_counts = pd.Series(cluster_labels_clust).value_counts().sort_index()
                             cols = st.columns(min(5, len(cluster_counts)))
                             for i, (cluster_id, count) in enumerate(cluster_counts.items()):
                                 with cols[i % len(cols)]:
@@ -4111,13 +4115,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                         help="Choose between 2D (easier to read) or 3D (more detail) visualization"
                     )
                     
-                    if st.session_state.pdp_cluster_labels is not None:
+                    if cluster_labels_clust is not None:
                         if mds_dims == 2:
                             # 2D MDS
                             fig_mds, stress = pdp_analysis.create_mds_visualization(
-                                distance_matrix,
+                                clust_distance_matrix,
                                 config_ids,
-                                st.session_state.pdp_cluster_labels
+                                cluster_labels_clust
                             )
                             render_interactive_chart(fig_mds)
                             
@@ -4137,9 +4141,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                         else:
                             # 3D MDS
                             fig_mds_3d, stress = pdp_analysis.create_mds_visualization_3d(
-                                distance_matrix,
+                                clust_distance_matrix,
                                 config_ids,
-                                st.session_state.pdp_cluster_labels
+                                cluster_labels_clust
                             )
                             render_interactive_chart(fig_mds_3d)
                             
@@ -4191,7 +4195,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     if target_config:
                         similar_configs = pdp_analysis.find_top_k_similar(
-                            distance_matrix,
+                            clust_distance_matrix,
                             config_ids,
                             target_config,
                             k=k_similar
@@ -4489,12 +4493,30 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # ===============================================================
                     st.markdown("---")
                     st.subheader("Export Results")
-                    pdp_variant = st.session_state.get('pdp_active_variant', 'fundamental')
                     
-                    st.info("""
-                    **Download PDP analysis results for further processing.**
+                    # Variant selector for Export
+                    col_exp_var, _ = st.columns([1, 3])
+                    with col_exp_var:
+                        exp_variant_name = st.selectbox(
+                            "Variant to Export",
+                            available_options,
+                            key="pdp_exp_variant"
+                        )
+                        active_variant_exp = variant_map_reverse[exp_variant_name]
+                    
+                    # Get data for export
+                    exp_distance_matrix = st.session_state.pdp_results_all[active_variant_exp]
+                    
+                    # Compute clusters for export (using optimal N)
+                    exp_optimal_n = pdp_analysis.detect_optimal_clusters(exp_distance_matrix)
+                    exp_cluster_labels, _ = pdp_analysis.perform_hierarchical_clustering(
+                        exp_distance_matrix, exp_optimal_n
+                    )
+                    
+                    st.info(f"""
+                    **Download PDP analysis results for '{exp_variant_name}' variant.**
                     - Distance matrix (CSV format)
-                    - Cluster assignments
+                    - Cluster assignments (using optimal N={exp_optimal_n})
                     - Similarity rankings for all configurations
                     """)
                     
@@ -4503,15 +4525,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                     with col_exp1:
                         # Export distance matrix
                         dist_csv, cluster_csv = pdp_analysis.export_pdp_results_to_csv(
-                            distance_matrix=distance_matrix,
+                            distance_matrix=exp_distance_matrix,
                             config_ids=config_ids,
-                            cluster_labels=st.session_state.pdp_cluster_labels
+                            cluster_labels=exp_cluster_labels
                         )
                         
                         st.download_button(
                             label="Download Distance Matrix",
                             data=dist_csv,
-                            file_name=f"pdp_distance_matrix_{pdp_variant}.csv",
+                            file_name=f"pdp_distance_matrix_{active_variant_exp}.csv",
                             mime="text/csv",
                             use_container_width=True,
                             help="Full pairwise PDP distance matrix"
@@ -4523,10 +4545,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.download_button(
                                 label="Download Cluster Labels",
                                 data=cluster_csv,
-                                file_name=f"pdp_clusters_{pdp_variant}.csv",
+                                file_name=f"pdp_clusters_{active_variant_exp}.csv",
                                 mime="text/csv",
                                 use_container_width=True,
-                                help="Configuration cluster assignments"
+                                help=f"Configuration cluster assignments (N={exp_optimal_n})"
                             )
                         else:
                             st.button(
@@ -4548,14 +4570,14 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         rankings_csv = pdp_analysis.export_similarity_rankings_to_csv(
                             config_ids=config_ids,
-                            distance_matrix=distance_matrix,
+                            distance_matrix=exp_distance_matrix,
                             top_k=top_k_export
                         )
                         
                         st.download_button(
                             label="📋 Download Rankings",
                             data=rankings_csv,
-                            file_name=f"pdp_similarity_rankings_{pdp_variant}.csv",
+                            file_name=f"pdp_similarity_rankings_{active_variant_exp}.csv",
                             mime="text/csv",
                             use_container_width=True,
                             help=f"Top {top_k_export} similar configs for each configuration"
