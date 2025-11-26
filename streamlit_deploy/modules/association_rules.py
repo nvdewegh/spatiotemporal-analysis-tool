@@ -21,7 +21,7 @@ from mlxtend.preprocessing import TransactionEncoder
 import networkx as nx
 from sklearn.manifold import MDS
 from itertools import combinations
-from .common import render_interactive_chart
+from .common import render_interactive_chart, format_number
 from . import sequence_analysis
 
 
@@ -1096,7 +1096,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 with col2:
                     st.metric("Total Transactions", total_transactions)
                 with col3:
-                    st.metric("Percentage", f"{percentage:.1f}%")
+                    st.metric("Percentage", f"{format_number(percentage, 1)}%")
                 
                 # Display trajectory IDs
                 with st.expander("📋 Show Trajectory IDs", expanded=False):

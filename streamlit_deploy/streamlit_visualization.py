@@ -1,12 +1,50 @@
 import streamlit as st
 import locale
-try:
-    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-except:
+import os
+
+# Detect user's locale for consistent number formatting
+# We'll use European format (comma as decimal) if detected, otherwise US format
+def get_user_locale_decimal():
+    """Detect if user's system uses comma as decimal separator."""
     try:
-        locale.setlocale(locale.LC_ALL, 'C')
+        # Check current locale
+        current_locale = locale.getlocale(locale.LC_NUMERIC)
+        if current_locale and current_locale[0]:
+            loc = current_locale[0].lower()
+            # European locales that use comma
+            european_locales = ['nl', 'de', 'fr', 'es', 'it', 'pt', 'be', 'pl', 'cs', 'sk', 'hu', 'ro', 'bg', 'hr', 'sl', 'et', 'lv', 'lt', 'fi', 'sv', 'da', 'no', 'el', 'tr', 'ru', 'uk']
+            for euro_loc in european_locales:
+                if euro_loc in loc:
+                    return ','
     except:
         pass
+    
+    # Also check environment
+    for env_var in ['LC_NUMERIC', 'LC_ALL', 'LANG']:
+        env_val = os.environ.get(env_var, '').lower()
+        if env_val:
+            european_locales = ['nl', 'de', 'fr', 'es', 'it', 'pt', 'be', 'pl', 'cs', 'sk', 'hu', 'ro', 'bg', 'hr', 'sl', 'et', 'lv', 'lt', 'fi', 'sv', 'da', 'no', 'el', 'tr', 'ru', 'uk']
+            for euro_loc in european_locales:
+                if euro_loc in env_val:
+                    return ','
+    return '.'
+
+# Store the decimal separator to use throughout the app
+DECIMAL_SEP = get_user_locale_decimal()
+
+def format_number(value, decimals=1):
+    """Format a number with the appropriate decimal separator for consistency."""
+    if DECIMAL_SEP == ',':
+        return f"{value:.{decimals}f}".replace('.', ',')
+    return f"{value:.{decimals}f}"
+
+def format_number_auto(value):
+    """Format a number with automatic decimal places."""
+    if isinstance(value, int) or (isinstance(value, float) and value == int(value)):
+        return str(int(value))
+    if DECIMAL_SEP == ',':
+        return f"{value:.2f}".replace('.', ',')
+    return f"{value:.2f}"
 
 import pandas as pd
 import numpy as np
@@ -65,18 +103,6 @@ st.markdown("""
         scroll-behavior: auto;
     }
     </style>
-    <script>
-    // Save and restore scroll position
-    window.addEventListener('beforeunload', function() {
-        sessionStorage.setItem('scrollPos', window.scrollY);
-    });
-    window.addEventListener('load', function() {
-        const scrollPos = sessionStorage.getItem('scrollPos');
-        if (scrollPos) {
-            window.scrollTo(0, parseInt(scrollPos));
-        }
-    });
-    </script>
 """, unsafe_allow_html=True)
 
 # Password protection
@@ -328,7 +354,8 @@ def create_tennis_court():
             zeroline=False,
             title="Court Width (m)",
             constrain='domain',
-            fixedrange=False
+            fixedrange=False,
+            autorange=False
         ),
         yaxis=dict(
             range=[-y_margin, court_length + y_margin],
@@ -338,7 +365,8 @@ def create_tennis_court():
             scaleanchor="x",
             scaleratio=1,
             constrain='domain',
-            fixedrange=False
+            fixedrange=False,
+            autorange=False
         ),
         plot_bgcolor='#25D366',  # WhatsApp green for grass court
         showlegend=True,
@@ -464,17 +492,29 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
     center_y = court_dims['height'] / 2
     
     # Build a color map per (config, object) so same object in different configs is distinguishable
-    try:
-        palette = px.colors.qualitative.Plotly
-    except Exception:
-        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-
-    color_map = {}
-    ci = 0
-    for config in selected_configs:
-        for obj_id in selected_objects:
-            color_map[(config, obj_id)] = palette[ci % len(palette)]
-            ci += 1
+    # User request: "it should be possible to see from the visualisation which objects are the same, but also which configurations are the same"
+    # Strategy: Color by Object ID (consistent hue). Distinguish Configs via legend and hover.
+    
+    # Use consistent colors for objects
+    # User request: "Also make sure that someone with Daltonism also sees things clearly"
+    # User request: "the colour scale is broadly ok, but the orange as the first colour is difficult on the green for someone with daltonism"
+    # User request: "the colors are not decided on the object ID, but on the ID of selection"
+    
+    # Revised Okabe-Ito palette (color-blind friendly).
+    # Prioritizing Blue/Yellow/SkyBlue for better contrast against Green background.
+    # Order: Blue, Yellow, Sky Blue, Reddish Purple, Vermilion, Orange, Black
+    okabe_ito_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
+    
+    # Pre-calculate colors based on Object ID (deterministic)
+    def get_object_color(obj_id):
+        try:
+            # Try to convert to int for modulo
+            idx = int(obj_id)
+        except:
+            # Fallback for string IDs: stable hash
+            # Python's hash() is randomized per process. Use a simple stable hash.
+            idx = sum(ord(c) for c in str(obj_id))
+        return okabe_ito_palette[idx % len(okabe_ito_palette)]
 
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -506,45 +546,128 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
+            timestamps = [p['timestamp'] for p in points]
             
-            color = color_map.get((config, obj_id), utils.get_color(obj_id))
+            # Color by Object ID (Deterministic)
+            color = get_object_color(obj_id)
             
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
             
-            # Draw trajectory line and markers, but exclude the last marker
+            # Prepare hover text
+            # Line hover: Conf ID, Obj ID, Time period
+            time_period = f"{timestamps[0]:.2f}s - {timestamps[-1]:.2f}s"
+            line_hover_text = (
+                f"<b>Config:</b> {config}<br>"
+                f"<b>Object:</b> {obj_id}<br>"
+                f"<b>Time Period:</b> {time_period}<br>"
+                f"<extra></extra>" # Hide secondary box
+            )
+            
+            # Point hover: Conf ID, Obj ID, Time stamp
+            point_hover_template = (
+                f"<b>Config:</b> {config}<br>"
+                f"<b>Object:</b> {obj_id}<br>"
+                f"<b>Time:</b> %{{customdata:.2f}}s<br>"
+                f"x: %{{x:.2f}}m<br>y: %{{y:.2f}}m"
+                f"<extra></extra>"
+            )
+
+            # Draw trajectory line and markers
+            # User request: "starting point and intermediate points are presented big enough"
+            # User request: "lines of the movements are a bit to fat. Make them 2/3 the weight." (3 -> 2)
+            # User request: "hoovering over the points gives information; hoovering over a line not yet"
+            
+            # Trace 1: Visible Line (Drawn first)
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
-                mode='lines+markers',
+                mode='lines',
                 name=f'{config} - Obj {obj_id}',
                 legendgroup=legend_group,
-                line=dict(color=color, width=2),
-                marker=dict(
-                    size=[4] * (len(x_coords) - 1) + [0],  # Hide the last marker
-                    color=color
-                ),
-                hovertemplate=f'Object {obj_id}<br>Config {config}<br>x: %{{x:.2f}}m<br>y: %{{y:.2f}}m<extra></extra>'
+                line=dict(color=color, width=2), # Reduced width
+                hoverinfo='skip', # Let ghost line handle hover
+                showlegend=True
             ))
 
+            # Trace 2: Ghost Line (Drawn second, on top, for easier hovering)
+            # Create a wider semi-transparent overlay line to capture hover events
+            # Using very low but non-zero opacity to ensure hover detection works
+            # Note: Fully transparent (rgba 0,0,0,0) doesn't capture hover events
+            fig.add_trace(go.Scatter(
+                x=x_coords, y=y_coords,
+                mode='lines',
+                name=f'{config} - Obj {obj_id}',
+                legendgroup=legend_group,
+                line=dict(color=color, width=20), # Wide for hover capture
+                opacity=0.01, # Very low but non-zero to capture hover
+                hovertemplate=line_hover_text,
+                showlegend=False,
+                hoverlabel=dict(bgcolor=color, font_size=12)
+            ))
+            
+            # Trace 3: Markers (for point hover)
+            marker_sizes = [6] * len(x_coords) # Intermediate points big enough
+            marker_sizes[0] = 10 # Start point bigger
+            marker_sizes[-1] = 0 # Hide last marker (replaced by arrow)
+            
+            fig.add_trace(go.Scatter(
+                x=x_coords, y=y_coords,
+                mode='markers',
+                name=f'{config} - Obj {obj_id}',
+                legendgroup=legend_group,
+                marker=dict(
+                    size=marker_sizes,
+                    color=color,
+                    symbol='circle'
+                ),
+                customdata=timestamps,
+                hovertemplate=point_hover_template,
+                showlegend=False,
+                hoverinfo='text'
+            ))
+            
             # Add arrow at the end as a separate trace with a correctly oriented symbol
+            # User request: "end point of the trajectory should be an arrow in the direction of the last route"
+            # User request: "arrows at the end are not perfect yet. They donot follow the direction of the last movement"
+            # User request: "Can you give more detail on how you calculate the direction"
+            
             if len(x_coords) >= 2:
+                # 1. Calculate the vector of the last segment
                 dx = x_coords[-1] - x_coords[-2]
                 dy = y_coords[-1] - y_coords[-2]
-                angle = np.degrees(np.arctan2(dy, dx))
+                
+                # 2. Calculate the angle of this vector in degrees
+                # atan2 returns angle in radians where 0° = East (positive X), 90° = North (positive Y)
+                # This follows the standard mathematical convention (counterclockwise from East)
+                angle_rad = np.arctan2(dy, dx)
+                angle_deg = np.degrees(angle_rad)
+                
+                # 3. Adjust for Plotly's marker angle system:
+                # - Plotly's angle parameter rotates the marker CLOCKWISE from its default orientation
+                # - The 'triangle-up' symbol points UP (North, 90°) by default
+                # - We want the arrow to point in the direction of movement (angle_deg from East)
+                # - To rotate from UP (90°) to our desired direction (angle_deg):
+                #   If angle_deg = 0° (East), we need to rotate 90° clockwise -> marker_angle = 90
+                #   If angle_deg = 90° (North), no rotation needed -> marker_angle = 0
+                #   If angle_deg = 180° (West), rotate 270° clockwise (or -90°) -> marker_angle = -90
+                #   If angle_deg = -90° (South), rotate 180° clockwise -> marker_angle = 180
+                # Formula: marker_angle = 90 - angle_deg (for clockwise rotation from North to target)
+                marker_angle = 90 - angle_deg
 
                 fig.add_trace(go.Scatter(
                     x=[x_coords[-1]],
                     y=[y_coords[-1]],
                     mode='markers',
                     marker=dict(
-                        symbol='arrow',
+                        symbol='triangle-up', # Clear arrow head
                         color=color,
-                        size=15,
-                        angle=angle
+                        size=12, 
+                        angle=marker_angle
                     ),
                     showlegend=False,
                     legendgroup=legend_group,
-                    hoverinfo='skip'
+                    customdata=[timestamps[-1]],
+                    hovertemplate=point_hover_template
                 ))
     
     return fig
@@ -1527,7 +1650,12 @@ def main():
                         aggregation_type, temporal_resolution,
                         False, court_type  # translate_to_center set to False
                     )
-                    render_interactive_chart(fig)
+                    # Use unique key based on selections to force chart refresh on changes
+                    # Using string representation of sorted selections for deterministic keys
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"static_traj_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating static visualization: {str(e)}")
             
@@ -1576,7 +1704,11 @@ def main():
                         use_interpolation_anim,
                         interpolation_steps_anim
                     )
-                    render_interactive_chart(fig)
+                    # Use unique key based on selections to force chart refresh on changes
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"animated_traj_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating animated visualization: {str(e)}")
             
@@ -1625,7 +1757,11 @@ def main():
                         use_interpolation_time,
                         interpolation_steps_time
                     )
-                    render_interactive_chart(fig)
+                    # Use unique key based on selections to force chart refresh on changes
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"time_point_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating time point visualization: {str(e)}")
             
@@ -1639,7 +1775,11 @@ def main():
                         start_time, end_time,
                         court_type
                     )
-                    render_interactive_chart(fig)
+                    # Use unique key based on selections to force chart refresh on changes
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"avg_pos_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating average position visualization: {str(e)}")
     
@@ -1774,7 +1914,10 @@ def main():
                         translate_to_center=True,  # 2SA mode ON
                         court_type=court_type
                     )
-                    render_interactive_chart(fig)
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"2sa_aligned_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating aligned visualization: {str(e)}")
             
@@ -1790,7 +1933,10 @@ def main():
                         translate_to_center=False,  # 2SA mode OFF
                         court_type=court_type
                     )
-                    render_interactive_chart(fig)
+                    config_str = "_".join(sorted(str(c) for c in selected_configs))
+                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                    chart_key = f"2sa_original_{config_str}_{obj_str}"
+                    render_interactive_chart(fig, key=chart_key)
                 except Exception as e:
                     st.error(f"Error creating original visualization: {str(e)}")
             
@@ -1812,7 +1958,10 @@ def main():
                         )
                         # Make figure smaller for side-by-side
                         fig_aligned.update_layout(height=400)
-                        render_interactive_chart(fig_aligned)
+                        config_str = "_".join(sorted(str(c) for c in selected_configs))
+                        obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                        chart_key = f"2sa_sbs_aligned_{config_str}_{obj_str}"
+                        render_interactive_chart(fig_aligned, key=chart_key)
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
                 
@@ -1828,7 +1977,10 @@ def main():
                         )
                         # Make figure smaller for side-by-side
                         fig_original.update_layout(height=400)
-                        render_interactive_chart(fig_original)
+                        config_str = "_".join(sorted(str(c) for c in selected_configs))
+                        obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                        chart_key = f"2sa_sbs_original_{config_str}_{obj_str}"
+                        render_interactive_chart(fig_original, key=chart_key)
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
             
@@ -2848,12 +3000,12 @@ def main():
                                     # Display overall score
                                     col1, col2, col3 = st.columns(3)
                                     with col1:
-                                        st.metric("Overall Silhouette Score", f"{overall_score:.4f}")
+                                        st.metric("Overall Silhouette Score", format_number(overall_score, 4))
                                     with col2:
                                         st.metric("Number of Clusters", n_clusters)
                                     with col3:
                                         avg_cluster_size = len(cluster_labels) / n_clusters
-                                        st.metric("Avg Cluster Size", f"{avg_cluster_size:.1f}")
+                                        st.metric("Avg Cluster Size", format_number(avg_cluster_size, 1))
                                     
                                     # Quality interpretation
                                     if overall_score > 0.7:
@@ -3015,7 +3167,7 @@ def main():
                             if align_method == "Local":
                                 st.metric("Substring Length", f"{int(result['score'])} symbols")
                             else:
-                                st.metric("Alignment Score", f"{result['score']:.1f}")
+                                st.metric("Alignment Score", format_number(result['score'], 1))
                         with col2:
                             if 'start1' in result:
                                 st.metric("Start positions", f"Seq1:{result['start1']}, Seq2:{result['start2']}")
@@ -3079,11 +3231,11 @@ def main():
                         with col1:
                             st.metric("Total length", total_len)
                         with col2:
-                            st.metric("Matches", f"{matches} ({100*matches/total_len:.1f}%)")
+                            st.metric("Matches", f"{matches} ({format_number(100*matches/total_len, 1)}%)")
                         with col3:
-                            st.metric("Mismatches", f"{mismatches} ({100*mismatches/total_len:.1f}%)")
+                            st.metric("Mismatches", f"{mismatches} ({format_number(100*mismatches/total_len, 1)}%)")
                         with col4:
-                            st.metric("Gaps", f"{gaps} ({100*gaps/total_len:.1f}%)")
+                            st.metric("Gaps", f"{gaps} ({format_number(100*gaps/total_len, 1)}%)")
                 
                 with seq_tab3:
                     st.subheader("N-gram Pattern Analysis")
@@ -3859,11 +4011,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # Get upper triangle (exclude diagonal)
                     triu_indices = np.triu_indices_from(distance_matrix, k=1)
                     distances = distance_matrix[triu_indices]
-                    st.metric("Mean Distance", f"{np.mean(distances):.1f}")
+                    st.metric("Mean Distance", format_number(np.mean(distances), 1))
                 with col_stat3:
-                    st.metric("Min Distance", f"{np.min(distances):.1f}")
+                    st.metric("Min Distance", format_number(np.min(distances), 1))
                 with col_stat4:
-                    st.metric("Max Distance", f"{np.max(distances):.1f}")
+                    st.metric("Max Distance", format_number(np.max(distances), 1))
                 
                 # ========================================
                 # DISTANCE NORMALIZATION & DISTRIBUTION
@@ -3887,7 +4039,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     col_formula1, col_formula2 = st.columns(2)
                     with col_formula1:
-                        st.metric("Max Possible Distance", f"{norm_info['max_possible_distance']:.1f}")
+                        st.metric("Max Possible Distance", format_number(norm_info['max_possible_distance'], 1))
                     with col_formula2:
                         st.info("This is the theoretical maximum distance observed in your dataset")
                     
@@ -3898,12 +4050,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.markdown(f"""
                     **Comparing {example['config_a']} and {example['config_b']}:**
                     
-                    - Raw Distance: **{example['raw_distance']:.2f}**
-                    - Max Possible: **{example['max_possible']:.2f}**
+                    - Raw Distance: **{format_number(example['raw_distance'], 2)}**
+                    - Max Possible: **{format_number(example['max_possible'], 2)}**
                     - Calculation: `{example['formula']}`
-                    - **Result: {example['normalized_distance']:.2f}%** difference
+                    - **Result: {format_number(example['normalized_distance'], 2)}%** difference
                     
-                    💡 *Interpretation: These configurations differ by {example['normalized_distance']:.1f}% of the maximum possible difference.*
+                    💡 *Interpretation: These configurations differ by {format_number(example['normalized_distance'], 1)}% of the maximum possible difference.*
                     """)
                     
                     # Statistics comparison
@@ -3917,13 +4069,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                         st.dataframe({
                             'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q25', 'Q75'],
                             'Value': [
-                                f"{raw_stats['mean']:.2f}",
-                                f"{raw_stats['median']:.2f}",
-                                f"{raw_stats['std']:.2f}",
-                                f"{raw_stats['min']:.2f}",
-                                f"{raw_stats['max']:.2f}",
-                                f"{raw_stats['q25']:.2f}",
-                                f"{raw_stats['q75']:.2f}"
+                                format_number(raw_stats['mean'], 2),
+                                format_number(raw_stats['median'], 2),
+                                format_number(raw_stats['std'], 2),
+                                format_number(raw_stats['min'], 2),
+                                format_number(raw_stats['max'], 2),
+                                format_number(raw_stats['q25'], 2),
+                                format_number(raw_stats['q75'], 2)
                             ]
                         }, hide_index=True, use_container_width=True)
                     
@@ -3933,13 +4085,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                         st.dataframe({
                             'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q25', 'Q75'],
                             'Value': [
-                                f"{norm_stats['mean']:.2f}%",
-                                f"{norm_stats['median']:.2f}%",
-                                f"{norm_stats['std']:.2f}%",
-                                f"{norm_stats['min']:.2f}%",
-                                f"{norm_stats['max']:.2f}%",
-                                f"{norm_stats['q25']:.2f}%",
-                                f"{norm_stats['q75']:.2f}%"
+                                f"{format_number(norm_stats['mean'], 2)}%",
+                                f"{format_number(norm_stats['median'], 2)}%",
+                                f"{format_number(norm_stats['std'], 2)}%",
+                                f"{format_number(norm_stats['min'], 2)}%",
+                                f"{format_number(norm_stats['max'], 2)}%",
+                                f"{format_number(norm_stats['q25'], 2)}%",
+                                f"{format_number(norm_stats['q75'], 2)}%"
                             ]
                         }, hide_index=True, use_container_width=True)
                     
