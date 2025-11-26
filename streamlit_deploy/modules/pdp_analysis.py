@@ -34,6 +34,182 @@ from .common import render_interactive_chart
 
 
 # =============================================================================
+# TENNIS COURT REFERENCE POINTS
+# =============================================================================
+
+# Tennis court dimensions (in meters) - matching streamlit_visualization.py
+COURT_WIDTH = 8.23  # Singles court width
+COURT_LENGTH = 23.77
+DOUBLES_WIDTH = 10.97
+DOUBLES_ALLEY_WIDTH = (DOUBLES_WIDTH - COURT_WIDTH) / 2  # 1.37m on each side
+NET_POSITION = COURT_LENGTH / 2  # 11.885m
+SERVICE_LINE_DISTANCE = 6.40  # Distance from net to service line
+CENTER_X = COURT_WIDTH / 2  # 4.115m
+
+# Service line positions
+SERVICE_LINE_BOTTOM = NET_POSITION - SERVICE_LINE_DISTANCE  # ~5.485m
+SERVICE_LINE_TOP = NET_POSITION + SERVICE_LINE_DISTANCE  # ~18.285m
+
+# Predefined tennis court reference points
+# Format: {name: (x, y, description)}
+TENNIS_COURT_REFERENCE_POINTS = {
+    # Court corners (singles)
+    "Bottom-Left Corner": (0, 0, "Bottom-left corner of singles court"),
+    "Bottom-Right Corner": (COURT_WIDTH, 0, "Bottom-right corner of singles court"),
+    "Top-Left Corner": (0, COURT_LENGTH, "Top-left corner of singles court"),
+    "Top-Right Corner": (COURT_WIDTH, COURT_LENGTH, "Top-right corner of singles court"),
+    
+    # Court corners (doubles)
+    "Bottom-Left Doubles": (-DOUBLES_ALLEY_WIDTH, 0, "Bottom-left corner of doubles court"),
+    "Bottom-Right Doubles": (COURT_WIDTH + DOUBLES_ALLEY_WIDTH, 0, "Bottom-right corner of doubles court"),
+    "Top-Left Doubles": (-DOUBLES_ALLEY_WIDTH, COURT_LENGTH, "Top-left corner of doubles court"),
+    "Top-Right Doubles": (COURT_WIDTH + DOUBLES_ALLEY_WIDTH, COURT_LENGTH, "Top-right corner of doubles court"),
+    
+    # Net positions
+    "Net Center": (CENTER_X, NET_POSITION, "Center of the net"),
+    "Net Left (Singles)": (0, NET_POSITION, "Left side of net at singles line"),
+    "Net Right (Singles)": (COURT_WIDTH, NET_POSITION, "Right side of net at singles line"),
+    "Net Left (Doubles)": (-DOUBLES_ALLEY_WIDTH, NET_POSITION, "Left side of net at doubles line"),
+    "Net Right (Doubles)": (COURT_WIDTH + DOUBLES_ALLEY_WIDTH, NET_POSITION, "Right side of net at doubles line"),
+    
+    # Service box corners (bottom court - near baseline y=0)
+    "Service Box BL-Bottom": (0, SERVICE_LINE_BOTTOM, "Service box bottom-left corner (bottom court)"),
+    "Service Box BR-Bottom": (COURT_WIDTH, SERVICE_LINE_BOTTOM, "Service box bottom-right corner (bottom court)"),
+    "Service Box Center-Bottom": (CENTER_X, SERVICE_LINE_BOTTOM, "Service box center line (bottom court)"),
+    
+    # Service box corners (top court - near baseline y=court_length)
+    "Service Box TL-Top": (0, SERVICE_LINE_TOP, "Service box top-left corner (top court)"),
+    "Service Box TR-Top": (COURT_WIDTH, SERVICE_LINE_TOP, "Service box top-right corner (top court)"),
+    "Service Box Center-Top": (CENTER_X, SERVICE_LINE_TOP, "Service box center line (top court)"),
+    
+    # Baseline center marks
+    "Center Mark Bottom": (CENTER_X, 0, "Center mark on bottom baseline"),
+    "Center Mark Top": (CENTER_X, COURT_LENGTH, "Center mark on top baseline"),
+    
+    # Court center
+    "Court Center": (CENTER_X, NET_POSITION, "Center of the court (same as net center)"),
+}
+
+
+def get_reference_point_names():
+    """Get list of all reference point names for UI selection."""
+    return list(TENNIS_COURT_REFERENCE_POINTS.keys())
+
+
+def get_reference_point_coordinates(point_name):
+    """Get coordinates for a named reference point.
+    
+    Args:
+        point_name: Name of the reference point
+        
+    Returns:
+        Tuple (x, y) or None if not found
+    """
+    if point_name in TENNIS_COURT_REFERENCE_POINTS:
+        x, y, _ = TENNIS_COURT_REFERENCE_POINTS[point_name]
+        return (x, y)
+    return None
+
+
+def get_reference_points_dict():
+    """Get the full reference points dictionary for UI display."""
+    return TENNIS_COURT_REFERENCE_POINTS
+
+
+# =============================================================================
+# EXTERNAL POINTS HANDLING
+# =============================================================================
+
+def add_external_points_to_data(df, external_points, timestamps):
+    """
+    Add external (reference) points to trajectory data.
+    
+    External points are static points that participate in PDP calculations.
+    They are replicated for each timestamp to compare against moving objects.
+    
+    Args:
+        df: DataFrame with trajectory data (must have columns: tst, obj, x, y, config_source)
+        external_points: List of tuples [(name, x, y), ...] for external points
+        timestamps: List of timestamps to replicate external points for
+        
+    Returns:
+        DataFrame with external points added
+    """
+    if not external_points:
+        return df
+    
+    # Create rows for external points
+    external_rows = []
+    
+    for tst in timestamps:
+        for i, (name, x, y) in enumerate(external_points):
+            # External points get special object IDs to distinguish from regular objects
+            # They also get a special marker to indicate they are external
+            external_rows.append({
+                'tst': tst,
+                'obj': f'EXT_{i}',  # String ID for external points
+                'x': x,
+                'y': y,
+                'config_source': df['config_source'].iloc[0] if len(df) > 0 else 'unknown',
+                'is_external': True,
+                'external_name': name,
+                'sub_type': 'external',
+                'sub_order': 100 + i  # High sub_order to sort after regular points
+            })
+    
+    if not external_rows:
+        return df
+    
+    # Add columns to original data if not present and fill NaN values
+    df_copy = df.copy()
+    if 'is_external' not in df_copy.columns:
+        df_copy['is_external'] = False
+    else:
+        df_copy['is_external'] = df_copy['is_external'].fillna(False)
+    if 'external_name' not in df_copy.columns:
+        df_copy['external_name'] = ''
+    else:
+        df_copy['external_name'] = df_copy['external_name'].fillna('')
+    if 'sub_type' not in df_copy.columns:
+        df_copy['sub_type'] = 'orig'
+    else:
+        df_copy['sub_type'] = df_copy['sub_type'].fillna('orig')
+    if 'sub_order' not in df_copy.columns:
+        df_copy['sub_order'] = 0  # Regular points get sub_order 0
+    else:
+        df_copy['sub_order'] = df_copy['sub_order'].fillna(0)
+    
+    # Convert obj to string for consistent sorting with external points
+    df_copy['obj'] = df_copy['obj'].astype(str)
+        
+    # Combine original data with external points
+    external_df = pd.DataFrame(external_rows)
+    
+    # Get all unique columns from both dataframes
+    df_columns = set(df_copy.columns)
+    ext_columns = set(external_df.columns)
+    
+    # Add missing columns to df_copy (columns in external_df but not in df_copy)
+    for col in ext_columns - df_columns:
+        df_copy[col] = None
+    
+    # Add missing columns to external_df (columns in df_copy but not in external_df)
+    for col in df_columns - ext_columns:
+        external_df[col] = None
+    
+    # Now concatenate - both have the same columns
+    combined_df = pd.concat([df_copy, external_df], ignore_index=True)
+    
+    # Fill any remaining NaN values in key columns
+    combined_df['is_external'] = combined_df['is_external'].fillna(False)
+    combined_df['external_name'] = combined_df['external_name'].fillna('')
+    combined_df['sub_type'] = combined_df['sub_type'].fillna('orig')
+    combined_df['sub_order'] = combined_df['sub_order'].fillna(0)
+    
+    return combined_df
+
+
+# =============================================================================
 # CORE PDP COMPUTATION
 # =============================================================================
 
@@ -184,7 +360,7 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
 @st.cache_data
 def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_time, end_time,
                                 window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                pdp_variant="fundamental"):
+                                pdp_variant="fundamental", external_points=None):
     """
     Compute PDP distance matrix for all selected configurations.
     
@@ -200,10 +376,14 @@ def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_ti
         rough_x: Roughness tolerance for x dimension (for rough variant)
         rough_y: Roughness tolerance for y dimension (for rough variant)
         pdp_variant: One of "fundamental", "buffer", "rough", "buffer_rough"
+        external_points: Tuple of tuples ((name, x, y), ...) for static reference points (must be tuple for caching)
     
     Returns:
         (distance_matrix, config_ids)
     """
+    # Convert external_points tuple back to list for processing
+    external_points_list = list(external_points) if external_points else None
+    
     # Filter data
     filtered_df = df[
         (df['config_source'].isin(selected_configs)) &
@@ -214,6 +394,20 @@ def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_ti
     
     config_ids = selected_configs
     n_configs = len(config_ids)
+    
+    # Get unique timestamps for external points
+    all_timestamps = sorted(filtered_df['tst'].unique())
+    
+    # Add external points to data (before buffer transformation)
+    if external_points_list:
+        # For each config, add external points to its data
+        config_dfs = []
+        for config_id in config_ids:
+            config_data = filtered_df[filtered_df['config_source'] == config_id].copy()
+            config_timestamps = sorted(config_data['tst'].unique())
+            config_data_with_ext = add_external_points_to_data(config_data, external_points_list, config_timestamps)
+            config_dfs.append(config_data_with_ext)
+        filtered_df = pd.concat(config_dfs, ignore_index=True)
     
     # Apply buffer if needed
     if pdp_variant in ["buffer", "buffer_rough"]:
@@ -335,7 +529,7 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
 
 def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, end_time,
                                    window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                   window_indices=None):
+                                   window_indices=None, external_points=None):
     """
     Visualize inequality matrices for multiple configurations.
     
@@ -351,6 +545,7 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         buffer_x, buffer_y: Buffer parameters
         rough_x, rough_y: Rough parameters
         window_indices: List of window indices to display (None = first window only)
+        external_points: List of tuples [(name, x, y), ...] for static reference points
     
     Returns:
         Plotly figure with inequality matrix heatmaps, or dict with metadata if window_indices is None
@@ -363,6 +558,61 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         (df['tst'] <= end_time) &
         (df['obj'].isin(selected_objects))
     ].copy()
+    
+    # Ensure required columns exist with default values for original data
+    if 'sub_type' not in filtered_df.columns:
+        filtered_df['sub_type'] = 'orig'
+    if 'sub_order' not in filtered_df.columns:
+        filtered_df['sub_order'] = 0
+    else:
+        filtered_df['sub_order'] = filtered_df['sub_order'].fillna(0)
+    if 'is_external' not in filtered_df.columns:
+        filtered_df['is_external'] = False
+    else:
+        filtered_df['is_external'] = filtered_df['is_external'].fillna(False)
+    if 'external_name' not in filtered_df.columns:
+        filtered_df['external_name'] = ''
+    else:
+        filtered_df['external_name'] = filtered_df['external_name'].fillna('')
+    
+    # Fill any NaN in sub_type
+    if 'sub_type' in filtered_df.columns:
+        filtered_df['sub_type'] = filtered_df['sub_type'].fillna('orig')
+    
+    # Add external points to the filtered data (before buffer transformation)
+    if external_points:
+        # Process each config separately and collect results
+        new_dfs = []
+        for config_id in config_ids:
+            config_data = filtered_df[filtered_df['config_source'] == config_id].copy()
+            if len(config_data) > 0:
+                config_timestamps = sorted(config_data['tst'].unique())
+                ext_data = add_external_points_to_data(
+                    config_data,
+                    external_points,
+                    config_timestamps
+                )
+                new_dfs.append(ext_data)
+        
+        # Also keep data for configs not in config_ids (if any)
+        other_data = filtered_df[~filtered_df['config_source'].isin(config_ids)]
+        if len(other_data) > 0:
+            new_dfs.append(other_data)
+        
+        if new_dfs:
+            filtered_df = pd.concat(new_dfs, ignore_index=True)
+            # Remove any duplicate rows that might have been created
+            # Keep the first occurrence based on key columns
+            filtered_df = filtered_df.drop_duplicates(
+                subset=['config_source', 'tst', 'obj', 'x', 'y', 'sub_order'],
+                keep='first'
+            ).reset_index(drop=True)
+            
+            # Ensure no NaN values in key columns after concat
+            filtered_df['sub_type'] = filtered_df['sub_type'].fillna('orig')
+            filtered_df['sub_order'] = filtered_df['sub_order'].fillna(0)
+            filtered_df['is_external'] = filtered_df['is_external'].fillna(False)
+            filtered_df['external_name'] = filtered_df['external_name'].fillna('')
     
     # If window_indices is None, return metadata about available windows
     if window_indices is None:
@@ -430,16 +680,17 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             current_row += n_windows
             continue
         
+        # Ensure sub_order column exists for consistent sorting
+        if 'sub_order' not in config_data.columns:
+            config_data['sub_order'] = 0
+        
         # Apply buffer if needed
         if buffer_x > 0 or buffer_y > 0:
             config_data = apply_buffer_to_trajectories(config_data, buffer_x, buffer_y)
-            # Sort by tst, obj, and sub_order for consistent ordering with buffer points
-            sort_cols = ['tst', 'obj']
-            if 'sub_order' in config_data.columns:
-                sort_cols.append('sub_order')
-            elif 'sub_type' in config_data.columns:
-                sort_cols.append('sub_type')
-            config_data = config_data.sort_values(sort_cols)
+        
+        # Sort by tst, then sub_order (which groups regular objects before external points)
+        # sub_order: 0 = regular objects, 100+ = external points
+        config_data = config_data.sort_values(['tst', 'sub_order', 'obj'])
         
         # Get timestamps
         timestamps = sorted(config_data['tst'].unique())
@@ -457,13 +708,8 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             
             # Get data for this time window
             window_times = timestamps[window_idx:window_idx + window_length]
-            # Sort by tst, obj, and sub_order for consistent ordering
-            sort_cols = ['tst', 'obj']
-            if 'sub_order' in config_data.columns:
-                sort_cols.append('sub_order')
-            elif 'sub_type' in config_data.columns:
-                sort_cols.append('sub_type')
-            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(sort_cols)
+            # Sort consistently: tst, then sub_order, then obj
+            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(['tst', 'sub_order', 'obj'])
             
             x_vals = window_data['x'].values
             y_vals = window_data['y'].values
@@ -473,29 +719,60 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             ineq_y = compute_inequality_matrix(y_vals, y_vals, window_length, rough_y)
             
             # Create labels for axes (object-timestamp pairs)
+            # Build a mapping from timestamp to relative index for faster lookup
+            window_times_list = list(window_times)
+            tst_to_idx = {tst: idx for idx, tst in enumerate(window_times_list)}
+            
             labels = []
             # Iterate through the actual data rows to ensure labels match the matrix dimensions
             for _, row in window_data.iterrows():
-                # Find relative time index
-                try:
-                    t_idx = list(window_times).index(row['tst'])
-                except ValueError:
+                # Find relative time index using the mapping
+                t_idx = tst_to_idx.get(row['tst'], -1)
+                if t_idx == -1:
+                    # This shouldn't happen, but add a fallback label
+                    labels.append(f"???")
                     continue
                     
                 obj = row['obj']
                 
-                # Add suffix for buffer points if present
-                if 'sub_type' in row and row['sub_type'] != 'orig':
-                    # Use short suffix to keep labels compact
-                    suffix_map = {
-                        'left': '_L', 'right': '_R', 
-                        'top': '_T', 'bottom': '_B'
-                    }
-                    suffix = suffix_map.get(row['sub_type'], f"_{row['sub_type']}")
-                else:
-                    suffix = ""
+                # Check if this is an external point
+                is_external = row.get('is_external', False) if 'is_external' in row.index else False
+                # Handle NaN values for is_external
+                if pd.isna(is_external):
+                    is_external = False
                 
-                labels.append(f"O{obj}_T{t_idx}{suffix}")
+                if is_external:
+                    # For external points, use short name from external_name or obj
+                    ext_name = row.get('external_name', None) if 'external_name' in row.index else None
+                    # Handle NaN values - use obj ID as fallback
+                    if ext_name is None or pd.isna(ext_name) or str(ext_name) == 'nan':
+                        ext_name = obj
+                    # Shorten the name if too long
+                    if len(str(ext_name)) > 10:
+                        ext_name = str(ext_name)[:8] + ".."
+                    labels.append(f"EXT:{ext_name}_T{t_idx}")
+                else:
+                    # Add suffix for buffer points if present
+                    sub_type = row.get('sub_type', None) if 'sub_type' in row.index else None
+                    # Handle NaN values properly
+                    if pd.isna(sub_type):
+                        sub_type = None
+                    if sub_type and sub_type not in ['orig', 'external', None]:
+                        # Use short suffix to keep labels compact
+                        suffix_map = {
+                            'left': '_L', 'right': '_R', 
+                            'top': '_T', 'bottom': '_B'
+                        }
+                        suffix = suffix_map.get(sub_type, f"_{sub_type}")
+                    else:
+                        suffix = ""
+                    
+                    labels.append(f"O{obj}_T{t_idx}{suffix}")
+            
+            # Verify labels count matches matrix dimensions
+            if len(labels) != len(x_vals):
+                # Something went wrong - use numeric labels as fallback
+                labels = [f"Point_{i}" for i in range(len(x_vals))]
             
             # X dimension heatmap (without text annotations and without colorbar)
             fig.add_trace(
@@ -1341,13 +1618,19 @@ def export_similarity_rankings_to_csv(config_ids, distance_matrix, top_k=10):
 
 
 
-def compute_distance_normalization_info(distance_matrix, config_ids):
+def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=None, window_length=None,
+                                        buffer_factor=1, n_external_points=0, n_windows=None):
     """
     Compute normalized distances and statistics for educational purposes.
     
     Args:
         distance_matrix: Raw PDP distance matrix (n x n)
         config_ids: List of configuration IDs
+        n_objects: Number of original objects (before buffer/external points)
+        window_length: Temporal window length used in PDP computation
+        buffer_factor: Multiplier for buffer points (1=no buffer, 5=full x+y buffer)
+        n_external_points: Number of external reference points added
+        n_windows: Number of time windows used in computation
     
     Returns:
         Dictionary containing:
@@ -1360,10 +1643,45 @@ def compute_distance_normalization_info(distance_matrix, config_ids):
     n = len(config_ids)
     
     # Calculate maximum possible distance
-    # This depends on the inequality matrix size and structure
-    # For PDP: each cell can differ (0 vs 1, 0 vs 2, 1 vs 2), so max diff per cell = 2
-    # Total cells in both X and Y matrices determine max possible
-    max_possible = distance_matrix.max()  # Use empirical max as proxy
+    # For PDP: each cell in inequality matrix can differ by at most 2 (0 vs 2 or 2 vs 0)
+    # The inequality matrix is points_per_window x points_per_window
+    # We have both X and Y dimensions
+    
+    if n_objects is not None and window_length is not None and n_windows is not None:
+        # Calculate theoretical maximum based on actual parameters
+        # Points per timestamp:
+        # - Moving objects: n_objects * buffer_factor (with buffer points)
+        # - External (static) points: n_external_points
+        n_moving_points = n_objects * buffer_factor
+        n_static_points = n_external_points
+        
+        # Points in one window
+        moving_per_window = n_moving_points * window_length
+        static_per_window = n_static_points * window_length
+        total_per_window = moving_per_window + static_per_window
+        
+        # IMPORTANT: External points have SAME coordinates across all configurations!
+        # Therefore, comparisons between external points will always be 0 (no difference).
+        # Only these comparisons can actually differ between configurations:
+        # 1. Moving vs Moving (both off-diagonal): moving^2 - moving (exclude diagonal)
+        # 2. Moving vs Static (both directions): 2 * moving * static
+        # 3. Static vs Static: ALWAYS 0 (same in all configs) - DO NOT COUNT
+        
+        # Comparisons that CAN differ:
+        moving_vs_moving = moving_per_window * moving_per_window - moving_per_window  # exclude diagonal
+        moving_vs_static = 2 * moving_per_window * static_per_window  # both directions (i,j) and (j,i)
+        
+        variable_comparisons = moving_vs_moving + moving_vs_static
+        
+        # Max diff per comparison: 2 (for 0 vs 2)
+        # We have both X and Y dimensions
+        max_diff_per_window = 2 * 2 * variable_comparisons  # factor of 2 for X and Y
+        
+        # Total max across all windows
+        max_possible = max_diff_per_window * n_windows
+    else:
+        # Fallback to empirical max when parameters not provided
+        max_possible = distance_matrix.max()
     
     # Normalize to 0-100 scale
     if max_possible > 0:
