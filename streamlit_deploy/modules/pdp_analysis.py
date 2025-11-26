@@ -93,11 +93,28 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
     if max_tst <= 0:
         return 0  # Not enough data
     
-    n_objects = len(config1_data['obj'].unique())
-    points_per_window = n_objects * window_length
+    # Calculate points per timestamp based on actual data structure
+    # This accounts for buffer points which expand the data
+    # When buffer is applied, each original point becomes multiple points (orig + buffer points)
+    # All these points share the same (obj, tst) combination but have different sub_types
+    first_timestamp = timestamps1[0]
+    points_per_timestamp1 = len(config1_data[config1_data['tst'] == first_timestamp])
+    first_timestamp2 = timestamps2[0]
+    points_per_timestamp2 = len(config2_data[config2_data['tst'] == first_timestamp2])
+    
+    # Use the actual number of points per timestamp (includes buffer points)
+    points_per_window1 = points_per_timestamp1 * window_length
+    points_per_window2 = points_per_timestamp2 * window_length
+    
+    # Both configs must have the same structure for meaningful comparison
+    if points_per_window1 != points_per_window2:
+        return 0
+    
+    points_per_window = points_per_window1
     
     abs_distance_x = 0
     abs_distance_y = 0
+    valid_windows = 0
     
     # Loop over time windows
     for t_idx in range(max_tst):
@@ -105,8 +122,21 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
         window_times1 = timestamps1[t_idx:t_idx + window_length]
         window_times2 = timestamps2[t_idx:t_idx + window_length]
         
-        window_data1 = config1_data[config1_data['tst'].isin(window_times1)].sort_values(['tst', 'obj'])
-        window_data2 = config2_data[config2_data['tst'].isin(window_times2)].sort_values(['tst', 'obj'])
+        # Sort by timestamp, then obj, then sub_order (if present) for consistent ordering
+        # sub_order provides numeric ordering: 0=left, 1=right, 2=orig, 3=bottom, 4=top
+        sort_cols1 = ['tst', 'obj']
+        sort_cols2 = ['tst', 'obj']
+        if 'sub_order' in config1_data.columns:
+            sort_cols1.append('sub_order')
+        elif 'sub_type' in config1_data.columns:
+            sort_cols1.append('sub_type')
+        if 'sub_order' in config2_data.columns:
+            sort_cols2.append('sub_order')
+        elif 'sub_type' in config2_data.columns:
+            sort_cols2.append('sub_type')
+            
+        window_data1 = config1_data[config1_data['tst'].isin(window_times1)].sort_values(sort_cols1)
+        window_data2 = config2_data[config2_data['tst'].isin(window_times2)].sort_values(sort_cols2)
         
         if len(window_data1) != points_per_window or len(window_data2) != points_per_window:
             continue
@@ -128,12 +158,16 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
         # Accumulate absolute differences
         abs_distance_x += np.sum(np.abs(ineq_x1 - ineq_x2))
         abs_distance_y += np.sum(np.abs(ineq_y1 - ineq_y2))
+        valid_windows += 1
+    
+    if valid_windows == 0:
+        return 0
     
     # Normalize distance to 0-100 scale
     # Maximum possible difference per comparison: 2 (0 vs 2 or 2 vs 0)
     # Number of comparisons per window: points^2 - points (exclude diagonal)
     max_diff_per_window = 2 * (points_per_window * points_per_window - points_per_window)
-    max_total_diff = max_diff_per_window * max_tst
+    max_total_diff = max_diff_per_window * valid_windows
     
     if max_total_diff == 0:
         return 0
@@ -225,10 +259,17 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
     Apply buffer by adding points around each original point.
     
     For each point (x, y), adds:
-    - (x - buffer_x, y)
-    - (x + buffer_x, y)
-    - (x, y - buffer_y)
-    - (x, y + buffer_y)
+    - (x - buffer_x, y)  [left]
+    - (x + buffer_x, y)  [right]
+    - (x, y - buffer_y)  [bottom]
+    - (x, y + buffer_y)  [top]
+    
+    The points are ordered to match the original N_T_OB.py implementation:
+    - Index 0: left (x - buffer_x)
+    - Index 1: right (x + buffer_x)
+    - Index 2: orig (original point)
+    - Index 3: bottom (y - buffer_y)
+    - Index 4: top (y + buffer_y)
     
     Args:
         df: DataFrame with trajectory data
@@ -239,44 +280,54 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
         Expanded DataFrame with buffer points
     """
     if buffer_x == 0 and buffer_y == 0:
-        # Add sub_type column for consistency
+        # Add sub_type and sub_order columns for consistency
         df_copy = df.copy()
         df_copy['sub_type'] = 'orig'
+        df_copy['sub_order'] = 0
         return df_copy
     
     buffer_points = []
     
     for _, row in df.iterrows():
-        # Original point
-        p = row.to_dict()
-        p['sub_type'] = 'orig'
-        buffer_points.append(p)
+        # Following the order from N_T_OB.py:
+        # 0: left (x - buffer_x), 1: right (x + buffer_x), 2: orig, 3: bottom (y - buffer_y), 4: top (y + buffer_y)
         
-        # Add buffer points
+        # Add buffer points for x dimension first (if active)
         if buffer_x > 0:
-            # Left buffer point
+            # Index 0: Left buffer point
             left_point = row.to_dict()
             left_point['x'] = row['x'] - buffer_x
             left_point['sub_type'] = 'left'
+            left_point['sub_order'] = 0
             buffer_points.append(left_point)
             
-            # Right buffer point
+            # Index 1: Right buffer point
             right_point = row.to_dict()
             right_point['x'] = row['x'] + buffer_x
             right_point['sub_type'] = 'right'
+            right_point['sub_order'] = 1
             buffer_points.append(right_point)
         
+        # Index 2: Original point
+        p = row.to_dict()
+        p['sub_type'] = 'orig'
+        p['sub_order'] = 2
+        buffer_points.append(p)
+        
+        # Add buffer points for y dimension (if active)
         if buffer_y > 0:
-            # Bottom buffer point
+            # Index 3: Bottom buffer point
             bottom_point = row.to_dict()
             bottom_point['y'] = row['y'] - buffer_y
             bottom_point['sub_type'] = 'bottom'
+            bottom_point['sub_order'] = 3
             buffer_points.append(bottom_point)
             
-            # Top buffer point
+            # Index 4: Top buffer point
             top_point = row.to_dict()
             top_point['y'] = row['y'] + buffer_y
             top_point['sub_type'] = 'top'
+            top_point['sub_order'] = 4
             buffer_points.append(top_point)
     
     return pd.DataFrame(buffer_points)
@@ -382,7 +433,13 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         # Apply buffer if needed
         if buffer_x > 0 or buffer_y > 0:
             config_data = apply_buffer_to_trajectories(config_data, buffer_x, buffer_y)
-            config_data = config_data.sort_values(['tst', 'obj'])
+            # Sort by tst, obj, and sub_order for consistent ordering with buffer points
+            sort_cols = ['tst', 'obj']
+            if 'sub_order' in config_data.columns:
+                sort_cols.append('sub_order')
+            elif 'sub_type' in config_data.columns:
+                sort_cols.append('sub_type')
+            config_data = config_data.sort_values(sort_cols)
         
         # Get timestamps
         timestamps = sorted(config_data['tst'].unique())
@@ -400,7 +457,13 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             
             # Get data for this time window
             window_times = timestamps[window_idx:window_idx + window_length]
-            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(['tst', 'obj'])
+            # Sort by tst, obj, and sub_order for consistent ordering
+            sort_cols = ['tst', 'obj']
+            if 'sub_order' in config_data.columns:
+                sort_cols.append('sub_order')
+            elif 'sub_type' in config_data.columns:
+                sort_cols.append('sub_type')
+            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(sort_cols)
             
             x_vals = window_data['x'].values
             y_vals = window_data['y'].values
