@@ -67,7 +67,7 @@ PLOTLY_CONFIG = {
 }
 
 
-def render_interactive_chart(st, fig, caption="Use the toolbar to zoom, pan, or reset (double-click)."):
+def render_interactive_chart(st, fig, caption=None):
     """
     Render a Plotly figure with consistent interactive controls.
     

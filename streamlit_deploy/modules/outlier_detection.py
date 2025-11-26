@@ -655,7 +655,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         selected_configs: List of selected configurations
         selected_objects: List of selected objects
     """
-    st.header("🔍 Outlier Detection")
+    st.header("Outlier Detection")
     
     st.markdown("""
     **"An outlier is an observation which deviates so much from the other observations 
@@ -704,7 +704,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     st.success(f"Extracted features from {len(features_df)} trajectories")
     
     # Display feature statistics
-    with st.expander("📊 View Feature Statistics"):
+    with st.expander("View Feature Statistics"):
         numeric_cols = features_df.select_dtypes(include=[np.number]).columns.tolist()
         st.dataframe(features_df[numeric_cols].describe())
     
@@ -897,7 +897,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     
     # Outlier list
     if n_outliers > 0:
-        st.subheader("📋 Detected Outliers")
+        st.subheader("Detected Outliers")
         outliers_df = result_df[result_df[outlier_col]][['trajectory_id', score_col] + selected_features]
         outliers_df = outliers_df.sort_values(score_col, ascending=False)
         st.dataframe(outliers_df.style.format({score_col: '{:.3f}'}))
@@ -1035,7 +1035,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     
     # Trajectory Visualization on Tennis Court
     st.markdown("---")
-    st.markdown("**🎾 Trajectory Visualization on Tennis Court**")
+    st.markdown("**Trajectory Visualization on Tennis Court**")
     st.markdown("See the actual movement patterns of outlier vs normal trajectories")
     
     if n_outliers > 0:

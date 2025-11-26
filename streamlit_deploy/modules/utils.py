@@ -229,7 +229,7 @@ def load_data(uploaded_file, update_state=True, show_success=True):
             if is_config_format:
                 # Format: Each row is a configuration, first column is config ID
                 # Remaining columns are trajectory data (likely alternating x,y pairs)
-                st.info(f"🔍 Detected multi-configuration format: {len(df)} configurations with {len(df.columns)-1} data columns")
+                st.info(f"Detected multi-configuration format: {len(df)} configurations with {len(df.columns)-1} data columns")
                 
                 # Extract config IDs
                 config_ids = pd.to_numeric(df.iloc[:, 0], errors='coerce').fillna(0).astype(int)

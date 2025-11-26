@@ -250,56 +250,53 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
     """
     Compute PDP distance between two configurations.
     
+    This follows the original N_PDP.py algorithm:
+    1. For each time window, build inequality matrices for X and Y dimensions
+    2. Sum absolute differences across all windows for each dimension
+    3. Return raw sum of X + Y distances (normalization happens separately)
+    
     Args:
         config1_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for first config
         config2_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for second config
-        window_length: Window length for temporal analysis
+        window_length: Window length for temporal analysis (av.window_length_tst in original)
         rough_x: Roughness tolerance for x dimension
         rough_y: Roughness tolerance for y dimension
     
     Returns:
-        Normalized PDP distance (0-100 scale)
+        Raw PDP distance (sum of X and Y absolute differences in inequality matrices)
     """
     # Get unique timestamps and objects
     timestamps1 = sorted(config1_data['tst'].unique())
     timestamps2 = sorted(config2_data['tst'].unique())
     
-    # Determine time range based on window length
-    max_tst = min(len(timestamps1), len(timestamps2)) - window_length + 1
-    if max_tst <= 0:
+    # Determine number of time windows (same as original: av.tst-(av.window_length_tst-1))
+    n_windows = min(len(timestamps1), len(timestamps2)) - window_length + 1
+    if n_windows <= 0:
         return 0  # Not enough data
     
     # Calculate points per timestamp based on actual data structure
-    # This accounts for buffer points which expand the data
-    # When buffer is applied, each original point becomes multiple points (orig + buffer points)
-    # All these points share the same (obj, tst) combination but have different sub_types
     first_timestamp = timestamps1[0]
     points_per_timestamp1 = len(config1_data[config1_data['tst'] == first_timestamp])
     first_timestamp2 = timestamps2[0]
     points_per_timestamp2 = len(config2_data[config2_data['tst'] == first_timestamp2])
     
-    # Use the actual number of points per timestamp (includes buffer points)
-    points_per_window1 = points_per_timestamp1 * window_length
-    points_per_window2 = points_per_timestamp2 * window_length
-    
     # Both configs must have the same structure for meaningful comparison
-    if points_per_window1 != points_per_window2:
+    if points_per_timestamp1 != points_per_timestamp2:
         return 0
     
-    points_per_window = points_per_window1
+    # Points per window = poi * window_length_tst (as in original)
+    points_per_window = points_per_timestamp1 * window_length
     
     abs_distance_x = 0
     abs_distance_y = 0
-    valid_windows = 0
     
-    # Loop over time windows
-    for t_idx in range(max_tst):
+    # Loop over time windows (same as original: for tst_id in range(av.tst-(av.window_length_tst-1)))
+    for t_idx in range(n_windows):
         # Get data for this time window
         window_times1 = timestamps1[t_idx:t_idx + window_length]
         window_times2 = timestamps2[t_idx:t_idx + window_length]
         
         # Sort by timestamp, then obj, then sub_order (if present) for consistent ordering
-        # sub_order provides numeric ordering: 0=left, 1=right, 2=orig, 3=bottom, 4=top
         sort_cols1 = ['tst', 'obj']
         sort_cols2 = ['tst', 'obj']
         if 'sub_order' in config1_data.columns:
@@ -331,43 +328,31 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
         ineq_y1 = compute_inequality_matrix(y_vals1, y_vals1, window_length, rough_y)
         ineq_y2 = compute_inequality_matrix(y_vals2, y_vals2, window_length, rough_y)
         
-        # Accumulate absolute differences
+        # Accumulate absolute differences (same as original nested loops)
         abs_distance_x += np.sum(np.abs(ineq_x1 - ineq_x2))
         abs_distance_y += np.sum(np.abs(ineq_y1 - ineq_y2))
-        valid_windows += 1
     
-    if valid_windows == 0:
-        return 0
-    
-    # Normalize distance to 0-100 scale
-    # Maximum possible difference per comparison: 2 (0 vs 2 or 2 vs 0)
-    # Number of comparisons per window: points^2 - points (exclude diagonal)
-    max_diff_per_window = 2 * (points_per_window * points_per_window - points_per_window)
-    max_total_diff = max_diff_per_window * valid_windows
-    
-    if max_total_diff == 0:
-        return 0
-    
-    # Combine x and y distances
+    # Return raw sum of X and Y distances
+    # The original algorithm returns X + Y (then normalizes separately or averages normalized values)
     total_distance = abs_distance_x + abs_distance_y
     
-    # Normalize to 0-100
-    normalized_distance = int(round((total_distance / (2 * max_total_diff)) * 100))
-    
-    return normalized_distance
+    return total_distance
 
 
 @st.cache_data
-def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_time, end_time,
+def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_time, end_time,
                                 window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                 pdp_variant="fundamental", external_points=None):
     """
     Compute PDP distance matrix for all selected configurations.
     
+    Note: _df has underscore prefix to exclude it from cache key (large DataFrames 
+    can cause hashing issues). Cache invalidation relies on other parameters.
+    
     Args:
-        df: DataFrame with trajectory data
-        selected_configs: List of configuration IDs to analyze
-        selected_objects: List of object IDs to analyze
+        _df: DataFrame with trajectory data (excluded from cache key)
+        selected_configs: List of configuration IDs to analyze (tuple for reliable hashing)
+        selected_objects: List of object IDs to analyze (tuple for reliable hashing)
         start_time: Start timestamp
         end_time: End timestamp
         window_length: Temporal window length for PDP analysis
@@ -384,12 +369,12 @@ def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_ti
     # Convert external_points tuple back to list for processing
     external_points_list = list(external_points) if external_points else None
     
-    # Filter data
-    filtered_df = df[
-        (df['config_source'].isin(selected_configs)) &
-        (df['obj'].isin(selected_objects)) &
-        (df['tst'] >= start_time) &
-        (df['tst'] <= end_time)
+    # Filter data (use _df which is excluded from cache key)
+    filtered_df = _df[
+        (_df['config_source'].isin(selected_configs)) &
+        (_df['obj'].isin(selected_objects)) &
+        (_df['tst'] >= start_time) &
+        (_df['tst'] <= end_time)
     ].copy()
     
     config_ids = selected_configs
@@ -417,8 +402,8 @@ def compute_pdp_distance_matrix(df, selected_configs, selected_objects, start_ti
     rough_x_val = rough_x if pdp_variant in ["rough", "buffer_rough"] else 0
     rough_y_val = rough_y if pdp_variant in ["rough", "buffer_rough"] else 0
     
-    # Initialize distance matrix
-    distance_matrix = np.zeros((n_configs, n_configs), dtype=int)
+    # Initialize distance matrix (use float for raw distances)
+    distance_matrix = np.zeros((n_configs, n_configs), dtype=float)
     
     # Compute pairwise distances
     with st.spinner(f'Computing PDP distances ({pdp_variant})...'):
@@ -1909,10 +1894,10 @@ def create_parameter_comparison_plot(variant_results):
     }
     
     labels = {
-        'fundamental': '🔹 Fundamental',
-        'buffer': '🔹 Buffer',
-        'rough': '🔹 Rough',
-        'buffer_rough': '🔹 Buffer + Rough'
+        'fundamental': 'Fundamental',
+        'buffer': 'Buffer',
+        'rough': 'Rough',
+        'buffer_rough': 'Buffer + Rough'
     }
     
     for variant_name, data in variant_results.items():
@@ -2115,7 +2100,7 @@ def create_correlation_heatmap(variant_results):
             )[0, 1]
             correlation_matrix[i, j] = corr
     
-    labels = ['🔹 Fundamental', '🔹 Buffer', '🔹 Rough', '🔹 Buffer + Rough']
+    labels = ['Fundamental', 'Buffer', 'Rough', 'Buffer + Rough']
     
     fig = go.Figure(data=go.Heatmap(
         z=correlation_matrix,
@@ -2459,10 +2444,10 @@ def create_quality_metrics_plot(metrics_results):
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=(
-            '📈 Silhouette Score (Higher = Better)',
-            '📉 Davies-Bouldin Index (Lower = Better)',
-            '📈 Calinski-Harabasz Score (Higher = Better)',
-            '📉 Inertia / WCSS (Lower = Better, Elbow Method)'
+            'Silhouette Score (Higher = Better)',
+            'Davies-Bouldin Index (Lower = Better)',
+            'Calinski-Harabasz Score (Higher = Better)',
+            'Inertia / WCSS (Lower = Better, Elbow Method)'
         ),
         vertical_spacing=0.12,
         horizontal_spacing=0.12

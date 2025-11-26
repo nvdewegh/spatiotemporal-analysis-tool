@@ -82,7 +82,7 @@ PLOTLY_CONFIG = {
 }
 
 
-def render_interactive_chart(fig, caption="Use the toolbar to zoom, pan, or reset (double-click).", key=None):
+def render_interactive_chart(fig, caption=None, key=None):
     """Render a Plotly figure with consistent interactive controls."""
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
     if caption:
@@ -3315,12 +3315,12 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
 
 **Four PDP Variants:**
 
-🔹 **Fundamental**: Basic qualitative comparison
-🔹 **Buffer**: Add tolerance zones around each point
-🔹 **Rough**: Allow approximate equality in comparisons
-🔹 **Buffer + Rough**: Combined approach (most flexible)
+- **Fundamental**: Basic qualitative comparison
+- **Buffer**: Add tolerance zones around each point
+- **Rough**: Allow approximate equality in comparisons
+- **Buffer + Rough**: Combined approach (most flexible)
 
-**💡 Use Cases:**
+**Use Cases:**
 
 - Compare tactical patterns independent of exact positions
 - Find similar movement strategies across different court areas
@@ -3566,10 +3566,10 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             
             # Show summary and visualization
             if all_external_points:
-                st.info(f"📍 **{len(all_external_points)} external point(s)** will be included in PDP analysis")
+                st.info(f"**{len(all_external_points)} external point(s)** will be included in PDP analysis")
                 
                 # Visualize external points on tennis court
-                with st.expander("🎾 Preview External Points on Court", expanded=True):
+                with st.expander("Preview External Points on Court", expanded=True):
                     # Create tennis court figure
                     fig_ext = create_tennis_court()
                     
@@ -3664,7 +3664,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         # 1. Fundamental
                         if "fundamental" in selected_variant_keys:
                             dist_fund, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, selected_configs, selected_objects,
+                                df, tuple(selected_configs), tuple(selected_objects),
                                 start_time, end_time,
                                 window_length=window_length,
                                 buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
@@ -3677,7 +3677,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         # 2. Buffer
                         if "buffer" in selected_variant_keys:
                             dist_buff, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, selected_configs, selected_objects,
+                                df, tuple(selected_configs), tuple(selected_objects),
                                 start_time, end_time,
                                 window_length=window_length,
                                 buffer_x=buffer_x, buffer_y=buffer_y, rough_x=0, rough_y=0,
@@ -3690,7 +3690,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         # 3. Rough
                         if "rough" in selected_variant_keys:
                             dist_rough, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, selected_configs, selected_objects,
+                                df, tuple(selected_configs), tuple(selected_objects),
                                 start_time, end_time,
                                 window_length=window_length,
                                 buffer_x=0, buffer_y=0, rough_x=rough_x, rough_y=rough_y,
@@ -3703,7 +3703,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         # 4. Buffer + Rough
                         if "buffer_rough" in selected_variant_keys:
                             dist_br, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, selected_configs, selected_objects,
+                                df, tuple(selected_configs), tuple(selected_objects),
                                 start_time, end_time,
                                 window_length=window_length,
                                 buffer_x=buffer_x, buffer_y=buffer_y, rough_x=rough_x, rough_y=rough_y,
@@ -3914,6 +3914,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                             if not selected_windows:
                                 st.warning("Please select at least one window to visualize.")
                             else:
+                                # Show active parameters for this variant
+                                st.caption(f"**Active variant:** {ineq_variant_name} | Buffer: ({viz_buffer_x}, {viz_buffer_y}) | Rough: ({viz_rough_x}, {viz_rough_y})")
+                                
                                 # Display inequality matrices for selected configurations and windows
                                 fig_ineq = visualize_inequality_matrices(
                                     df, configs_to_compare, selected_objects,
@@ -3960,9 +3963,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 with col_display2:
                     if show_normalized:
-                        st.info("📊 Showing normalized distances (percentage of maximum possible difference)")
+                        st.info("Showing normalized distances (percentage of maximum possible difference)")
                     else:
-                        st.info("📊 Showing raw PDP distances (sum of inequality matrix differences)")
+                        st.info("Showing raw PDP distances (sum of inequality matrix differences)")
                 
                 # Compute normalized distances if needed
                 if show_normalized:
@@ -4155,7 +4158,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Show distance information if 2+ configs selected
                     if len(selected_configs_inspect) >= 2:
-                        st.markdown("**📏 Pairwise Distances Between Selected Configurations:**")
+                        st.markdown("**Pairwise Distances Between Selected Configurations:**")
                         
                         # Create distance table
                         selected_indices = [config_ids.index(cfg) for cfg in selected_configs_inspect]
@@ -4187,7 +4190,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.dataframe(dist_df, use_container_width=True, hide_index=True)
                     
                     # Plot trajectories
-                    st.markdown("**🎾 Trajectory Visualization:**")
+                    st.markdown("**Trajectory Visualization:**")
                     
                     # Get objects from global selection if available
                     if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
@@ -4285,7 +4288,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     )
                     
                     # Display formula
-                    st.markdown("### 📊 Normalization Formula")
+                    st.markdown("### Normalization Formula")
                     st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
                     
                     col_formula1, col_formula2 = st.columns(2)
@@ -4295,7 +4298,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         st.info("This is the theoretical maximum distance observed in your dataset")
                     
                     # Example calculation
-                    st.markdown("### 🔍 Example Calculation")
+                    st.markdown("### Example Calculation")
                     example = norm_info['example_calculation']
                     
                     st.markdown(f"""
@@ -4310,7 +4313,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     """)
                     
                     # Statistics comparison
-                    st.markdown("### 📈 Distance Statistics")
+                    st.markdown("### Distance Statistics")
                     
                     col_stats1, col_stats2 = st.columns(2)
                     
@@ -4347,7 +4350,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         }, hide_index=True, use_container_width=True)
                     
                     # Distribution histogram
-                    st.markdown("### 📊 Distance Distribution")
+                    st.markdown("### Distance Distribution")
                     
                     show_normalized_hist = st.radio(
                         "Show distances as:",
@@ -4371,7 +4374,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     """)
                     
                     # Download normalized distances
-                    st.markdown("### 💾 Download Data")
+                    st.markdown("### Download Data")
                     
                     # Create DataFrame with both raw and normalized
                     export_data = []
@@ -4426,15 +4429,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     )
 
                     # Dendrogram
-                    st.markdown("### Hierarchical Clustering Dendrogram")
-                    
-                    st.info("""
-                    **How to read the dendrogram:**
-                    - **Height of branches** indicates the distance between clusters (higher = more different)
-                    - **Different colors** represent different clusters automatically identified by the algorithm
-                    - Configurations connected at lower heights are more similar
-                    - The x-axis shows each configuration label
-                    """)
+                    st.markdown("### Hierarchical Clustering Dendrogram", help="**How to read the dendrogram:**\n\n• Height of branches indicates the distance between clusters (higher = more different)\n\n• Different colors represent different clusters automatically identified by the algorithm\n\n• Configurations connected at lower heights are more similar\n\n• The x-axis shows each configuration label")
                     
                     if linkage_matrix_clust is not None:
                         # We need to know the current N clusters to color the dendrogram
@@ -4504,16 +4499,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # MDS Visualization
                     st.markdown("---")
-                    st.subheader("MDS Projection")
-                    
-                    st.info("""
-                    **Multidimensional Scaling (MDS) visualization:**
-                    - Reduces high-dimensional distance matrix to 2D or 3D for easy visualization
-                    - **Closer points** = more similar configurations
-                    - **Further apart** = more different configurations
-                    - Colors represent cluster assignments
-                    - **Stress metric**: measures how well the low-dimensional representation preserves distances (lower is better)
-                    """)
+                    st.markdown("### MDS Projection " + 
+                        '<span title="Multidimensional Scaling (MDS) visualization:&#10;&#10;• Reduces high-dimensional distance matrix to 2D or 3D for easy visualization&#10;• Closer points = more similar configurations&#10;• Further apart = more different configurations&#10;• Colors represent cluster assignments&#10;• Stress metric: measures how well the low-dimensional representation preserves distances (lower is better)" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     # Dimension selector
                     mds_dims = st.radio(
@@ -4575,14 +4563,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Top-K Similar Configurations
                     st.markdown("---")
-                    st.subheader("🔍 Find Similar Configurations")
-                    
-                    st.info("""
-                    **Find configurations most similar to a selected one:**
-                    - Select a target configuration
-                    - View the K most similar configurations ranked by PDP distance
-                    - Lower distance = more similar movement patterns
-                    """)
+                    st.markdown("### Find Similar Configurations " + 
+                        '<span title="Find configurations most similar to a selected one:&#10;&#10;• Select a target configuration&#10;• View the K most similar configurations ranked by PDP distance&#10;• Lower distance = more similar movement patterns" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     col1, col2 = st.columns([2, 1])
                     
@@ -4648,14 +4631,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # TRAJECTORY COMPARISON VISUALIZATION
                     # ===============================================================
                     st.markdown("---")
-                    st.subheader("Trajectory Comparison on Tennis Court")
-                    
-                    st.info("""
-                    **Visualize and compare actual trajectories on the tennis court.**
-                    - Select configurations to overlay their movement patterns
-                    - Compare similar or dissimilar configurations side-by-side
-                    - Start points marked with circles ⭕, end points with squares ◼️
-                    """)
+                    st.markdown("### Trajectory Comparison on Tennis Court " + 
+                        '<span title="Visualize and compare actual trajectories on the tennis court:&#10;&#10;• Select configurations to overlay their movement patterns&#10;• Compare similar or dissimilar configurations side-by-side&#10;• Start points marked with circles ⭕, end points with squares ◼️" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     col_traj1, col_traj2 = st.columns([1, 1])
                     
@@ -4788,7 +4766,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 st.success(f"Selected {len(selected_indices)} most dissimilar configs (avg distance: {avg_dist:.2f})")
                     
                     with col_btn3:
-                        if st.session_state.pdp_cluster_labels is not None and st.button("📊 Cluster Centroids", use_container_width=True,
+                        if st.session_state.pdp_cluster_labels is not None and st.button("Cluster Centroids", use_container_width=True,
                                                                                          help=f"Select {n_centroids} representative configurations from different clusters"):
                             # Select one config from each cluster (the one most central to its cluster)
                             unique_clusters = sorted(set(st.session_state.pdp_cluster_labels))
@@ -4818,7 +4796,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Visualization options for buffer and rough zones
                     st.markdown("---")
-                    st.markdown("**🔬 Advanced Visualization Options:**")
+                    st.markdown("**Advanced Visualization Options:**")
                     st.caption("Visualize how buffer and rough parameters affect PDP computation")
                     
                     col_viz1, col_viz2 = st.columns(2)
@@ -4907,7 +4885,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # EXPORT FUNCTIONALITY
                     # ===============================================================
                     st.markdown("---")
-                    st.subheader("Export Results")
+                    st.markdown("### Export Results " + 
+                        '<span title="Download PDP analysis results:&#10;&#10;• Distance matrix (CSV format)&#10;• Cluster assignments&#10;• Similarity rankings for all configurations" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     # Variant selector for Export
                     col_exp_var, _ = st.columns([1, 3])
@@ -4927,13 +4907,6 @@ Each window captures a snapshot of spatial relationships at different points in 
                     exp_cluster_labels, _ = pdp_analysis.perform_hierarchical_clustering(
                         exp_distance_matrix, exp_optimal_n
                     )
-                    
-                    st.info(f"""
-                    **Download PDP analysis results for '{exp_variant_name}' variant.**
-                    - Distance matrix (CSV format)
-                    - Cluster assignments (using optimal N={exp_optimal_n})
-                    - Similarity rankings for all configurations
-                    """)
                     
                     col_exp1, col_exp2, col_exp3 = st.columns(3)
                     
@@ -4990,7 +4963,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         )
                         
                         st.download_button(
-                            label="📋 Download Rankings",
+                            label="Download Rankings",
                             data=rankings_csv,
                             file_name=f"pdp_similarity_rankings_{active_variant_exp}.csv",
                             mime="text/csv",
@@ -5003,32 +4976,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 3: PARAMETER IMPACT ANALYSIS (FEATURE #2)
                 # ===============================================================
                 with st.expander("Parameter Impact Analysis (Compare PDP Variants)", expanded=False):
-                    st.markdown("### Parameter Impact Analysis")
-                    
-                    st.info("""
-                    **Compare how buffer and rough parameters affect PDP distances.**
-                    
-                    This analysis computes distances using all four PDP variants and visualizes:
-                    - How distances change across variants
-                    - Which configuration pairs are most affected by parameters
-                    - Correlation between variants
-                    
-                    **Use this to:**
-                    - Understand parameter sensitivity in your dataset
-                    - Choose the best variant for your analysis
-                    - Identify configurations that behave differently with parameters
-                    """)
-                    
-                    st.markdown("---")
-                    st.markdown("**This will compute PDP distances for ALL four variants:**")
-                    st.markdown("""
-                    - 🔹 Fundamental (baseline - no parameters)
-                    - 🔹 Buffer (adds tolerance zones)
-                    - 🔹 Rough (approximate equality)
-                    - 🔹 Buffer + Rough (combined)
-                    
-                    **Note:** This may take a moment as it computes 4 distance matrices.
-                    """)
+                    st.markdown("### Parameter Impact Analysis " + 
+                        '<span title="Compare how buffer and rough parameters affect PDP distances.&#10;&#10;This analysis computes distances using all four PDP variants and visualizes:&#10;• How distances change across variants&#10;• Which configuration pairs are most affected by parameters&#10;• Correlation between variants&#10;&#10;Use this to:&#10;• Understand parameter sensitivity in your dataset&#10;• Choose the best variant for your analysis&#10;• Identify configurations that behave differently with parameters&#10;&#10;Computes PDP distances for ALL four variants:&#10;• Fundamental (baseline - no parameters)&#10;• Buffer (adds tolerance zones)&#10;• Rough (approximate equality)&#10;• Buffer + Rough (combined)&#10;&#10;Note: This may take a moment as it computes 4 distance matrices." style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     # Parameter configuration for comparison
                     st.markdown("---")
@@ -5081,15 +5031,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Show summary of what will be compared
                     st.markdown("---")
-                    st.markdown("### 📋 Comparison Summary")
+                    st.markdown("### Comparison Summary")
                     
                     comp_summary = f"""
                     | Variant | Buffer X | Buffer Y | Rough X | Rough Y |
                     |---------|----------|----------|---------|---------|
-                    | � Fundamental | 0.0 m | 0.0 m | 0.0 m | 0.0 m |
-                    | 🔹 Buffer | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | 0.0 m | 0.0 m |
-                    | 🔹 Rough | 0.0 m | 0.0 m | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
-                    | 🔹 Buffer + Rough | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
+                    | Fundamental | 0.0 m | 0.0 m | 0.0 m | 0.0 m |
+                    | Buffer | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | 0.0 m | 0.0 m |
+                    | Rough | 0.0 m | 0.0 m | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
+                    | Buffer + Rough | **{buffer_x_comp:.1f} m** | **{buffer_y_comp:.1f} m** | **{rough_x_comp:.1f} m** | **{rough_y_comp:.1f} m** |
                     """
                     st.markdown(comp_summary)
                     
@@ -5238,27 +5188,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 4: CONFIGURATION SIMILARITY EXPLORER (FEATURE #5)
                 # =================================================================
                 with st.expander("Configuration Similarity Explorer (Find Similar/Dissimilar Configs)", expanded=False):
-                    st.markdown("### Configuration Similarity Explorer")
-                    st.caption("Explore neighborhoods and find similar/dissimilar configurations")
-                    st.markdown("""
-                This tool helps you understand the **similarity landscape** of your configurations:
-                
-                **Use Cases:**
-                - **Find similar configs**: Identify configurations with comparable trajectory behavior
-                - **Find dissimilar configs**: Discover configurations that produce very different results
-                - **Explore neighborhoods**: Visualize which configurations cluster together
-                - **Validate parameter choices**: See if parameter changes create meaningful distinctions
-                
-                **How it works:**
-                1. Select a target configuration to analyze
-                2. The tool finds its k nearest and k farthest neighbors in distance space
-                3. Visualizations show the configuration's position relative to others
-                
-                **When to use:**
-                - After computing PDP distances to explore the configuration space
-                - To understand if certain parameters create distinct behavior patterns
-                - To select representative configurations for further analysis
-                """)
+                    st.markdown("### Configuration Similarity Explorer " + 
+                        '<span title="Explore neighborhoods and find similar/dissimilar configurations.&#10;&#10;This tool helps you understand the similarity landscape of your configurations:&#10;&#10;Use Cases:&#10;• Find similar configs: Identify configurations with comparable trajectory behavior&#10;• Find dissimilar configs: Discover configurations that produce very different results&#10;• Explore neighborhoods: Visualize which configurations cluster together&#10;• Validate parameter choices: See if parameter changes create meaningful distinctions&#10;&#10;How it works:&#10;1. Select a target configuration to analyze&#10;2. The tool finds its k nearest and k farthest neighbors in distance space&#10;3. Visualizations show the configuration\'s position relative to others&#10;&#10;When to use:&#10;• After computing PDP distances to explore the configuration space&#10;• To understand if certain parameters create distinct behavior patterns&#10;• To select representative configurations for further analysis" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                 
                     # Check if distance matrix is available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
@@ -5343,7 +5275,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 
                                 # Neighborhood visualization
                                 st.markdown("---")
-                                st.markdown("### Neighborhood Graph")
+                                st.markdown("### Neighborhood Graph " + 
+                                    '<span title="How to read this:&#10;&#10;• Red star: Your selected target configuration&#10;• Orange circles: Nearest neighbors&#10;• Orange lines: Connections to neighbors&#10;• Gray/colored dots: All other configurations&#10;• Closer in 2D space → More similar trajectories" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                                    unsafe_allow_html=True)
                                 st.caption(f"MDS projection showing {target_config}'s neighborhood. Lines connect to {k_neighbors} nearest neighbors.")
                                 
                                 # Check if cluster labels are available
@@ -5357,36 +5291,6 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     k=k_neighbors
                                 )
                                 render_interactive_chart(fig_neighborhood)
-                                
-                                st.markdown("""
-                                **How to read this:**
-                                - **Red star**: Your selected target configuration
-                                - **Orange circles**: Nearest neighbors
-                                - **Orange lines**: Connections to neighbors
-                                - **Gray/colored dots**: All other configurations
-                                - **Closer in 2D space** → More similar trajectories
-                                """)
-                                
-                                # Radial distance chart
-                                st.markdown("---")
-                                st.markdown("### Distance Radial View")
-                                st.caption(f"Polar chart showing distances from {target_config} to its {k_neighbors} nearest neighbors")
-                                
-                                fig_radial = pdp_analysis.create_distance_radial_chart(
-                                    distance_matrix=distance_matrix,
-                                    config_ids=config_ids,
-                                    target_config=target_config,
-                                    top_k=k_neighbors
-                                )
-                                render_interactive_chart(fig_radial)
-                                
-                                st.markdown("""
-                                **How to read this:**
-                                - **Radius (distance from center)**: Larger = more different from target
-                                - **Color**: Darker = closer, lighter = farther
-                                - **Angular position**: Arbitrary (for layout only)
-                                - Compare bar heights to see relative similarities
-                                """)
                                 
                                 # Interpretation guide
                                 with st.expander("Interpretation Guide"):
@@ -5432,39 +5336,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 5: CLUSTER QUALITY METRICS (FEATURE #8)
                 # =================================================================
                 with st.expander("Cluster Quality Metrics (Evaluate Clustering Quality)", expanded=False):
-                    st.markdown("### Cluster Quality Metrics")
-                    st.caption("Evaluate clustering quality and find optimal number of clusters")
-                    st.markdown("""
-                This tool provides **comprehensive evaluation** of clustering quality using multiple metrics:
-                
-                **Quality Metrics:**
-                1. **Silhouette Score** (-1 to 1, higher is better)
-                   - Measures how similar objects are to their own cluster vs. other clusters
-                   - > 0.7: Strong structure
-                   - 0.5-0.7: Reasonable structure
-                   - < 0.5: Weak structure
-                
-                2. **Davies-Bouldin Index** (≥0, lower is better)
-                   - Ratio of within-cluster to between-cluster distances
-                   - Lower values = better separation between clusters
-                
-                3. **Calinski-Harabasz Score** (≥0, higher is better)
-                   - Ratio of between-cluster to within-cluster dispersion
-                   - Higher values = denser, better-separated clusters
-                
-                4. **Elbow Method (Inertia)**
-                   - Within-cluster sum of squares
-                   - Look for "elbow" where adding clusters yields diminishing returns
-                
-                **Use Cases:**
-                - Determine optimal number of clusters (k)
-                - Validate clustering results
-                - Compare different clustering approaches
-                - Identify if natural clusters exist in your data
-                
-                    **How it works:**
-                    Tests clustering quality for k=2 to k=max_k and identifies optimal k for each metric.
-                    """)
+                    st.markdown("### Cluster Quality Metrics " + 
+                        '<span title="Evaluate clustering quality and find optimal number of clusters.&#10;&#10;• Silhouette Score (-1 to 1, higher is better): Measures cluster cohesion vs separation. >0.7=strong, 0.5-0.7=reasonable, <0.5=weak structure.&#10;• Davies-Bouldin Index (≥0, lower is better): Ratio of within-cluster to between-cluster distances.&#10;• Calinski-Harabasz Score (≥0, higher is better): Ratio of between-cluster to within-cluster dispersion.&#10;• Elbow Method (Inertia): Within-cluster sum of squares - look for elbow point.&#10;&#10;Use cases: Determine optimal k, validate results, compare approaches, identify natural clusters.&#10;&#10;Tests clustering quality for k=2 to k=max_k and identifies optimal k for each metric." style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
                     
                     # Check if distance matrix and clustering are available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
@@ -5524,7 +5398,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 metrics_results = st.session_state['cluster_quality_metrics']
                                 
                                 st.markdown("---")
-                                st.markdown("### 📈 Quality Metrics Comparison")
+                                st.markdown("### Quality Metrics Comparison")
                                 
                                 # Create and show the multi-panel plot
                                 fig_metrics = pdp_analysis.create_quality_metrics_plot(metrics_results)
@@ -5561,10 +5435,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     for metric_name, k_val in consensus['optimal_k_per_metric'].items():
                                         optimal_k_data.append({
                                             'Metric': {
-                                                'silhouette': '🔹 Silhouette Score',
-                                                'davies_bouldin': '🔹 Davies-Bouldin Index',
-                                                'calinski_harabasz': '🔹 Calinski-Harabasz Score',
-                                                'elbow': '🔹 Elbow Method'
+                                                'silhouette': 'Silhouette Score',
+                                                'davies_bouldin': 'Davies-Bouldin Index',
+                                                'calinski_harabasz': 'Calinski-Harabasz Score',
+                                                'elbow': 'Elbow Method'
                                             }[metric_name],
                                             'Optimal k': k_val,
                                             'Match': '✓' if k_val == consensus['consensus_k'] else ''
@@ -5576,7 +5450,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 # Detailed silhouette analysis for current clustering
                                 if 'pdp_cluster_labels' in st.session_state and st.session_state['pdp_cluster_labels'] is not None:
                                     st.markdown("---")
-                                    st.markdown("### 🔬 Detailed Silhouette Analysis")
+                                    st.markdown("### Detailed Silhouette Analysis")
                                     st.caption("Per-configuration silhouette scores for current clustering")
                                     
                                     cluster_labels = st.session_state['pdp_cluster_labels']
@@ -5652,7 +5526,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         # End of Cluster Quality Metrics expander
                     
                     else:
-                        st.info("📊 Compute a distance matrix first (above) to use Cluster Quality Metrics.")
+                        st.info("Compute a distance matrix first (above) to use Cluster Quality Metrics.")
     
     elif analysis_method == "Outlier Detection":
         # Call the modular outlier detection function
@@ -5680,7 +5554,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             st.error(f"Error creating heatmap: {str(e)}")
     
     elif analysis_method == "Clustering":
-        st.header("🔍 Hierarchical Clustering Methods")
+        st.header("Hierarchical Clustering Methods")
         
         st.info("""
         **All clustering methods use Hierarchical Ward Linkage clustering.**
@@ -5766,7 +5640,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             ]
             
             feature_labels = {
-                'total_distance': '📏 Total Distance',
+                'total_distance': 'Total Distance',
                 'duration': '⏱️ Duration',
                 'avg_speed': '🏃 Average Speed',
                 'net_displacement': '📐 Net Displacement',
@@ -5814,7 +5688,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             # Show features if computed
             if st.session_state.features_df is not None:
-                with st.expander("📋 Extracted Features"):
+                with st.expander("Extracted Features"):
                     formatted_df = clustering.format_features_dataframe(st.session_state.features_df)
                     st.dataframe(formatted_df)
         
@@ -5865,7 +5739,7 @@ Each window captures a snapshot of spatial relationships at different points in 
         # Show distance matrix visualization if available
         if st.session_state.distance_matrix is not None:
             st.markdown('---')
-            st.subheader("📊 Distance Matrix Heatmap")
+            st.subheader("Distance Matrix Heatmap")
             
             distance_matrix = st.session_state.distance_matrix
             trajectory_ids = st.session_state.trajectory_ids
@@ -6068,7 +5942,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 🔬 Analysis Tools")
+            st.markdown("### Analysis Tools")
             
             st.info("""
             **Advanced Analysis**: Explore cluster quality and trajectory relationships
@@ -6079,9 +5953,9 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             # Create tabs for different analysis tools
             analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
-                "📊 MDS Visualization", 
-                "🔍 Similarity Search", 
-                "📈 Silhouette Analysis"
+                "MDS Visualization", 
+                "Similarity Search", 
+                "Silhouette Analysis"
             ])
             
             # ===========================
@@ -6224,7 +6098,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         help="How many similar trajectories to display"
                     )
                 
-                if st.button("🔍 Find Similar Trajectories"):
+                if st.button("Find Similar Trajectories"):
                     with st.spinner("Searching for similar trajectories..."):
                         # Get distances from reference trajectory to all others
                         distances = st.session_state.distance_matrix[reference_idx].copy()
@@ -6282,7 +6156,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("- **Close to 0**: Near the decision boundary between clusters")
                 st.markdown("- **Negative**: Possibly assigned to wrong cluster")
                 
-                if st.button("📊 Calculate Silhouette Scores"):
+                if st.button("Calculate Silhouette Scores"):
                     with st.spinner("Computing silhouette analysis..."):
                         from sklearn.metrics import silhouette_score, silhouette_samples
                         
@@ -6736,7 +6610,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             help="Overlay: all clusters on one plot | Side-by-side: separate subplots"
                         )
                         
-                        if st.button("📊 Visualize Selected Clusters", key="btn_cluster_compare"):
+                        if st.button("Visualize Selected Clusters", key="btn_cluster_compare"):
                             with st.spinner("Generating cluster comparison..."):
                                 import plotly.express as px
                                 
@@ -7012,7 +6886,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 📋 Export & Summary")
+            st.markdown("### Export & Summary")
             
             st.info("""
             **Final Step**: Export your results and view comprehensive analysis summary
@@ -7023,8 +6897,8 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             # Create tabs for export and summary
             export_tab1, export_tab2, export_tab3 = st.tabs([
-                "💾 Export Data", 
-                "📊 Analysis Summary", 
+                "Export Data", 
+                "Analysis Summary", 
                 "📖 Documentation"
             ])
             
@@ -7090,7 +6964,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     )
                 
                 st.markdown("---")
-                st.markdown("**📈 Additional Exports**")
+                st.markdown("**Additional Exports**")
                 
                 col3, col4 = st.columns(2)
                 
@@ -7161,7 +7035,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("#### Comprehensive Analysis Summary")
                 
                 # Overall metrics
-                st.markdown("### 📊 Overall Metrics")
+                st.markdown("### Overall Metrics")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 
@@ -7224,7 +7098,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("---")
                 
                 # Distance matrix statistics
-                st.markdown("### 📏 Distance Matrix Statistics")
+                st.markdown("### Distance Matrix Statistics")
                 
                 col1, col2 = st.columns(2)
                 
@@ -7255,7 +7129,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("---")
                 
                 # Methodology summary
-                st.markdown("### 🔬 Methodology")
+                st.markdown("### Methodology")
                 
                 st.markdown(f"""
                 **Clustering Approach:**

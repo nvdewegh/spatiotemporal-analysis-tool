@@ -702,7 +702,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             """)
         elif transaction_type == "Feature Bins":
             st.info("""
-            **📊 Feature Bins (HOW)**
+            **Feature Bins (HOW)**
             
             Find patterns based on **trajectory characteristics** (speed, distance, duration).
             
@@ -731,7 +731,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             st.caption(f"💡 Court divided into {grid_rows} × {grid_cols} = {grid_rows * grid_cols} zones")
         
         if transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]:
-            st.markdown("**📏 Feature Binning:**")
+            st.markdown("**Feature Binning:**")
             st.caption("Categorize trajectory characteristics")
             n_bins = st.select_slider("Number of Bins", [2, 3, 4, 5], value=3, key="ar_n_bins",
                                       help="How many categories (e.g., low/medium/high)")
@@ -740,7 +740,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     st.markdown("---")
     
     # Threshold Settings
-    st.subheader("📊 Rule Mining Thresholds")
+    st.subheader("Rule Mining Thresholds")
     
     st.info("""
     **Primary Metrics (Theoretical Focus):**
@@ -767,7 +767,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     st.markdown("---")
     
     # Mine Rules Button
-    if st.button("🔍 Mine Association Rules", type="primary"):
+    if st.button("Mine Association Rules", type="primary"):
         with st.spinner("Preparing transactions and mining rules..."):
             try:
                 # Prepare trajectories dictionary
@@ -846,7 +846,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 
                 # Show bin ranges if feature binning was used
                 if st.session_state.get('ar_bin_info'):
-                    with st.expander("📊 Feature Bin Ranges", expanded=False):
+                    with st.expander("Feature Bin Ranges", expanded=False):
                         st.markdown("**Value ranges for each feature bin:**")
                         bin_info = st.session_state.ar_bin_info
                         
@@ -895,18 +895,18 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     # Display results if available
     if st.session_state.get('ar_rules') is not None and len(st.session_state.ar_rules) > 0:
         st.markdown("---")
-        st.header("📊 Association Rules Results")
+        st.header("Association Rules Results")
         
         rules_df = st.session_state.ar_rules
         
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "📋 Rules Table", "🕸️ Network", 
+            "Rules Table", "🕸️ Network", 
             "🔥 Co-occurrence Heatmap", "🗺️ MDS Projection", 
-            "📊 Distance Matrix", "🏆 Top Rules", "🎯 Supporting Trajectories"
+            "Distance Matrix", "🏆 Top Rules", "🎯 Supporting Trajectories"
         ])
         
         with tab1:
-            st.subheader("📋 Rules Table")
+            st.subheader("Rules Table")
             st.markdown("""
             **All discovered association rules in a sortable table.**
             
@@ -995,7 +995,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 st.info("Distance matrix not available.")
         
         with tab5:
-            st.subheader("📊 Distance Matrix")
+            st.subheader("Distance Matrix")
             st.markdown("""
             **Numerical matrix showing dissimilarity between all item pairs.**
             
@@ -1099,7 +1099,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                     st.metric("Percentage", f"{format_number(percentage, 1)}%")
                 
                 # Display trajectory IDs
-                with st.expander("📋 Show Trajectory IDs", expanded=False):
+                with st.expander("Show Trajectory IDs", expanded=False):
                     if supporting_traj_ids:
                         st.write(f"Trajectory IDs: {', '.join(map(str, supporting_traj_ids))}")
                     else:
