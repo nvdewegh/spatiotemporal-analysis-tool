@@ -3634,8 +3634,8 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             variants_to_compute = st.multiselect(
                 "Select PDP Variants to Compute",
                 options=["Fundamental", "Buffer", "Rough", "Buffer + Rough"],
-                default=["Fundamental", "Buffer", "Rough", "Buffer + Rough"],
-                help="Choose which variants to calculate. Fewer variants = faster computation."
+                default=["Fundamental"],
+                help="Choose which variants to calculate. Fundamental is the baseline (no parameters). Add Buffer/Rough variants to compare parameter effects."
             )
             
             # Map display names to internal keys
@@ -3958,7 +3958,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                         "Show normalized distances (0-100%)",
                         value=False,
                         key="pdp_show_normalized",
-                        help="Convert raw distances to 0-100% scale for easier interpretation"
+                        help="""Convert raw distances to 0-100% scale for easier interpretation.
+                        Because, raw PDP distances can be hard to interpret - is a distance of 50 large or small?
+                        Normalization helps by scaling distances to a 0-100 range for easier interpretation.
+                        """
                     )
                 
                 with col_display2:
@@ -4259,12 +4262,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # DISTANCE NORMALIZATION & DISTRIBUTION
                 # ========================================
                 with st.expander("Distance Normalization & Distribution Analysis", expanded=False):
-                    st.markdown("""
-                    **Understanding Distance Scale:**
-                    
-                    Raw PDP distances can be hard to interpret - is a distance of 50 large or small?
-                    Normalization helps by scaling distances to a 0-100 range for easier interpretation.
-                    """)
+
+                    # Display formula
+                    st.markdown("### Normalization Formula")
+                    st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
                     
                     # Calculate buffer factor for this variant
                     norm_buffer_factor = 1
@@ -4286,10 +4287,6 @@ Each window captures a snapshot of spatial relationships at different points in 
                         n_external_points=st.session_state.get('pdp_norm_n_external_points', 0),
                         n_windows=st.session_state.get('pdp_norm_n_windows')
                     )
-                    
-                    # Display formula
-                    st.markdown("### Normalization Formula")
-                    st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
                     
                     col_formula1, col_formula2 = st.columns(2)
                     with col_formula1:
@@ -4499,10 +4496,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # MDS Visualization
                     st.markdown("---")
-                    st.markdown("### MDS Projection " + 
-                        '<span title="Multidimensional Scaling (MDS) visualization:&#10;&#10;• Reduces high-dimensional distance matrix to 2D or 3D for easy visualization&#10;• Closer points = more similar configurations&#10;• Further apart = more different configurations&#10;• Colors represent cluster assignments&#10;• Stress metric: measures how well the low-dimensional representation preserves distances (lower is better)" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
-                    
+                    st.markdown("### MDS Projection", help="""Multidimensional Scaling (MDS) visualization:
+                    • Reduces high-dimensional distance matrix to 2D or 3D for easy visualization
+                    • Closer points = more similar configurations
+                    • Further apart = more different configurations
+                    • Colors represent cluster assignments
+                    • Stress metric: measures how well the low-dimensional representation preserves distances (lower is better)""")
                     # Dimension selector
                     mds_dims = st.radio(
                         "Select MDS dimensions:",
@@ -4563,9 +4562,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Top-K Similar Configurations
                     st.markdown("---")
-                    st.markdown("### Find Similar Configurations " + 
-                        '<span title="Find configurations most similar to a selected one:&#10;&#10;• Select a target configuration&#10;• View the K most similar configurations ranked by PDP distance&#10;• Lower distance = more similar movement patterns" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown(
+                        "### Find Similar Configurations "
+                        + "<span title=\"Find configurations most similar to a selected one:\\n\\n• Select a target configuration\\n• View the K most similar configurations ranked by PDP distance\\n• Lower distance = more similar movement patterns\" "
+                        + "style=\"cursor:help; font-size:1.1em;\">,</span>",
+                        unsafe_allow_html=True
+                    )
                     
                     col1, col2 = st.columns([2, 1])
                     
