@@ -911,8 +911,25 @@ def create_interactive_dendrogram(linkage_matrix, labels, distance_matrix, n_clu
     Returns:
         Plotly figure
     """
+    # Calculate color threshold if n_clusters is provided
+    color_threshold = 0
+    threshold_line_val = None
+    
+    if n_clusters is not None and n_clusters > 1:
+        n_samples = len(linkage_matrix) + 1
+        if n_clusters < n_samples:
+            # Z[-(k-1), 2] is the merge distance that reduces k to k-1 clusters
+            # Z[-k, 2] is the merge distance that reduces k+1 to k clusters
+            dist_above = linkage_matrix[-(n_clusters-1), 2]
+            dist_below = linkage_matrix[-n_clusters, 2]
+            # Set threshold slightly below the merge that creates k-1 clusters
+            # But typically dendrogram uses threshold < merge_height to keep clusters separate
+            # If we set threshold = (dist_above + dist_below) / 2, it will cut the tree correctly
+            threshold_line_val = (dist_above + dist_below) / 2
+            color_threshold = threshold_line_val
+
     # Create dendrogram using scipy
-    dend_data = dendrogram(linkage_matrix, labels=labels, no_plot=True)
+    dend_data = dendrogram(linkage_matrix, labels=labels, no_plot=True, color_threshold=color_threshold)
     
     # Extract coordinates
     icoord = np.array(dend_data['icoord'])
@@ -959,6 +976,35 @@ def create_interactive_dendrogram(linkage_matrix, labels, distance_matrix, n_clu
             showlegend=False
         ))
     
+    # Add horizontal cut-off line if applicable
+    if threshold_line_val is not None:
+        # Determine x range
+        x_min = np.min(icoord)
+        x_max = np.max(icoord)
+        
+        fig.add_shape(
+            type="line",
+            x0=x_min - 5, # Extend slightly
+            y0=threshold_line_val,
+            x1=x_max + 5, # Extend slightly
+            y1=threshold_line_val,
+            line=dict(
+                color="Red",
+                width=2,
+                dash="dashdot",
+            ),
+        )
+        
+        fig.add_annotation(
+            x=x_max,
+            y=threshold_line_val,
+            text=f"Cut-off: {threshold_line_val:.2f}",
+            showarrow=False,
+            yshift=10,
+            xanchor="right",
+            font=dict(color="Red")
+        )
+
     # Extract leaf positions properly
     # The dendrogram ivl contains labels in the order they appear left-to-right
     # Leaves are positioned at x = 5, 15, 25, ... (i.e., 5 + 10*i for i in range(n_leaves))
@@ -1008,8 +1054,17 @@ def create_mds_visualization(distance_matrix, labels, cluster_labels=None):
     mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42)
     coords_2d = mds.fit_transform(distance_matrix)
     
-    # Calculate stress (quality metric)
-    stress = mds.stress_
+    # Calculate normalized stress (Kruskal's Stress-1)
+    # sklearn's mds.stress_ is raw stress (sum of squared errors), not normalized
+    # Normalized stress = sqrt(sum((d_orig - d_mds)^2) / sum(d_orig^2))
+    from scipy.spatial.distance import pdist, squareform
+    mds_distances = squareform(pdist(coords_2d))
+    # Get upper triangle of distance matrices (excluding diagonal)
+    triu_indices = np.triu_indices_from(distance_matrix, k=1)
+    orig_dists = distance_matrix[triu_indices]
+    mds_dists = mds_distances[triu_indices]
+    # Kruskal's Stress-1 formula
+    stress = np.sqrt(np.sum((orig_dists - mds_dists) ** 2) / np.sum(orig_dists ** 2))
     
     # Create figure
     fig = go.Figure()
@@ -1083,8 +1138,17 @@ def create_mds_visualization_3d(distance_matrix, labels, cluster_labels=None):
     mds = MDS(n_components=3, dissimilarity='precomputed', random_state=42)
     coords_3d = mds.fit_transform(distance_matrix)
     
-    # Calculate stress (quality metric)
-    stress = mds.stress_
+    # Calculate normalized stress (Kruskal's Stress-1)
+    # sklearn's mds.stress_ is raw stress (sum of squared errors), not normalized
+    # Normalized stress = sqrt(sum((d_orig - d_mds)^2) / sum(d_orig^2))
+    from scipy.spatial.distance import pdist, squareform
+    mds_distances = squareform(pdist(coords_3d))
+    # Get upper triangle of distance matrices (excluding diagonal)
+    triu_indices = np.triu_indices_from(distance_matrix, k=1)
+    orig_dists = distance_matrix[triu_indices]
+    mds_dists = mds_distances[triu_indices]
+    # Kruskal's Stress-1 formula
+    stress = np.sqrt(np.sum((orig_dists - mds_dists) ** 2) / np.sum(orig_dists ** 2))
     
     # Create figure
     fig = go.Figure()
@@ -1290,7 +1354,8 @@ def create_tennis_court_base():
 
 def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end_time, 
                                selected_objects=None, cluster_labels=None, distance_matrix=None,
-                               show_buffers=False, buffer_size=0.5, show_rough=False, rough_tolerance=0.3):
+                               show_buffers=False, buffer_size=0.5, show_rough=False, 
+                               rough_x=0.3, rough_y=0.3):
     """
     Compare trajectories of selected configurations on tennis court.
     
@@ -1305,8 +1370,9 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         distance_matrix: Optional distance matrix for showing similarities
         show_buffers: Whether to show buffer zones around points
         buffer_size: Radius of buffer zones (in meters)
-        show_rough: Whether to show rough tolerance zones
-        rough_tolerance: Radius of rough tolerance zones (in meters)
+        show_rough: Whether to show rough tolerance zones (rectangles)
+        rough_x: Rough tolerance for X dimension (half-width of rectangle in meters)
+        rough_y: Rough tolerance for Y dimension (half-height of rectangle in meters)
     
     Returns:
         plotly.graph_objects.Figure: Tennis court with trajectories
@@ -1452,15 +1518,16 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
             
             # Add rough tolerance ZONES if requested (visualize rough parameter)
             # Rough adds tolerance zones where comparisons are considered "equal"
-            if show_rough and rough_tolerance > 0:
+            # Now uses RECTANGLES (axis-aligned) instead of circles
+            if show_rough and (rough_x > 0 or rough_y > 0):
                 for idx, row in obj_data.iterrows():
                     fig.add_shape(
-                        type="circle",
+                        type="rect",
                         xref="x", yref="y",
-                        x0=row['x'] - rough_tolerance,
-                        y0=row['y'] - rough_tolerance,
-                        x1=row['x'] + rough_tolerance,
-                        y1=row['y'] + rough_tolerance,
+                        x0=row['x'] - rough_x,
+                        y0=row['y'] - rough_y,
+                        x1=row['x'] + rough_x,
+                        y1=row['y'] + rough_y,
                         line=dict(color=color, width=2, dash="dash"),
                         fillcolor=color,
                         opacity=0.08,
@@ -2693,5 +2760,587 @@ def create_silhouette_per_cluster_plot(distance_matrix, cluster_labels, config_i
         showlegend=True,
         hovermode='closest'
     )
+    
+    return fig
+
+
+# =============================================================================
+# FINE-GRAINED PINPOINT DIFFERENCES
+# =============================================================================
+
+def compute_pairwise_inequality_differences(config1_data, config2_data, window_length, rough_x=0, rough_y=0):
+    """
+    Compute detailed inequality matrix differences between two configurations.
+    
+    Returns the raw differences per time window and per object pair, so we can
+    visualize exactly where the differences occur.
+    
+    Args:
+        config1_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for first config
+        config2_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for second config
+        window_length: Window length for temporal analysis
+        rough_x: Roughness tolerance for x dimension
+        rough_y: Roughness tolerance for y dimension
+    
+    Returns:
+        dict with:
+        - 'windows': list of window indices
+        - 'differences': list of dicts per window, each containing:
+            - 'x_diff_matrix': absolute difference matrix for X
+            - 'y_diff_matrix': absolute difference matrix for Y
+            - 'total_diff_matrix': combined difference matrix
+            - 'timestamps': list of timestamps in this window
+            - 'objects': list of object IDs in order
+            - 'positions1': dict mapping (obj, tst) -> (x, y) for config1
+            - 'positions2': dict mapping (obj, tst) -> (x, y) for config2
+    """
+    # Get unique timestamps and objects
+    timestamps1 = sorted(config1_data['tst'].unique())
+    timestamps2 = sorted(config2_data['tst'].unique())
+    
+    # Determine number of time windows
+    n_windows = min(len(timestamps1), len(timestamps2)) - window_length + 1
+    if n_windows <= 0:
+        return {'windows': [], 'differences': []}
+    
+    # Get objects consistently
+    objects1 = sorted(config1_data['obj'].unique())
+    objects2 = sorted(config2_data['obj'].unique())
+    
+    # Objects must match for meaningful comparison
+    if set(objects1) != set(objects2):
+        return {'windows': [], 'differences': [], 'error': 'Objects do not match between configurations'}
+    
+    objects = objects1  # They're the same
+    
+    result = {
+        'windows': list(range(n_windows)),
+        'differences': [],
+        'objects': objects
+    }
+    
+    # Process each time window
+    for t_idx in range(n_windows):
+        window_times1 = timestamps1[t_idx:t_idx + window_length]
+        window_times2 = timestamps2[t_idx:t_idx + window_length]
+        
+        # Get data for this window, sorted consistently
+        sort_cols = ['tst', 'obj']
+        if 'sub_order' in config1_data.columns:
+            sort_cols.append('sub_order')
+            
+        window_data1 = config1_data[config1_data['tst'].isin(window_times1)].sort_values(sort_cols)
+        window_data2 = config2_data[config2_data['tst'].isin(window_times2)].sort_values(sort_cols)
+        
+        if len(window_data1) == 0 or len(window_data2) == 0:
+            continue
+        
+        # Build position mappings
+        positions1 = {}
+        positions2 = {}
+        
+        for _, row in window_data1.iterrows():
+            key = (row['obj'], row['tst'])
+            positions1[key] = (row['x'], row['y'])
+            
+        for _, row in window_data2.iterrows():
+            key = (row['obj'], row['tst'])
+            positions2[key] = (row['x'], row['y'])
+        
+        # Compute inequality matrices
+        x_vals1 = window_data1['x'].values
+        x_vals2 = window_data2['x'].values
+        y_vals1 = window_data1['y'].values
+        y_vals2 = window_data2['y'].values
+        
+        if len(x_vals1) != len(x_vals2):
+            continue
+        
+        ineq_x1 = compute_inequality_matrix(x_vals1, x_vals1, window_length, rough_x)
+        ineq_x2 = compute_inequality_matrix(x_vals2, x_vals2, window_length, rough_x)
+        ineq_y1 = compute_inequality_matrix(y_vals1, y_vals1, window_length, rough_y)
+        ineq_y2 = compute_inequality_matrix(y_vals2, y_vals2, window_length, rough_y)
+        
+        # Compute differences
+        x_diff = np.abs(ineq_x1 - ineq_x2)
+        y_diff = np.abs(ineq_y1 - ineq_y2)
+        total_diff = x_diff + y_diff
+        
+        # Store row/column labels (object-timestamp pairs)
+        labels = []
+        for _, row in window_data1.iterrows():
+            t_relative = list(window_times1).index(row['tst'])
+            labels.append((row['obj'], row['tst'], t_relative))
+        
+        result['differences'].append({
+            'window_idx': t_idx,
+            'x_diff_matrix': x_diff,
+            'y_diff_matrix': y_diff,
+            'total_diff_matrix': total_diff,
+            'ineq_x1': ineq_x1,
+            'ineq_x2': ineq_x2,
+            'ineq_y1': ineq_y1,
+            'ineq_y2': ineq_y2,
+            'timestamps': list(window_times1),
+            'labels': labels,
+            'positions1': positions1,
+            'positions2': positions2
+        })
+    
+    return result
+
+
+def create_difference_visualization(df, config1_id, config2_id, selected_objects, 
+                                     start_time, end_time, window_length,
+                                     buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                                     external_points=None):
+    """
+    Create side-by-side tennis court visualization showing where two configurations differ.
+    
+    Draws difference lines between objects at time points where the inequality matrices differ.
+    Line thickness indicates the magnitude of difference.
+    
+    Args:
+        df: DataFrame with trajectory data
+        config1_id: First configuration ID
+        config2_id: Second configuration ID
+        selected_objects: List of object IDs to analyze
+        start_time, end_time: Time range
+        window_length: PDP window length
+        buffer_x, buffer_y: Buffer parameters
+        rough_x, rough_y: Rough parameters
+        external_points: List of external reference points
+    
+    Returns:
+        tuple: (fig1, fig2, diff_summary) - Two tennis court figures and summary stats
+    """
+    from plotly.subplots import make_subplots
+    
+    # Filter data for each configuration
+    config1_data = df[
+        (df['config_source'] == config1_id) &
+        (df['obj'].isin(selected_objects)) &
+        (df['tst'] >= start_time) &
+        (df['tst'] <= end_time)
+    ].copy()
+    
+    config2_data = df[
+        (df['config_source'] == config2_id) &
+        (df['obj'].isin(selected_objects)) &
+        (df['tst'] >= start_time) &
+        (df['tst'] <= end_time)
+    ].copy()
+    
+    if len(config1_data) == 0 or len(config2_data) == 0:
+        return None, None, {'error': 'No data for selected configurations'}
+    
+    # Add external points if specified
+    if external_points:
+        timestamps1 = sorted(config1_data['tst'].unique())
+        timestamps2 = sorted(config2_data['tst'].unique())
+        config1_data = add_external_points_to_data(config1_data, external_points, timestamps1)
+        config2_data = add_external_points_to_data(config2_data, external_points, timestamps2)
+    
+    # Apply buffer if needed
+    if buffer_x > 0 or buffer_y > 0:
+        config1_data = apply_buffer_to_trajectories(config1_data, buffer_x, buffer_y)
+        config2_data = apply_buffer_to_trajectories(config2_data, buffer_x, buffer_y)
+    
+    # Compute detailed differences
+    diff_result = compute_pairwise_inequality_differences(
+        config1_data, config2_data, window_length, rough_x, rough_y
+    )
+    
+    if not diff_result['differences']:
+        return None, None, {'error': 'Could not compute differences'}
+    
+    # Create two tennis court figures side by side
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=[f"Configuration: {config1_id}", f"Configuration: {config2_id}"],
+        horizontal_spacing=0.08
+    )
+    
+    # Court dimensions
+    court_width = 8.23
+    court_length = 23.77
+    doubles_width = 10.97
+    doubles_alley_width = (doubles_width - court_width) / 2
+    service_line_distance = 6.40
+    net_position = court_length / 2
+    
+    # Add court shapes to both subplots
+    for col in [1, 2]:
+        # Outer boundary
+        fig.add_shape(type="rect", 
+                     x0=-doubles_alley_width, y0=0,
+                     x1=court_width + doubles_alley_width, y1=court_length,
+                     line=dict(color="white", width=2),
+                     row=1, col=col)
+        # Singles sidelines
+        fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=court_length,
+                     line=dict(color="white", width=1), row=1, col=col)
+        fig.add_shape(type="line", x0=court_width, y0=0, x1=court_width, y1=court_length,
+                     line=dict(color="white", width=1), row=1, col=col)
+        # Net
+        fig.add_shape(type="line", 
+                     x0=-doubles_alley_width, y0=net_position,
+                     x1=court_width + doubles_alley_width, y1=net_position,
+                     line=dict(color="white", width=2), row=1, col=col)
+        # Service lines
+        fig.add_shape(type="line", x0=0, y0=net_position - service_line_distance,
+                     x1=court_width, y1=net_position - service_line_distance,
+                     line=dict(color="white", width=1), row=1, col=col)
+        fig.add_shape(type="line", x0=0, y0=net_position + service_line_distance,
+                     x1=court_width, y1=net_position + service_line_distance,
+                     line=dict(color="white", width=1), row=1, col=col)
+        # Center line
+        fig.add_shape(type="line", x0=court_width/2, y0=net_position - service_line_distance,
+                     x1=court_width/2, y1=net_position + service_line_distance,
+                     line=dict(color="white", width=1), row=1, col=col)
+    
+    # Color palette for objects
+    object_colors = px.colors.qualitative.Set1
+    obj_list = sorted(selected_objects)
+    obj_color_map = {obj: object_colors[i % len(object_colors)] for i, obj in enumerate(obj_list)}
+    
+    # Track differences for summary
+    diff_summary = {
+        'total_cell_differences': 0,
+        'windows_with_differences': 0,
+        'max_difference_window': None,
+        'max_difference_value': 0,
+        'difference_by_window': []
+    }
+    
+    # Process each window and accumulate differences per object-pair-timestamp
+    # We'll aggregate differences to show on the court
+    position_differences = {}  # key: (obj_i, tst_i, obj_j, tst_j) -> total_diff
+    
+    for window_data in diff_result['differences']:
+        total_diff_matrix = window_data['total_diff_matrix']
+        labels = window_data['labels']
+        positions1 = window_data['positions1']
+        positions2 = window_data['positions2']
+        
+        window_diff_sum = np.sum(total_diff_matrix)
+        diff_summary['total_cell_differences'] += window_diff_sum
+        diff_summary['difference_by_window'].append({
+            'window': window_data['window_idx'],
+            'total_diff': window_diff_sum
+        })
+        
+        if window_diff_sum > 0:
+            diff_summary['windows_with_differences'] += 1
+            if window_diff_sum > diff_summary['max_difference_value']:
+                diff_summary['max_difference_value'] = window_diff_sum
+                diff_summary['max_difference_window'] = window_data['window_idx']
+        
+        # For each cell with a difference, record it
+        n = len(labels)
+        for i in range(n):
+            for j in range(i + 1, n):  # Upper triangle only to avoid duplicates
+                diff_val = total_diff_matrix[i, j]
+                if diff_val > 0:
+                    obj_i, tst_i, _ = labels[i]
+                    obj_j, tst_j, _ = labels[j]
+                    
+                    # Store the difference keyed by the objects and timestamps involved
+                    key = (obj_i, tst_i, obj_j, tst_j)
+                    if key not in position_differences:
+                        position_differences[key] = {
+                            'diff': 0,
+                            'pos1_i': positions1.get((obj_i, tst_i)),
+                            'pos1_j': positions1.get((obj_j, tst_j)),
+                            'pos2_i': positions2.get((obj_i, tst_i)),
+                            'pos2_j': positions2.get((obj_j, tst_j))
+                        }
+                    position_differences[key]['diff'] += diff_val
+    
+    # Plot trajectories for both configurations
+    # Get unique original data (before buffer) for trajectory plotting
+    config1_orig = df[
+        (df['config_source'] == config1_id) &
+        (df['obj'].isin(selected_objects)) &
+        (df['tst'] >= start_time) &
+        (df['tst'] <= end_time)
+    ].copy()
+    
+    config2_orig = df[
+        (df['config_source'] == config2_id) &
+        (df['obj'].isin(selected_objects)) &
+        (df['tst'] >= start_time) &
+        (df['tst'] <= end_time)
+    ].copy()
+    
+    # Plot trajectories for config 1
+    for obj in obj_list:
+        obj_data = config1_orig[config1_orig['obj'] == obj].sort_values('tst')
+        if len(obj_data) > 0:
+            # Create custom hover text with timestamp
+            hover_texts = [f'Object {obj}<br>x: {x:.2f}<br>y: {y:.2f}<br>t: {t:.2f}s' 
+                          for x, y, t in zip(obj_data['x'], obj_data['y'], obj_data['tst'])]
+            fig.add_trace(go.Scatter(
+                x=obj_data['x'],
+                y=obj_data['y'],
+                mode='lines+markers',
+                name=f'Object {obj}',
+                line=dict(color=obj_color_map[obj], width=2),
+                marker=dict(size=6),
+                legendgroup=f'obj_{obj}',
+                showlegend=True,
+                hoverinfo='text',
+                hovertext=hover_texts
+            ), row=1, col=1)
+    
+    # Plot trajectories for config 2
+    for obj in obj_list:
+        obj_data = config2_orig[config2_orig['obj'] == obj].sort_values('tst')
+        if len(obj_data) > 0:
+            # Create custom hover text with timestamp
+            hover_texts = [f'Object {obj}<br>x: {x:.2f}<br>y: {y:.2f}<br>t: {t:.2f}s' 
+                          for x, y, t in zip(obj_data['x'], obj_data['y'], obj_data['tst'])]
+            fig.add_trace(go.Scatter(
+                x=obj_data['x'],
+                y=obj_data['y'],
+                mode='lines+markers',
+                name=f'Object {obj}',
+                line=dict(color=obj_color_map[obj], width=2),
+                marker=dict(size=6),
+                legendgroup=f'obj_{obj}',
+                showlegend=False,
+                hoverinfo='text',
+                hovertext=hover_texts
+            ), row=1, col=2)
+    
+    # Draw difference lines
+    # For each difference, draw a line connecting the two points involved
+    # Line thickness proportional to difference magnitude
+    # Use unique colors for each difference to help visually match lines between subplots
+    max_diff = max([v['diff'] for v in position_differences.values()]) if position_differences else 1
+    
+    # Color palette for difference lines - distinct colors to help match between subplots
+    diff_colors = [
+        '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+        '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+        '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080'
+    ]
+    
+    # Sort differences by magnitude (largest first) for consistent numbering
+    sorted_diffs = sorted(position_differences.items(), key=lambda x: x[1]['diff'], reverse=True)
+    
+    for diff_idx, (key, diff_data) in enumerate(sorted_diffs):
+        obj_i, tst_i, obj_j, tst_j = key
+        diff_val = diff_data['diff']
+        
+        # Assign unique color based on index
+        diff_color = diff_colors[diff_idx % len(diff_colors)]
+        diff_id = diff_idx + 1  # 1-based ID for display
+        
+        # Normalize line width (2-10 range)
+        line_width = 2 + (diff_val / max_diff) * 8
+        
+        # Get positions from both configurations
+        pos1_i = diff_data['pos1_i']
+        pos1_j = diff_data['pos1_j']
+        pos2_i = diff_data['pos2_i']
+        pos2_j = diff_data['pos2_j']
+        
+        # Build comprehensive hover text showing BOTH configurations + ID for matching
+        hover_lines = [
+            f"<b>🔗 Difference #{diff_id}</b>",
+            f"<b>Value: {diff_val}</b>",
+            f"Objects: O{obj_i} (t={tst_i:.2f}s) ↔ O{obj_j} (t={tst_j:.2f}s)",
+            "",
+            f"<b>{config1_id}:</b>",
+        ]
+        if pos1_i:
+            hover_lines.append(f"  O{obj_i}: ({pos1_i[0]:.2f}, {pos1_i[1]:.2f})")
+        if pos1_j:
+            hover_lines.append(f"  O{obj_j}: ({pos1_j[0]:.2f}, {pos1_j[1]:.2f})")
+        
+        hover_lines.append("")
+        hover_lines.append(f"<b>{config2_id}:</b>")
+        if pos2_i:
+            hover_lines.append(f"  O{obj_i}: ({pos2_i[0]:.2f}, {pos2_i[1]:.2f})")
+        if pos2_j:
+            hover_lines.append(f"  O{obj_j}: ({pos2_j[0]:.2f}, {pos2_j[1]:.2f})")
+        
+        hover_text = "<br>".join(hover_lines)
+        
+        # Draw on config 1 - include endpoints and midpoint for better hover detection
+        if pos1_i and pos1_j:
+            mid_x = (pos1_i[0] + pos1_j[0]) / 2
+            mid_y = (pos1_i[1] + pos1_j[1]) / 2
+            fig.add_trace(go.Scatter(
+                x=[pos1_i[0], mid_x, pos1_j[0]],
+                y=[pos1_i[1], mid_y, pos1_j[1]],
+                mode='lines+markers+text',
+                line=dict(color=diff_color, width=line_width),
+                marker=dict(size=10, color=diff_color, symbol='circle', 
+                           line=dict(color='white', width=1)),
+                text=['', str(diff_id), ''],  # Show ID number at midpoint
+                textposition='top center',
+                textfont=dict(size=10, color='white', family='Arial Black'),
+                showlegend=False,
+                hoverinfo='text',
+                hovertext=[hover_text, hover_text, hover_text],
+                name=f'Diff #{diff_id}'
+            ), row=1, col=1)
+        
+        # Draw on config 2 - include endpoints and midpoint for better hover detection
+        if pos2_i and pos2_j:
+            mid_x = (pos2_i[0] + pos2_j[0]) / 2
+            mid_y = (pos2_i[1] + pos2_j[1]) / 2
+            fig.add_trace(go.Scatter(
+                x=[pos2_i[0], mid_x, pos2_j[0]],
+                y=[pos2_i[1], mid_y, pos2_j[1]],
+                mode='lines+markers+text',
+                line=dict(color=diff_color, width=line_width),
+                marker=dict(size=10, color=diff_color, symbol='circle',
+                           line=dict(color='white', width=1)),
+                text=['', str(diff_id), ''],  # Show ID number at midpoint
+                textposition='top center',
+                textfont=dict(size=10, color='white', family='Arial Black'),
+                showlegend=False,
+                hoverinfo='text',
+                hovertext=[hover_text, hover_text, hover_text],
+                name=f'Diff #{diff_id}'
+            ), row=1, col=2)
+    
+    # Update layout
+    x_margin = 2.0
+    y_margin = 3.0
+    
+    fig.update_layout(
+        title=f"Fine-Grained Difference Analysis: {config1_id} vs {config2_id}",
+        height=700,
+        width=1200,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        plot_bgcolor='#25D366'
+    )
+    
+    # Update axes for both subplots
+    for col in [1, 2]:
+        fig.update_xaxes(
+            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Court Width (m)",
+            row=1, col=col
+        )
+        fig.update_yaxes(
+            range=[-y_margin, court_length + y_margin],
+            showgrid=False,
+            zeroline=False,
+            title="Court Length (m)",
+            scaleanchor="x" if col == 1 else "x2",
+            scaleratio=1,
+            row=1, col=col
+        )
+    
+    diff_summary['n_windows'] = len(diff_result['differences'])
+    diff_summary['position_differences'] = len(position_differences)
+    
+    return fig, diff_result, diff_summary
+
+
+def create_difference_matrices_figure(diff_result, config1_id, config2_id, window_indices=None):
+    """
+    Create a figure showing the inequality matrix differences for selected windows.
+    
+    Shows side-by-side: Config1 X matrix, Config2 X matrix, Difference matrix (for X and Y).
+    
+    Args:
+        diff_result: Result from compute_pairwise_inequality_differences
+        config1_id, config2_id: Configuration IDs for labels
+        window_indices: List of window indices to show (None = all)
+    
+    Returns:
+        Plotly figure
+    """
+    from plotly.subplots import make_subplots
+    
+    if not diff_result['differences']:
+        return None
+    
+    if window_indices is None:
+        window_indices = [0]  # Default to first window
+    
+    # Filter to requested windows
+    windows_to_show = [w for w in diff_result['differences'] if w['window_idx'] in window_indices]
+    
+    if not windows_to_show:
+        return None
+    
+    n_windows = len(windows_to_show)
+    
+    # Create subplots: 6 columns (X1, X2, X_diff, Y1, Y2, Y_diff) x n_windows rows
+    subplot_titles = []
+    for w in windows_to_show:
+        win_idx = w['window_idx']
+        subplot_titles.extend([
+            f"W{win_idx}: {config1_id} X",
+            f"W{win_idx}: {config2_id} X",
+            f"W{win_idx}: X Diff",
+            f"W{win_idx}: {config1_id} Y",
+            f"W{win_idx}: {config2_id} Y",
+            f"W{win_idx}: Y Diff"
+        ])
+    
+    fig = make_subplots(
+        rows=n_windows, cols=6,
+        subplot_titles=subplot_titles,
+        horizontal_spacing=0.02,
+        vertical_spacing=0.1
+    )
+    
+    # Colorscale for inequality matrices (0=green, 1=yellow, 2=red)
+    ineq_colorscale = [
+        [0, '#2ecc71'], [0.333, '#2ecc71'],
+        [0.333, '#ffeb3b'], [0.666, '#ffeb3b'],
+        [0.666, '#e74c3c'], [1, '#e74c3c']
+    ]
+    
+    # Colorscale for difference matrices: light blue (same) to orange (different)
+    # Using distinct colors from inequality matrices to avoid confusion
+    diff_colorscale = [[0, '#e3f2fd'], [0.5, '#ffcc80'], [1, '#e65100']]
+    
+    for row_idx, window_data in enumerate(windows_to_show, 1):
+        labels = [f"O{l[0]}_T{l[2]}" for l in window_data['labels']]
+        
+        # X matrices
+        fig.add_trace(go.Heatmap(z=window_data['ineq_x1'], x=labels, y=labels,
+                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=1)
+        fig.add_trace(go.Heatmap(z=window_data['ineq_x2'], x=labels, y=labels,
+                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=2)
+        fig.add_trace(go.Heatmap(z=window_data['x_diff_matrix'], x=labels, y=labels,
+                                colorscale=diff_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=3)
+        
+        # Y matrices
+        fig.add_trace(go.Heatmap(z=window_data['ineq_y1'], x=labels, y=labels,
+                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=4)
+        fig.add_trace(go.Heatmap(z=window_data['ineq_y2'], x=labels, y=labels,
+                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=5)
+        fig.add_trace(go.Heatmap(z=window_data['y_diff_matrix'], x=labels, y=labels,
+                                colorscale=diff_colorscale, zmin=0, zmax=2, showscale=False),
+                     row=row_idx, col=6)
+    
+    fig.update_layout(
+        title=f"Inequality Matrix Comparison: {config1_id} vs {config2_id}",
+        height=300 * n_windows + 100,
+        width=1400,
+        showlegend=False
+    )
+    
+    # Rotate x-axis labels
+    fig.update_xaxes(tickangle=45)
     
     return fig

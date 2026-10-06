@@ -82,11 +82,22 @@ PLOTLY_CONFIG = {
 }
 
 
-def render_interactive_chart(fig, caption=None, key=None):
+def render_interactive_chart(fig, caption=None, key=None, use_container_width=True):
+    if fig.layout.uirevision == 'plain-coordinates':
+        use_container_width = True
     """Render a Plotly figure with consistent interactive controls."""
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
-    if caption:
-        st.caption(caption)
+    if not use_container_width:
+        # Center the chart using columns when fixed width is used
+        # Using [1, 2, 1] ratio to center the 500px chart
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.plotly_chart(fig, use_container_width=False, config=PLOTLY_CONFIG, key=key)
+            if caption:
+                st.caption(caption)
+    else:
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+        if caption:
+            st.caption(caption)
 
 # Page configuration
 st.set_page_config(
@@ -157,6 +168,19 @@ if 'uploaded_filenames' not in st.session_state:
     st.session_state.uploaded_filenames = []
 if 'config_sources' not in st.session_state:
     st.session_state.config_sources = []
+# Initialize shared selection state (used by centralized selection panel)
+if 'shared_selected_configs' not in st.session_state:
+    st.session_state.shared_selected_configs = []
+if 'shared_selected_objects' not in st.session_state:
+    st.session_state.shared_selected_objects = []
+# Initialize widget keys (avoids flicker when using default parameter)
+if 'sidebar_configs' not in st.session_state:
+    st.session_state.sidebar_configs = []
+if 'sidebar_objects' not in st.session_state:
+    st.session_state.sidebar_objects = []
+# Flag to track if initial widget sync has been done (prevents first-interaction flicker)
+if 'widgets_synced' not in st.session_state:
+    st.session_state.widgets_synced = False
 
 # ============================================================================
 # NOTE: Utility functions (get_color, douglas_peucker, load_data, etc.)
@@ -380,6 +404,20 @@ def create_tennis_court():
 # Unified function to create pitch based on court type
 def create_pitch_figure(court_type='Football'):
     """Create a Plotly figure with pitch markings based on court type"""
+    if not st.session_state.get('show_court_background', True):
+        fig = go.Figure()
+        fig.update_layout(
+            template='plotly_white',
+            height=550,
+            xaxis=dict(title='x (m)', autorange=True),
+            yaxis=dict(title='y (m)', autorange=True, scaleanchor='x', scaleratio=1),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            hovermode='closest',
+            dragmode='pan',
+            uirevision='plain-coordinates'
+        )
+        return fig
     if court_type == 'Tennis':
         return create_tennis_court()
     else:
@@ -484,37 +522,44 @@ def interpolate_points(points, interpolation_steps=5):
 # Visualize static trajectories
 def visualize_static(df, selected_configs, selected_objects, start_time, end_time, 
                      aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football'):
-    """Create static trajectory visualization"""
+    """Create static trajectory visualization
+    
+    Option A: Color by Configuration, Style by Object
+    - Color (hue) = Configuration/Rally - same rally = same color
+    - Line Style = Object (solid, dash, dot, dashdot)
+    - Marker Shape = Object (circle, square, diamond, triangle-up)
+    
+    This matches PDP/MDS analysis where configurations are compared.
+    """
     fig = create_pitch_figure(court_type)
     court_dims = get_court_dimensions(court_type)
     
     center_x = court_dims['width'] / 2
     center_y = court_dims['height'] / 2
     
-    # Build a color map per (config, object) so same object in different configs is distinguishable
-    # User request: "it should be possible to see from the visualisation which objects are the same, but also which configurations are the same"
-    # Strategy: Color by Object ID (consistent hue). Distinguish Configs via legend and hover.
-    
-    # Use consistent colors for objects
-    # User request: "Also make sure that someone with Daltonism also sees things clearly"
-    # User request: "the colour scale is broadly ok, but the orange as the first colour is difficult on the green for someone with daltonism"
-    # User request: "the colors are not decided on the object ID, but on the ID of selection"
-    
-    # Revised Okabe-Ito palette (color-blind friendly).
-    # Prioritizing Blue/Yellow/SkyBlue for better contrast against Green background.
+    # === OPTION A: Color by Configuration, Style by Object ===
+    # Colorblind-friendly Okabe-Ito palette for CONFIGURATIONS
     # Order: Blue, Yellow, Sky Blue, Reddish Purple, Vermilion, Orange, Black
-    okabe_ito_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
+    config_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
     
-    # Pre-calculate colors based on Object ID (deterministic)
-    def get_object_color(obj_id):
-        try:
-            # Try to convert to int for modulo
-            idx = int(obj_id)
-        except:
-            # Fallback for string IDs: stable hash
-            # Python's hash() is randomized per process. Use a simple stable hash.
-            idx = sum(ord(c) for c in str(obj_id))
-        return okabe_ito_palette[idx % len(okabe_ito_palette)]
+    # Line styles for OBJECTS (distinguishable even in grayscale/colorblind)
+    object_line_styles = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot']
+    
+    # Marker shapes for OBJECTS (redundant encoding with line style)
+    object_marker_shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'x']
+    
+    # Build config -> color mapping (deterministic by config index in selection)
+    config_color_map = {}
+    for idx, config in enumerate(selected_configs):
+        config_color_map[config] = config_palette[idx % len(config_palette)]
+    
+    # Build object -> style mapping (deterministic by object index in selection)
+    object_style_map = {}
+    for idx, obj_id in enumerate(selected_objects):
+        object_style_map[obj_id] = {
+            'line_style': object_line_styles[idx % len(object_line_styles)],
+            'marker_shape': object_marker_shapes[idx % len(object_marker_shapes)]
+        }
 
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -548,8 +593,10 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             y_coords = [p['y'] for p in points]
             timestamps = [p['timestamp'] for p in points]
             
-            # Color by Object ID (Deterministic)
-            color = get_object_color(obj_id)
+            # Option A: Color by Configuration, Style by Object
+            color = config_color_map[config]
+            line_style = object_style_map[obj_id]['line_style']
+            marker_shape = object_style_map[obj_id]['marker_shape']
             
             # Create legend group name
             legend_group = f'{config} | Obj {obj_id}'
@@ -574,17 +621,16 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             )
 
             # Draw trajectory line and markers
-            # User request: "starting point and intermediate points are presented big enough"
+            # Option A: Color by Config, Line Style by Object
             # User request: "lines of the movements are a bit to fat. Make them 2/3 the weight." (3 -> 2)
-            # User request: "hoovering over the points gives information; hoovering over a line not yet"
             
-            # Trace 1: Visible Line (Drawn first)
+            # Trace 1: Visible Line (Drawn first) - Color by Config, Style by Object
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines',
                 name=f'{config} - Obj {obj_id}',
                 legendgroup=legend_group,
-                line=dict(color=color, width=2), # Reduced width
+                line=dict(color=color, width=2, dash=line_style),
                 hoverinfo='skip', # Let ghost line handle hover
                 showlegend=True
             ))
@@ -605,7 +651,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                 hoverlabel=dict(bgcolor=color, font_size=12)
             ))
             
-            # Trace 3: Markers (for point hover)
+            # Trace 3: Markers (for point hover) - Shape by Object
             marker_sizes = [6] * len(x_coords) # Intermediate points big enough
             marker_sizes[0] = 10 # Start point bigger
             marker_sizes[-1] = 0 # Hide last marker (replaced by arrow)
@@ -618,7 +664,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                 marker=dict(
                     size=marker_sizes,
                     color=color,
-                    symbol='circle'
+                    symbol=marker_shape
                 ),
                 customdata=timestamps,
                 hovertemplate=point_hover_template,
@@ -716,57 +762,80 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Create initial figure with court background and fixed dimensions
     fig = create_pitch_figure(court_type)
     
-    # Build color map for consistency
-    try:
-        palette = px.colors.qualitative.Plotly
-    except Exception:
-        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    # Count static traces (court markings like net posts) to preserve them
+    num_static_traces = len(fig.data)
     
-    color_map = {}
-    ci = 0
+    # === OPTION A: Color by Configuration, Style by Object ===
+    # Colorblind-friendly Okabe-Ito palette for CONFIGURATIONS
+    config_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
+    
+    # Line styles for OBJECTS (for consistency with static view)
+    object_line_styles = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot']
+    
+    # Marker shapes for OBJECTS
+    object_marker_shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'x']
+    
+    # Build config -> color mapping (deterministic by config index in selection)
+    config_color_map = {}
+    for idx, config in enumerate(selected_configs):
+        config_color_map[config] = config_palette[idx % len(config_palette)]
+    
+    # Build object -> style mapping (same structure as static view for consistency)
+    object_style_map = {}
+    for idx, obj_id in enumerate(selected_objects):
+        object_style_map[obj_id] = {
+            'line_style': object_line_styles[idx % len(object_line_styles)],
+            'marker_shape': object_marker_shapes[idx % len(object_marker_shapes)]
+        }
+    
+    # Pre-calculate all interpolated data to speed up frame generation
+    # Structure: data_cache[config][obj_id] = list of points
+    data_cache = {}
+    
     for config in selected_configs:
+        data_cache[config] = {}
+        config_data = df[df['config_source'] == config]
+        
         for obj_id in selected_objects:
-            color_map[(config, obj_id)] = palette[ci % len(palette)]
-            ci += 1
-    
+            obj_data = config_data[config_data['obj'] == obj_id]
+            obj_data_extended = obj_data[(obj_data['tst'] >= start_time)]
+            obj_data_extended = obj_data_extended.sort_values('tst')
+            
+            if len(obj_data_extended) > 0:
+                all_points = obj_data_extended[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
+                all_points = aggregate_points(all_points, aggregation_type, temporal_resolution)
+                
+                if use_interpolation and len(all_points) > 1:
+                    all_points = interpolate_points(all_points, interpolation_steps)
+                
+                data_cache[config][obj_id] = all_points
+            else:
+                data_cache[config][obj_id] = []
+
     # Prepare data for all objects at all times
     for frame_idx, current_time in enumerate(time_steps):
         frame_data = []
         
         for config in selected_configs:
-            config_data = df[df['config_source'] == config]
-            
             for obj_id in selected_objects:
-                obj_data = config_data[config_data['obj'] == obj_id]
-                # Get all data from start to beyond current_time for interpolation
-                obj_data_extended = obj_data[(obj_data['tst'] >= start_time)]
-                obj_data_extended = obj_data_extended.sort_values('tst')
+                # Get cached points
+                all_points = data_cache[config].get(obj_id, [])
                 
-                if len(obj_data_extended) == 0:
+                if not all_points:
+                    # Add empty traces to maintain trace count/order
+                    frame_data.append(go.Scatter(x=[], y=[], mode='lines')) # Trail
+                    frame_data.append(go.Scatter(x=[], y=[], mode='markers')) # Head
                     continue
                 
-                # Get all available points for interpolation
-                all_points = obj_data_extended[['x', 'y', 'tst']].rename(columns={'tst': 'timestamp'}).to_dict('records')
-                all_points = aggregate_points(all_points, aggregation_type, temporal_resolution)
-                
-                if len(all_points) == 0:
-                    continue
-                
-                # Apply interpolation if enabled
-                if use_interpolation and len(all_points) > 1:
-                    all_points = interpolate_points(all_points, interpolation_steps)
-                
-                # Now filter to show only up to current_time
+                # Filter points up to current_time
                 points = [p for p in all_points if p['timestamp'] <= current_time]
                 
-                # If current_time is between two points, interpolate to exact current_time
+                # Interpolate to exact current_time if needed
                 if use_interpolation and len(points) > 0 and points[-1]['timestamp'] < current_time:
-                    # Find the next point after current_time
                     next_points = [p for p in all_points if p['timestamp'] > current_time]
                     if next_points:
                         prev_point = points[-1]
                         next_point = next_points[0]
-                        # Interpolate to exact current_time
                         time_diff = next_point['timestamp'] - prev_point['timestamp']
                         if time_diff > 0:
                             alpha = (current_time - prev_point['timestamp']) / time_diff
@@ -778,34 +847,85 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                             points.append(interpolated_point)
                 
                 if len(points) == 0:
+                    frame_data.append(go.Scatter(x=[], y=[], mode='lines'))
+                    frame_data.append(go.Scatter(x=[], y=[], mode='markers'))
                     continue
                 
-                color = color_map.get((config, obj_id), utils.get_color(obj_id))
+                # Prepare trace properties
+                color = config_color_map.get(config, '#0072B2')
+                obj_style = object_style_map.get(obj_id, {'line_style': 'solid', 'marker_shape': 'circle'})
+                line_style = obj_style['line_style']
+                marker_shape = obj_style['marker_shape'] # Default shape
                 legend_group = f'{config} | Obj {obj_id}'
                 
-                # For animated trajectories, only show the current position marker
-                # No trajectory lines - this keeps the animation clean and smooth
+                x_coords = [p['x'] for p in points]
+                y_coords = [p['y'] for p in points]
                 current_point = points[-1]
                 
+                # Calculate arrow angle if we have at least 2 points
+                marker_angle = 0
+                final_marker_symbol = marker_shape
+                
+                if len(points) >= 2:
+                    dx = x_coords[-1] - x_coords[-2]
+                    dy = y_coords[-1] - y_coords[-2]
+                    if dx != 0 or dy != 0:
+                        angle_rad = np.arctan2(dy, dx)
+                        angle_deg = np.degrees(angle_rad)
+                        # Use triangle-up as arrow and rotate it
+                        final_marker_symbol = 'triangle-up'
+                        marker_angle = 90 - angle_deg
+                
+                # Trace 1: Trail (Line)
+                frame_data.append(go.Scatter(
+                    x=x_coords, y=y_coords,
+                    mode='lines',
+                    name=f'{config} - Obj {obj_id}',
+                    legendgroup=legend_group,
+                    line=dict(color=color, width=2, dash=line_style),
+                    showlegend=(frame_idx == 0), # Show legend only on first frame (initial state)
+                    hoverinfo='skip'
+                ))
+                
+                # Trace 2: Head (Marker/Arrow)
                 frame_data.append(go.Scatter(
                     x=[current_point['x']], y=[current_point['y']],
                     mode='markers',
-                    marker=dict(size=10, color=color),
+                    marker=dict(
+                        size=12, 
+                        color=color, 
+                        symbol=final_marker_symbol,
+                        angle=marker_angle
+                    ),
                     name=f'{config} - Obj {obj_id}',
                     legendgroup=legend_group,
-                    showlegend=(frame_idx == 0),
+                    showlegend=False,
                     hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
         
-        # Create frame with layout that matches initial figure to prevent jumping
+        # Create frame
+        # We must specify which traces to update using the 'traces' argument
+        # The indices start after the static traces
+        trace_indices = list(range(num_static_traces, num_static_traces + len(frame_data)))
+        
         frames.append(go.Frame(
             data=frame_data,
-            name=str(frame_idx)
+            name=str(frame_idx),
+            traces=trace_indices
         ))
     
-    # Add initial frame data to figure
+    # Add initial frame data to figure (these are the visible traces before animation starts)
     if frames:
         fig.add_traces(frames[0].data)
+    else:
+        # If no frames (no data), add empty traces to match structure
+        for config in selected_configs:
+            for obj_id in selected_objects:
+                fig.add_trace(go.Scatter(x=[], y=[], mode='lines', name=f'{config} - Obj {obj_id}'))
+                fig.add_trace(go.Scatter(x=[], y=[], mode='markers', showlegend=False))
+    
+    # Add frames to figure
+    fig.frames = frames
     
     # Add frames to figure
     fig.frames = frames
@@ -815,6 +935,8 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # Use 80% of animation_speed for smooth transitions without overlap
     transition_duration = int(animation_speed * 0.8)
     
+    # IMPORTANT: Use redraw=False to prevent full plot refresh (flickering)
+    # This updates only the data points, which is much smoother and keeps the background stable
     fig.update_layout(
         updatemenus=[{
             'type': 'buttons',
@@ -873,21 +995,27 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
 def visualize_at_time(df, selected_configs, selected_objects, current_time, 
                       start_time, aggregation_type, temporal_resolution, court_type='Football',
                       use_interpolation=False, interpolation_steps=5):
-    """Create visualization at specific time point"""
+    """Create visualization at specific time point
+    
+    Option A: Color by Configuration, Style by Object
+    """
     fig = create_pitch_figure(court_type)
     
-    # Build color map for consistency
-    try:
-        palette = px.colors.qualitative.Plotly
-    except Exception:
-        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    # === OPTION A: Color by Configuration, Style by Object ===
+    config_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
+    object_line_styles = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot']
+    object_marker_shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'x']
     
-    color_map = {}
-    ci = 0
-    for config in selected_configs:
-        for obj_id in selected_objects:
-            color_map[(config, obj_id)] = palette[ci % len(palette)]
-            ci += 1
+    config_color_map = {}
+    for idx, config in enumerate(selected_configs):
+        config_color_map[config] = config_palette[idx % len(config_palette)]
+    
+    object_style_map = {}
+    for idx, obj_id in enumerate(selected_objects):
+        object_style_map[obj_id] = {
+            'line_style': object_line_styles[idx % len(object_line_styles)],
+            'marker_shape': object_marker_shapes[idx % len(object_marker_shapes)]
+        }
     
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -939,26 +1067,29 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
             x_coords = [p['x'] for p in points]
             y_coords = [p['y'] for p in points]
             
-            color = color_map.get((config, obj_id), utils.get_color(obj_id))
+            # Option A: Color by Config, Style by Object
+            color = config_color_map.get(config, '#0072B2')
+            line_style = object_style_map[obj_id]['line_style']
+            marker_shape = object_style_map[obj_id]['marker_shape']
             legend_group = f'{config} | Obj {obj_id}'
             
-            # Draw trajectory
+            # Draw trajectory with line style by object
             fig.add_trace(go.Scatter(
                 x=x_coords, y=y_coords,
                 mode='lines',
                 name=f'{config} - Obj {obj_id}',
                 legendgroup=legend_group,
-                line=dict(color=color, width=2),
+                line=dict(color=color, width=2, dash=line_style),
                 showlegend=True
             ))
             
-            # Draw current position
+            # Draw current position with marker shape by object
             if points:
                 current_point = points[-1]
                 fig.add_trace(go.Scatter(
                     x=[current_point['x']], y=[current_point['y']],
                     mode='markers',
-                    marker=dict(size=10, color=color),
+                    marker=dict(size=12, color=color, symbol=marker_shape),
                     name=f'Current Obj {obj_id}',
                     legendgroup=legend_group,
                     showlegend=False,
@@ -969,24 +1100,26 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
 
 # Calculate average position
 def visualize_average_position(df, selected_configs, selected_objects, start_time, end_time, court_type='Football'):
-    """Calculate and visualize average positions"""
+    """Calculate and visualize average positions
+    
+    Option A: Color by Configuration, Style by Object
+    """
     fig = create_pitch_figure(court_type)
     
     all_avg_x = []
     all_avg_y = []
     
-    # Build color map for consistency with other views
-    try:
-        palette = px.colors.qualitative.Plotly
-    except Exception:
-        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    # === OPTION A: Color by Configuration, Style by Object ===
+    config_palette = ['#0072B2', '#F0E442', '#56B4E9', '#CC79A7', '#D55E00', '#E69F00', '#000000']
+    object_marker_shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'x']
     
-    color_map = {}
-    ci = 0
-    for config in selected_configs:
-        for obj_id in selected_objects:
-            color_map[(config, obj_id)] = palette[ci % len(palette)]
-            ci += 1
+    config_color_map = {}
+    for idx, config in enumerate(selected_configs):
+        config_color_map[config] = config_palette[idx % len(config_palette)]
+    
+    object_style_map = {}
+    for idx, obj_id in enumerate(selected_objects):
+        object_style_map[obj_id] = object_marker_shapes[idx % len(object_marker_shapes)]
     
     for config in selected_configs:
         config_data = df[df['config_source'] == config]
@@ -1002,13 +1135,15 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                 all_avg_x.append(avg_x)
                 all_avg_y.append(avg_y)
                 
-                color = color_map.get((config, obj_id), utils.get_color(obj_id))
+                # Option A: Color by Config, Marker Shape by Object
+                color = config_color_map.get(config, '#0072B2')
+                marker_shape = object_style_map.get(obj_id, 'circle')
                 legend_group = f'{config} | Obj {obj_id}'
                 
                 fig.add_trace(go.Scatter(
                     x=[avg_x], y=[avg_y],
                     mode='markers+text',
-                    marker=dict(size=15, color=color),
+                    marker=dict(size=15, color=color, symbol=marker_shape),
                     text=[f'Obj {obj_id}'],
                     textposition="top center",
                     name=f'{config} - Obj {obj_id} Avg',
@@ -1414,16 +1549,23 @@ def main():
                 st.session_state.data = df
                 st.session_state.max_time = df['tst'].max()
                 st.session_state.filename = ", ".join(uploaded_names)
+                
+                # Only initialize selections when NEW files are uploaded (not on every rerun)
                 if uploaded_names != st.session_state.uploaded_filenames:
                     st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
-                st.session_state.uploaded_filenames = uploaded_names
-                st.session_state.config_sources = df['config_source'].drop_duplicates().tolist()
-                
-                # Initialize shared selections when new data is loaded
-                config_sources = df['config_source'].drop_duplicates().tolist()
-                objects = sorted(df['obj'].unique())
-                st.session_state.shared_selected_configs = config_sources
-                st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
+                    st.session_state.uploaded_filenames = uploaded_names
+                    st.session_state.config_sources = df['config_source'].drop_duplicates().tolist()
+                    
+                    # Initialize shared selections when new data is loaded
+                    config_sources = df['config_source'].drop_duplicates().tolist()
+                    objects = sorted(df['obj'].unique())
+                    st.session_state.shared_selected_configs = config_sources
+                    st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
+                    # Also update widget keys directly to avoid flicker
+                    st.session_state.sidebar_configs = config_sources
+                    st.session_state.sidebar_objects = objects[:min(5, len(objects))]
+                    # Mark widgets as synced since we just set both shared and widget state
+                    st.session_state.widgets_synced = True
             else:
                 st.error("No valid data found in the uploaded file(s). Please verify the format.")
                 df = None
@@ -1434,6 +1576,11 @@ def main():
             st.info(f"Current file(s): {st.session_state.filename}")
             
             st.header("Court Type")
+            st.checkbox(
+                "Show court background",
+                value=False,
+                key="show_court_background"
+            )
             court_type = st.radio(
                 "Select court type",
                 ["Football", "Tennis"],
@@ -1448,26 +1595,121 @@ def main():
             config_sources = df['config_source'].drop_duplicates().tolist()
             objects = sorted(df['obj'].unique())
             
+            # One-time sync: On first render with data, ensure widget keys match shared state
+            # This prevents the first-interaction flicker by syncing before widgets are created
+            if not st.session_state.widgets_synced and st.session_state.data is not None:
+                # Sync configs if widget is empty but shared has values
+                if not st.session_state.sidebar_configs and st.session_state.shared_selected_configs:
+                    st.session_state.sidebar_configs = st.session_state.shared_selected_configs
+                # Sync objects if widget is empty but shared has values
+                if not st.session_state.sidebar_objects and st.session_state.shared_selected_objects:
+                    st.session_state.sidebar_objects = st.session_state.shared_selected_objects
+                # Mark as synced so we don't do this again
+                st.session_state.widgets_synced = True
+                # No rerun needed as we set the state before widget creation
+            
             # Configuration selection
             st.subheader("Configurations (Rallies)")
+            
+            # Add helper buttons for configurations
+            col_c1, col_c2 = st.columns(2)
+            if col_c1.button("Select All Configs", key="btn_select_all_configs"):
+                st.session_state.sidebar_configs = config_sources
+                st.rerun()
+            if col_c2.button("Deselect All Configs", key="btn_deselect_all_configs"):
+                st.session_state.sidebar_configs = []
+                st.rerun()
+            
+            # Range selection for configurations
+            with st.expander("Select Range of Configs"):
+                st.caption("Select a start and end configuration to select everything in between.")
+                rc_col1, rc_col2 = st.columns(2)
+                with rc_col1:
+                    start_config = st.selectbox("Start Config", config_sources, key="range_start_config")
+                with rc_col2:
+                    end_config = st.selectbox("End Config", config_sources, index=len(config_sources)-1, key="range_end_config")
+                
+                if st.button("Select Range", key="btn_select_range_configs"):
+                    try:
+                        start_idx = config_sources.index(start_config)
+                        end_idx = config_sources.index(end_config)
+                        
+                        # Handle reverse selection
+                        if start_idx > end_idx:
+                            start_idx, end_idx = end_idx, start_idx
+                            
+                        range_selection = config_sources[start_idx : end_idx + 1]
+                        
+                        # Combine with existing selection or replace? 
+                        # Usually range selection implies "this is what I want", but in multiselect context, 
+                        # users might want to add a range to existing. 
+                        # Let's add to existing to be safe, user can deselect all first if they want only the range.
+                        current_selection = st.session_state.sidebar_configs if "sidebar_configs" in st.session_state else []
+                        new_selection = list(set(current_selection + range_selection))
+                        
+                        st.session_state.sidebar_configs = new_selection
+                        st.rerun()
+                    except ValueError:
+                        st.error("Invalid range selection")
+                
+            # Note: Don't use both 'default' and 'key' together - it causes warnings.
+            # The key binds to session_state, so we just ensure session_state is initialized.
             selected_configs = st.multiselect(
                 "Select configurations to analyze",
                 config_sources,
-                default=st.session_state.shared_selected_configs,
                 key="sidebar_configs",
                 help="These configurations will be used across all analysis methods"
             )
+            # Sync back to shared state
             st.session_state.shared_selected_configs = selected_configs
             
             # Object selection
             st.subheader("Objects (Players/Entities)")
+            
+            # Add helper buttons for objects
+            col_o1, col_o2 = st.columns(2)
+            if col_o1.button("Select All Objects", key="btn_select_all_objects"):
+                st.session_state.sidebar_objects = objects
+                st.rerun()
+            if col_o2.button("Deselect All Objects", key="btn_deselect_all_objects"):
+                st.session_state.sidebar_objects = []
+                st.rerun()
+            
+            # Range selection for objects
+            with st.expander("Select Range of Objects"):
+                st.caption("Select a start and end object to select everything in between.")
+                ro_col1, ro_col2 = st.columns(2)
+                with ro_col1:
+                    start_obj = st.selectbox("Start Object", objects, key="range_start_obj")
+                with ro_col2:
+                    end_obj = st.selectbox("End Object", objects, index=len(objects)-1, key="range_end_obj")
+                
+                if st.button("Select Range", key="btn_select_range_objects"):
+                    try:
+                        start_idx = objects.index(start_obj)
+                        end_idx = objects.index(end_obj)
+                        
+                        if start_idx > end_idx:
+                            start_idx, end_idx = end_idx, start_idx
+                            
+                        range_selection = objects[start_idx : end_idx + 1]
+                        
+                        current_selection = st.session_state.sidebar_objects if "sidebar_objects" in st.session_state else []
+                        new_selection = list(set(current_selection + range_selection))
+                        
+                        st.session_state.sidebar_objects = new_selection
+                        st.rerun()
+                    except ValueError:
+                        st.error("Invalid range selection")
+                
+            # Note: Don't use both 'default' and 'key' together - it causes warnings.
             selected_objects = st.multiselect(
                 "Select objects to analyze",
                 objects,
-                default=st.session_state.shared_selected_objects,
                 key="sidebar_objects",
                 help="These objects will be used across all analysis methods"
             )
+            # Sync back to shared state
             st.session_state.shared_selected_objects = selected_objects
             
             # Display current selection summary
@@ -1639,6 +1881,11 @@ def main():
             # Create tabs for different visualization types
             viz_tabs = st.tabs(["Static Trajectories", "Animated Trajectories", "Time Point View", "Average Positions"])
             
+            # Determine if we should use container width based on court type
+            # Football (horizontal) benefits from full width
+            # Tennis (vertical) looks better with fixed width to preserve aspect ratio without huge height
+            use_container_width = (court_type == 'Football')
+            
             with viz_tabs[0]:
                 st.markdown("### Static Trajectory View")
                 st.info("Shows complete trajectory paths for selected objects and configurations.")
@@ -1655,7 +1902,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"static_traj_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating static visualization: {str(e)}")
             
@@ -1708,7 +1955,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"animated_traj_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating animated visualization: {str(e)}")
             
@@ -1761,7 +2008,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"time_point_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating time point visualization: {str(e)}")
             
@@ -1779,7 +2026,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"avg_pos_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating average position visualization: {str(e)}")
     
@@ -1902,6 +2149,9 @@ def main():
             # Create comparison tabs
             alignment_tabs = st.tabs(["Aligned View", "Original View", "Side-by-Side Comparison"])
             
+            # Determine if we should use container width based on court type
+            use_container_width = (court_type == 'Football')
+            
             with alignment_tabs[0]:
                 st.markdown("### Center-Aligned Trajectories")
                 st.info("All trajectories translated to start at the court center. This view highlights movement patterns.")
@@ -1917,7 +2167,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"2sa_aligned_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating aligned visualization: {str(e)}")
             
@@ -1936,7 +2186,7 @@ def main():
                     config_str = "_".join(sorted(str(c) for c in selected_configs))
                     obj_str = "_".join(sorted(str(o) for o in selected_objects))
                     chart_key = f"2sa_original_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key)
+                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
                     st.error(f"Error creating original visualization: {str(e)}")
             
@@ -1961,7 +2211,7 @@ def main():
                         config_str = "_".join(sorted(str(c) for c in selected_configs))
                         obj_str = "_".join(sorted(str(o) for o in selected_objects))
                         chart_key = f"2sa_sbs_aligned_{config_str}_{obj_str}"
-                        render_interactive_chart(fig_aligned, key=chart_key)
+                        render_interactive_chart(fig_aligned, key=chart_key, use_container_width=use_container_width)
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
                 
@@ -1980,7 +2230,7 @@ def main():
                         config_str = "_".join(sorted(str(c) for c in selected_configs))
                         obj_str = "_".join(sorted(str(o) for o in selected_objects))
                         chart_key = f"2sa_sbs_original_{config_str}_{obj_str}"
-                        render_interactive_chart(fig_original, key=chart_key)
+                        render_interactive_chart(fig_original, key=chart_key, use_container_width=use_container_width)
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
             
@@ -2432,7 +2682,9 @@ def main():
                         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
                     )
                     
-                    render_interactive_chart(fig_court, "Trajectories used to generate sequences")
+                    # Determine if we should use container width based on court type
+                    use_container_width = (st.session_state.court_type == 'Football')
+                    render_interactive_chart(fig_court, "Trajectories used to generate sequences", use_container_width=use_container_width)
                     
                     st.caption("""
                     **Legend**: Each color represents a different trajectory | 
@@ -2759,7 +3011,9 @@ def main():
                             )
                         )
                         
-                        render_interactive_chart(fig_clusters, "Trajectories colored by cluster assignment")
+                        # Determine if we should use container width based on court type
+                        use_container_width = (st.session_state.court_type == 'Football')
+                        render_interactive_chart(fig_clusters, "Trajectories colored by cluster assignment", use_container_width=use_container_width)
                         
                         st.caption("""
                         **Legend**: Each color represents a different cluster | 
@@ -4009,7 +4263,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 # Provide visualization options for large matrices
                 st.markdown("**Visualization Options:**")
-                col_viz_opt1, col_viz_opt2 = st.columns([2, 1])
+                col_viz_opt1, col_viz_opt2, col_viz_opt3 = st.columns([2, 1, 2])
                 
                 with col_viz_opt1:
                     if n_configs > 30:
@@ -4036,38 +4290,90 @@ Each window captures a snapshot of spatial relationships at different points in 
                     else:
                         text_size = 8
                 
+                with col_viz_opt3:
+                    use_binary = st.checkbox("Binary Heatmap", value=False, key="pdp_binary_heatmap")
+                    if use_binary:
+                        binary_threshold = st.number_input("Threshold", value=5.0, step=0.5, key="pdp_binary_threshold")
+                
                 # Compute optimal size based on number of configurations
                 # Aim for ~10-15 pixels per cell for good readability
                 cell_size = max(10, min(30, 600 // n_configs))
                 heatmap_size = max(500, min(1200, n_configs * cell_size))
                 
+                # Prepare heatmap data
+                heatmap_z = display_matrix
+                heatmap_colorscale = 'Viridis'
+                heatmap_zmin = color_zmin
+                heatmap_zmax = color_zmax
+                heatmap_colorbar = dict(title=colorbar_title)
+                
+                # DEBUG: Show what values are being passed to the heatmap
+                with st.expander("🔍 DEBUG: Heatmap Data Info", expanded=False):
+                    st.write("**Matrix Statistics:**")
+                    st.write(f"- Shape: {display_matrix.shape}")
+                    st.write(f"- dtype: {display_matrix.dtype}")
+                    st.write(f"- Min value: {np.min(display_matrix):.4f}")
+                    st.write(f"- Max value: {np.max(display_matrix):.4f}")
+                    st.write(f"- Mean value: {np.mean(display_matrix):.4f}")
+                    st.write(f"- Any NaN: {np.any(np.isnan(display_matrix))}")
+                    st.write(f"- Any Inf: {np.any(np.isinf(display_matrix))}")
+                    st.write("**Sample values (first 3x3):**")
+                    st.write(display_matrix[:3, :3] if display_matrix.shape[0] >= 3 else display_matrix)
+                    st.write(f"**color_zmin:** {color_zmin}, **color_zmax:** {color_zmax}")
+                    st.write(f"**show_normalized:** {show_normalized}")
+                
+                if use_binary:
+                    # Create binary matrix: 0 for <= threshold, 1 for > threshold
+                    heatmap_z = np.where(display_matrix > binary_threshold, 1, 0)
+                    # Define binary colorscale with hard transition at 0.5
+                    # This ensures the legend shows two distinct blocks of color
+                    heatmap_colorscale = [[0, 'white'], [0.5, 'white'], [0.5, 'darkblue'], [1, 'darkblue']]
+                    heatmap_zmin = 0
+                    heatmap_zmax = 1
+                    heatmap_colorbar = dict(
+                        title=f"Binary (> {binary_threshold})",
+                        tickvals=[0.25, 0.75],
+                        ticktext=["<= Threshold", "> Threshold"]
+                    )
+
+                # Build hover text matrix with pre-formatted strings
+                hover_text = []
+                for i, row_id in enumerate(config_ids):
+                    hover_row = []
+                    for j, col_id in enumerate(config_ids):
+                        dist_val = display_matrix[i, j]
+                        hover_row.append(f"From: {row_id}<br>To: {col_id}<br>Distance: {dist_val:.2f}")
+                    hover_text.append(hover_row)
+
                 # Create heatmap - respect user's choice regardless of matrix size
                 if show_text:
                     # With text annotations - user explicitly requested this
                     fig_heatmap = go.Figure(data=go.Heatmap(
-                        z=display_matrix,
+                        z=heatmap_z,
                         x=config_ids,
                         y=config_ids,
-                        colorscale='Viridis',
-                        zmin=color_zmin,
-                        zmax=color_zmax,
-                        text=display_matrix,
-                        texttemplate='%{text:.1f}',
+                        colorscale=heatmap_colorscale,
+                        zmin=heatmap_zmin,
+                        zmax=heatmap_zmax,
+                        text=np.round(display_matrix, 1).astype(str),
+                        texttemplate='%{text}',
                         textfont={"size": text_size},
-                        colorbar=dict(title=colorbar_title),
-                        hovertemplate='From: %{y}<br>To: %{x}<br>Distance: %{z:.2f}<extra></extra>'
+                        colorbar=heatmap_colorbar,
+                        hoverinfo='text',
+                        hovertext=hover_text
                     ))
                 else:
                     # Without text - cleaner visualization, use hover for values
                     fig_heatmap = go.Figure(data=go.Heatmap(
-                        z=display_matrix,
+                        z=heatmap_z,
                         x=config_ids,
                         y=config_ids,
-                        colorscale='Viridis',
-                        zmin=color_zmin,
-                        zmax=color_zmax,
-                        colorbar=dict(title=colorbar_title),
-                        hovertemplate='From: %{y}<br>To: %{x}<br>Distance: %{z:.2f}<extra></extra>'
+                        colorscale=heatmap_colorscale,
+                        zmin=heatmap_zmin,
+                        zmax=heatmap_zmax,
+                        colorbar=heatmap_colorbar,
+                        hoverinfo='text',
+                        hovertext=hover_text
                     ))
                 
                 # Smart layout adjustments for axis labels
@@ -4213,7 +4519,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                         show_buffers=False,
                         buffer_size=0.5,
                         show_rough=False,
-                        rough_tolerance=0.3
+                        rough_x=0.3,
+                        rough_y=0.3
                     )
                     
                     # Create a unique key based on selections to force chart recreation
@@ -4430,8 +4737,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     if linkage_matrix_clust is not None:
                         # We need to know the current N clusters to color the dendrogram
-                        # We'll use the session state value if it exists, otherwise optimal
-                        current_n = st.session_state.get('pdp_current_n', optimal_n_clust)
+                        # Use the slider value if available (prevents lag), otherwise use optimal
+                        if 'pdp_n_clusters' in st.session_state:
+                            current_n = st.session_state.pdp_n_clusters
+                        else:
+                            current_n = optimal_n_clust
                         
                         fig_dend = pdp_analysis.create_interactive_dendrogram(
                             linkage_matrix_clust,
@@ -4471,7 +4781,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             )
                         
                         with col2:
-                            st.metric("Optimal Clusters", optimal_n_clust)
+                            st.metric("Optimal Clusters", optimal_n_clust, help="Recommended number of clusters detected using the Elbow Method. This analyzes within-cluster distances for k=2 to k=10, finds the 'elbow point' where adding more clusters yields diminishing returns, and validates with silhouette scores. Use this as a starting point - you can adjust manually based on your domain knowledge.")
                         
                         # Show cluster assignments
                         if cluster_labels_clust is not None:
@@ -4565,7 +4875,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.markdown(
                         "### Find Similar Configurations "
                         + "<span title=\"Find configurations most similar to a selected one:\\n\\n• Select a target configuration\\n• View the K most similar configurations ranked by PDP distance\\n• Lower distance = more similar movement patterns\" "
-                        + "style=\"cursor:help; font-size:1.1em;\">,</span>",
+                        + "style=\"cursor:help; font-size:0.8em;\">❓</span>",
                         unsafe_allow_html=True
                     )
                     
@@ -4579,7 +4889,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         )
                     
                     with col2:
-                        max_k = min(10, len(config_ids) - 1)
+                        max_k = len(config_ids) - 1  # Maximum is all other configurations
                         if max_k <= 1:
                             k_similar = max(1, max_k)
                             st.info(f"K fixed at {k_similar} (only {len(config_ids)} configurations available)")
@@ -4628,6 +4938,130 @@ Each window captures a snapshot of spatial relationships at different points in 
                         )
                         
                         render_interactive_chart(fig_topk, caption="Lower distance = more similar")
+                    
+                    # ===============================================================
+                    # FINE-GRAINED PINPOINT DIFFERENCES
+                    # ===============================================================
+                    st.markdown("---")
+                    st.markdown("### Fine-Grained Pinpoint Differences " + 
+                        '<span title="Compare exactly two configurations to see WHERE they differ:&#10;&#10;• Red lines connect object positions where inequality matrices differ&#10;• Thicker lines = larger differences&#10;• See the exact matrix cells that contribute to the PDP distance" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        unsafe_allow_html=True)
+                    
+                    # Configuration selection - exactly 2
+                    col_fg1, col_fg2 = st.columns(2)
+                    
+                    with col_fg1:
+                        fg_config1 = st.selectbox(
+                            "First configuration",
+                            options=config_ids,
+                            index=0,
+                            key="fg_config1",
+                            help="Select the first configuration to compare"
+                        )
+                    
+                    with col_fg2:
+                        # Filter out first config from options
+                        other_configs = [c for c in config_ids if c != fg_config1]
+                        fg_config2 = st.selectbox(
+                            "Second configuration",
+                            options=other_configs,
+                            index=0 if other_configs else None,
+                            key="fg_config2",
+                            help="Select the second configuration to compare"
+                        )
+                    
+                    # Show which variant/settings are being used
+                    st.info(f"**Using PDP settings:** Variant = {clust_variant_name}, Window length = {window_length}")
+                    
+                    if fg_config1 and fg_config2 and fg_config1 != fg_config2:
+                        # Determine parameters based on active variant
+                        fg_variant = active_variant_clust
+                        fg_buffer_x = buffer_x if fg_variant in ['buffer', 'buffer_rough'] else 0
+                        fg_buffer_y = buffer_y if fg_variant in ['buffer', 'buffer_rough'] else 0
+                        fg_rough_x = rough_x if fg_variant in ['rough', 'buffer_rough'] else 0
+                        fg_rough_y = rough_y if fg_variant in ['rough', 'buffer_rough'] else 0
+                        
+                        # Get external points if used
+                        fg_external_points = st.session_state.get('pdp_external_points', []) if st.session_state.get('pdp_use_external', False) else None
+                        
+                        # Compute and visualize differences
+                        with st.spinner("Computing fine-grained differences..."):
+                            fig_diff, diff_result, diff_summary = pdp_analysis.create_difference_visualization(
+                                df, fg_config1, fg_config2, selected_objects,
+                                start_time, end_time, window_length,
+                                fg_buffer_x, fg_buffer_y, fg_rough_x, fg_rough_y,
+                                fg_external_points
+                            )
+                        
+                        if fig_diff is not None:
+                            # Show summary metrics
+                            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                            with col_m1:
+                                st.metric("Total Differences", int(diff_summary.get('total_cell_differences', 0)))
+                            with col_m2:
+                                st.metric("Windows with Diffs", f"{diff_summary.get('windows_with_differences', 0)}/{diff_summary.get('n_windows', 0)}")
+                            with col_m3:
+                                st.metric("Position Pairs", diff_summary.get('position_differences', 0))
+                            with col_m4:
+                                max_win = diff_summary.get('max_difference_window')
+                                st.metric("Max Diff Window", f"W{max_win}" if max_win is not None else "N/A")
+                            
+                            # Show the side-by-side tennis court visualization
+                            st.markdown("#### Trajectory Comparison with Difference Lines")
+                            st.markdown("**Red lines** connect positions where the inequality matrices differ. **Thicker lines** = larger differences.")
+                            render_interactive_chart(fig_diff)
+                            
+                            # Show detailed matrices in an expander
+                            with st.expander("View Inequality Matrices " + 
+                                '<span title="Matrix Legend:&#10;&#10;Inequality Matrices:&#10;• Green (0): Row point is LEFT/BELOW column point&#10;• Yellow (1): Points are EQUAL (within tolerance)&#10;• Red (2): Row point is RIGHT/ABOVE column point&#10;&#10;Difference Matrices:&#10;• Light Blue: Same value in both configs&#10;• Orange: Different values between configs" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                                expanded=False):
+                                # Allow selecting which windows to show
+                                n_windows = diff_summary.get('n_windows', 1)
+                                if n_windows > 1:
+                                    selected_windows_fg = st.multiselect(
+                                        "Select windows to display",
+                                        options=list(range(n_windows)),
+                                        default=[0],
+                                        key="fg_windows_select",
+                                        help="Choose which time windows to show matrices for"
+                                    )
+                                else:
+                                    selected_windows_fg = [0]
+                                
+                                if selected_windows_fg and diff_result:
+                                    fig_matrices = pdp_analysis.create_difference_matrices_figure(
+                                        diff_result, fg_config1, fg_config2, selected_windows_fg
+                                    )
+                                    if fig_matrices:
+                                        render_interactive_chart(fig_matrices)
+                            
+                            # Show difference by window chart
+                            if diff_summary.get('difference_by_window'):
+                                with st.expander("Difference by Window", expanded=False):
+                                    win_df = pd.DataFrame(diff_summary['difference_by_window'])
+                                    # Convert window index to string to force categorical x-axis
+                                    window_labels = [f"W{w}" for w in win_df['window']]
+                                    fig_by_window = go.Figure(data=[
+                                        go.Bar(
+                                            x=window_labels,
+                                            y=win_df['total_diff'],
+                                            marker_color=['red' if d > 0 else 'green' for d in win_df['total_diff']],
+                                            text=win_df['total_diff'],
+                                            textposition='outside'
+                                        )
+                                    ])
+                                    fig_by_window.update_layout(
+                                        title="Total Difference per Time Window",
+                                        xaxis_title="Window",
+                                        yaxis_title="Sum of Absolute Differences",
+                                        xaxis_type='category',
+                                        height=300
+                                    )
+                                    render_interactive_chart(fig_by_window)
+                        else:
+                            st.warning("Could not compute differences. Make sure both configurations have comparable data.")
+                    else:
+                        st.info("Select two different configurations above to compare them.")
                     
                     # ===============================================================
                     # TRAJECTORY COMPARISON VISUALIZATION
@@ -4817,19 +5251,26 @@ Each window captures a snapshot of spatial relationships at different points in 
                     with col_viz2:
                         st.markdown("**Rough Tolerance (Comparison Zone)**")
                         show_rough = st.checkbox("Show rough zones", value=False, key="pdp_show_rough",
-                                                help="Rough defines a TOLERANCE ZONE where points are considered 'approximately equal' in comparisons")
+                                                help="Rough defines a TOLERANCE ZONE (rectangle) where points are considered 'approximately equal' in comparisons")
                         if show_rough:
-                            rough_tolerance = st.slider("Rough radius (meters)", min_value=0.1, max_value=2.0, 
-                                                       value=0.3, step=0.1, key="pdp_rough_tolerance",
-                                                       help="Radius of tolerance zone for approximate equality")
+                            col_rough_x, col_rough_y = st.columns(2)
+                            with col_rough_x:
+                                viz_rough_x = st.slider("Rough X (meters)", min_value=0.1, max_value=2.0, 
+                                                       value=0.3, step=0.1, key="pdp_viz_rough_x",
+                                                       help="Half-width of tolerance rectangle (X dimension)")
+                            with col_rough_y:
+                                viz_rough_y = st.slider("Rough Y (meters)", min_value=0.1, max_value=2.0, 
+                                                       value=0.3, step=0.1, key="pdp_viz_rough_y",
+                                                       help="Half-height of tolerance rectangle (Y dimension)")
                         else:
-                            rough_tolerance = 0.3
+                            viz_rough_x = 0.3
+                            viz_rough_y = 0.3
                     
                     if show_buffers or show_rough:
                         st.info(f"""
                         **Visualization Legend:**
                         - **Buffer points** (small X markers): Actual extra data points added in 'buffer' variant (4 points per original: left, right, up, down)
-                        - **Rough zones** (dashed circles): Tolerance zones for 'rough' variant - points within this radius are considered "approximately equal"
+                        - **Rough zones** (dashed rectangles): Tolerance zones for 'rough' variant - points within this rectangle are considered "approximately equal"
                         
                         **Key Difference:**
                         - Buffer = MORE data points (expands dataset)
@@ -4852,7 +5293,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                             show_buffers=show_buffers,
                             buffer_size=buffer_size,
                             show_rough=show_rough,
-                            rough_tolerance=rough_tolerance
+                            rough_x=viz_rough_x,
+                            rough_y=viz_rough_y
                         )
                         
                         render_interactive_chart(fig_traj, 
@@ -4860,15 +5302,17 @@ Each window captures a snapshot of spatial relationships at different points in 
                                                       f"Time window: {start_time:.1f}s - {end_time:.1f}s")
                         
                         # Show pairwise similarities if 2+ configs selected
-                        if len(selected_configs_viz) >= 2:
+                        # Filter to only configs that exist in current config_ids (handles stale session state)
+                        valid_configs_viz = [c for c in selected_configs_viz if c in config_ids]
+                        if len(valid_configs_viz) >= 2:
                             st.markdown("**Pairwise Similarities:**")
                             sim_data = []
-                            for i in range(len(selected_configs_viz)):
-                                for j in range(i+1, len(selected_configs_viz)):
-                                    config_i = selected_configs_viz[i]
-                                    config_j = selected_configs_viz[j]
-                                    idx_i = config_ids.index(config_i)
-                                    idx_j = config_ids.index(config_j)
+                            for i in range(len(valid_configs_viz)):
+                                for j in range(i+1, len(valid_configs_viz)):
+                                    config_i = valid_configs_viz[i]
+                                    config_j = valid_configs_viz[j]
+                                    idx_i = list(config_ids).index(config_i)
+                                    idx_j = list(config_ids).index(config_j)
                                     pdp_dist = distance_matrix[idx_i, idx_j]
                                     similarity = 100 - pdp_dist
                                     sim_data.append({
@@ -7476,7 +7920,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 }]
                             )
                             
-                            render_interactive_chart(fig, "Animated density heat map")
+                            # Determine if we should use container width based on court type
+                            use_container_width = (court_type == 'Football')
+                            render_interactive_chart(fig, "Animated density heat map", use_container_width=use_container_width)
                             
                             # Static aggregate heatmap
                             st.subheader("Aggregate Heat Map")
@@ -7497,7 +7943,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 hovertemplate='x: %{x:.1f}<br>y: %{y:.1f}<br>density: %{z}<extra></extra>'
                             ))
                             
-                            render_interactive_chart(fig_static, "Overall density across entire time period")
+                            render_interactive_chart(fig_static, "Overall density across entire time period", use_container_width=use_container_width)
             
         elif selected_extra_method == "PDP":
             st.subheader("📐 PDP (Pairwise Distance Profile)")
@@ -7735,7 +8181,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                                         marker=dict(size=4, color=color)
                                     ))
                                 
-                                render_interactive_chart(fig_traj, "Trajectories analyzed with QTC")
+                                # Determine if we should use container width based on court type
+                                use_container_width = (court_type == 'Football')
+                                render_interactive_chart(fig_traj, "Trajectories analyzed with QTC", use_container_width=use_container_width)
 
 # Run the app
 if __name__ == "__main__":
