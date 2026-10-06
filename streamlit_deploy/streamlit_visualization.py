@@ -423,6 +423,11 @@ def create_pitch_figure(court_type='Football'):
     else:
         return create_football_pitch()
 
+# Format a raw timestamp value as given in the data (no unit assumed)
+def format_tst(value):
+    """Return 'TST <value>', e.g. 'TST 12' or 'TST 0.0417'"""
+    return f"TST {value:g}"
+
 # Get court dimensions based on type
 def get_court_dimensions(court_type='Football'):
     """Return court dimensions based on type"""
@@ -603,7 +608,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             
             # Prepare hover text
             # Line hover: Conf ID, Obj ID, Time period
-            time_period = f"{timestamps[0]:.2f}s - {timestamps[-1]:.2f}s"
+            time_period = f"{format_tst(timestamps[0])} - {format_tst(timestamps[-1])}"
             line_hover_text = (
                 f"<b>Config:</b> {config}<br>"
                 f"<b>Object:</b> {obj_id}<br>"
@@ -615,7 +620,7 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
             point_hover_template = (
                 f"<b>Config:</b> {config}<br>"
                 f"<b>Object:</b> {obj_id}<br>"
-                f"<b>Time:</b> %{{customdata:.2f}}s<br>"
+                f"<b>TST:</b> %{{customdata}}<br>"
                 f"x: %{{x:.2f}}m<br>y: %{{y:.2f}}m"
                 f"<extra></extra>"
             )
@@ -900,7 +905,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                     name=f'{config} - Obj {obj_id}',
                     legendgroup=legend_group,
                     showlegend=False,
-                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>{format_tst(current_time)}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
         
         # Create frame
@@ -929,7 +934,24 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     
     # Add frames to figure
     fig.frames = frames
-    
+
+    # Fix the axes to the spatial extent of the whole episode (plus court, if drawn),
+    # so the animation is not zoomed to the first frame only
+    episode_points = [p for config_points in data_cache.values() for points in config_points.values()
+                      for p in points if p['timestamp'] <= end_time]
+    if episode_points:
+        xs = [p['x'] for p in episode_points]
+        ys = [p['y'] for p in episode_points]
+        x_min, x_max, y_min, y_max = min(xs), max(xs), min(ys), max(ys)
+        if fig.layout.xaxis.range is not None:
+            x_min, x_max = min(x_min, fig.layout.xaxis.range[0]), max(x_max, fig.layout.xaxis.range[1])
+        if fig.layout.yaxis.range is not None:
+            y_min, y_max = min(y_min, fig.layout.yaxis.range[0]), max(y_max, fig.layout.yaxis.range[1])
+        x_margin = max(0.05 * (x_max - x_min), 0.5)
+        y_margin = max(0.05 * (y_max - y_min), 0.5)
+        fig.update_xaxes(range=[x_min - x_margin, x_max + x_margin], autorange=False)
+        fig.update_yaxes(range=[y_min - y_margin, y_max + y_margin], autorange=False)
+
     # Add animation controls
     # Set transition duration to create smooth movement between frames
     # Use 80% of animation_speed for smooth transitions without overlap
@@ -976,7 +998,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                         'mode': 'immediate',
                         'transition': {'duration': 0}
                     }],
-                    'label': f't={int(time_steps[i])}' if time_steps[i] == int(time_steps[i]) else f't={time_steps[i]:.1f}',
+                    'label': format_tst(time_steps[i]),
                     'method': 'animate'
                 }
                 for i, f in enumerate(frames)
@@ -1093,7 +1115,7 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
                     name=f'Current Obj {obj_id}',
                     legendgroup=legend_group,
                     showlegend=False,
-                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>Time: {current_time:.2f}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
+                    hovertemplate=f'Object {obj_id}<br>Config: {config}<br>{format_tst(current_time)}<br>x: {current_point["x"]:.2f}m<br>y: {current_point["y"]:.2f}m<extra></extra>'
                 ))
     
     return fig
@@ -4529,7 +4551,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     render_interactive_chart(fig_inspect, 
                                            caption=f"Showing {len(selected_configs_inspect)} configuration(s) | " +
-                                                  f"Time: {start_time:.1f}s - {end_time:.1f}s",
+                                                  f"Time: {format_tst(start_time)} - {format_tst(end_time)}",
                                            key=chart_key)
                     
                     # Interpretation help
@@ -5300,7 +5322,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         render_interactive_chart(fig_traj, 
                                                caption=f"Comparing {len(selected_configs_viz)} configurations | " +
-                                                      f"Time window: {start_time:.1f}s - {end_time:.1f}s")
+                                                      f"Time window: {format_tst(start_time)} - {format_tst(end_time)}")
                         
                         # Show pairwise similarities if 2+ configs selected
                         # Filter to only configs that exist in current config_ids (handles stale session state)
