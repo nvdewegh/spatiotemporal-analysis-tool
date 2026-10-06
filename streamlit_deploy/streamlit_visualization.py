@@ -163,7 +163,7 @@ if 'max_time' not in st.session_state:
 if 'filename' not in st.session_state:
     st.session_state.filename = None
 if 'court_type' not in st.session_state:
-    st.session_state.court_type = 'Tennis'
+    st.session_state.court_type = 'No selection'
 if 'uploaded_filenames' not in st.session_state:
     st.session_state.uploaded_filenames = []
 if 'config_sources' not in st.session_state:
@@ -404,7 +404,7 @@ def create_tennis_court():
 # Unified function to create pitch based on court type
 def create_pitch_figure(court_type='Football'):
     """Create a Plotly figure with pitch markings based on court type"""
-    if not st.session_state.get('show_court_background', True):
+    if court_type not in ('Tennis', 'Football') or not st.session_state.get('show_court_background', True):
         fig = go.Figure()
         fig.update_layout(
             template='plotly_white',
@@ -1581,10 +1581,11 @@ def main():
                 value=False,
                 key="show_court_background"
             )
+            court_options = ["No selection", "Football", "Tennis"]
             court_type = st.radio(
                 "Select court type",
-                ["Football", "Tennis"],
-                index=0 if st.session_state.court_type == 'Football' else 1
+                court_options,
+                index=court_options.index(st.session_state.court_type) if st.session_state.court_type in court_options else 0
             )
             st.session_state.court_type = court_type
             
@@ -7805,12 +7806,6 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             if st.button("Generate Heat Map Animation", key="run_heatmap_animation"):
                 with st.spinner("Generating heat map animation..."):
-                    court_dims = get_court_dimensions(court_type)
-                    
-                    # Create grid
-                    x_edges = np.linspace(0, court_dims['width'], grid_resolution)
-                    y_edges = np.linspace(0, court_dims['height'], grid_resolution)
-                    
                     # Get time steps
                     filtered_df = df[
                         (df['config_source'].isin(selected_configs)) &
@@ -7818,6 +7813,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                         (df['tst'] >= start_time) &
                         (df['tst'] <= end_time)
                     ]
+                    
+                    # Create grid (data extent when no court is selected)
+                    if court_type in ('Tennis', 'Football'):
+                        court_dims = get_court_dimensions(court_type)
+                        x_edges = np.linspace(0, court_dims['width'], grid_resolution)
+                        y_edges = np.linspace(0, court_dims['height'], grid_resolution)
+                    else:
+                        x_edges = np.linspace(filtered_df['x'].min(), filtered_df['x'].max(), grid_resolution)
+                        y_edges = np.linspace(filtered_df['y'].min(), filtered_df['y'].max(), grid_resolution)
                     
                     time_steps = sorted(filtered_df['tst'].unique())
                     
