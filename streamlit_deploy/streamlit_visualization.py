@@ -3733,7 +3733,8 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             "Enable External Reference Points",
             value=False,
             help="Add static reference points (e.g., fixed landmarks) that stay fixed during analysis. "
-                 "This helps differentiate configurations with similar relative movements but different absolute positions.",
+                 "This helps differentiate configurations with similar relative movements but different absolute positions. "
+                 "In the Buffer variants, external points get buffer points as well, like the moving objects.",
             key="pdp_use_external"
         )
         
@@ -4060,14 +4061,19 @@ Each row shows inequality matrices for one configuration at one time window:
 
 **Matrix dimensions:**
 - With {len(selected_objects)} object(s) and window_length={window_length}
-- Each matrix is {len(selected_objects) * window_length}×{len(selected_objects) * window_length}
-- Rows/columns labeled as "O<object>_T<time_index>"
+- Each matrix is {len(selected_objects) * window_length}×{len(selected_objects) * window_length} (more with buffer or external points)
+- Rows/columns labelled "O<object>_T<k>", where T<k> is the k-th timestamp **within the window**; hover shows the input TST
+
+**Order (object-major):**
+- Rows and columns are grouped per object, chronologically within each object; the first row is at the top
+- **Diagonal blocks** = self-precedence (an object compared with itself over time)
+- **Off-diagonal blocks** = mutual precedence (one object compared with another)
 
 **How to read the matrix:**
-- Cell (row i, column j) compares position of point i vs point j
-- **0 (Green)**: Point i is LEFT/BELOW point j
-- **1 (Yellow)**: Point i is EQUAL to point j (within tolerance)
-- **2 (Red)**: Point i is RIGHT/ABOVE point j
+- Each cell compares its **row point** with its **column point**
+- **0 (Green)**: row point < column point (LEFT/BELOW)
+- **1 (Yellow)**: equal (for Rough PDP: within the tolerance)
+- **2 (Red)**: row point > column point (RIGHT/ABOVE)
 
 **Distance calculation:**
 The PDP distance between two configurations is the **sum of differences** across ALL {max(1, max_window_length - window_length + 1)} windows. This visualization shows one of those windows.
@@ -5040,7 +5046,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             
                             # Show detailed matrices in an expander
                             with st.expander("View Inequality Matrices " + 
-                                '<span title="Matrix Legend:&#10;&#10;Inequality Matrices:&#10;• Green (0): Row point is LEFT/BELOW column point&#10;• Yellow (1): Points are EQUAL (within tolerance)&#10;• Red (2): Row point is RIGHT/ABOVE column point&#10;&#10;Difference Matrices:&#10;• Light Blue: Same value in both configs&#10;• Orange: Different values between configs" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                                '<span title="Matrix Legend:&#10;&#10;Inequality Matrices:&#10;• Green (0): Row point is LEFT/BELOW column point&#10;• Yellow (1): Points are EQUAL (within tolerance)&#10;• Red (2): Row point is RIGHT/ABOVE column point&#10;&#10;Difference Matrices (|difference|):&#10;• Light blue (0): same relation in both configs&#10;• Light orange (1): adjacent relation difference&#10;• Dark orange (2): opposite relation difference&#10;&#10;Order: grouped per object, first row at the top; diagonal blocks = self-precedence, off-diagonal blocks = mutual precedence" style="cursor: help; font-size: 0.8em;">❓</span>', 
                                 expanded=False):
                                 # Allow selecting which windows to show
                                 n_windows = diff_summary.get('n_windows', 1)

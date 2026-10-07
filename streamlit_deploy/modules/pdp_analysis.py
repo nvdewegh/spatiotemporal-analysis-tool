@@ -246,6 +246,30 @@ def compute_inequality_matrix(coords, dim_values, window_length, rough=0):
     return inequality_matrix
 
 
+def _point_sort_key(column):
+    """
+    Sort key for point ordering: object IDs sort numerically even when stored as text
+    (external points turn 'obj' into strings), with external points 'EXT_i' after real objects.
+    """
+    if column.name != 'obj':
+        return column
+    text_ids = sorted({str(v) for v in column})
+    def key(value):
+        text = str(value)
+        if text.startswith('EXT_') and text[4:].isdigit():
+            return 2e15 + int(text[4:])
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 1e15 + text_ids.index(text)
+    return column.map(key)
+
+
+def sort_points(df, cols):
+    """Sort points by the given columns using _point_sort_key (shared by computation and display)."""
+    return df.sort_values(cols, key=_point_sort_key, kind='mergesort')
+
+
 def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x=0, rough_y=0):
     """
     Compute PDP distance between two configurations.
@@ -308,9 +332,9 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
         elif 'sub_type' in config2_data.columns:
             sort_cols2.append('sub_type')
             
-        window_data1 = config1_data[config1_data['tst'].isin(window_times1)].sort_values(sort_cols1)
-        window_data2 = config2_data[config2_data['tst'].isin(window_times2)].sort_values(sort_cols2)
-        
+        window_data1 = sort_points(config1_data[config1_data['tst'].isin(window_times1)], sort_cols1)
+        window_data2 = sort_points(config2_data[config2_data['tst'].isin(window_times2)], sort_cols2)
+
         if len(window_data1) != points_per_window or len(window_data2) != points_per_window:
             continue
         
@@ -339,16 +363,37 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
     return total_distance
 
 
-@st.cache_data
+def _data_fingerprint(df):
+    """Cheap content hash of the columns PDP uses, so the cache notices a different dataset."""
+    cols = [c for c in ('config_source', 'tst', 'obj', 'x', 'y') if c in df.columns]
+    return int(pd.util.hash_pandas_object(df[cols], index=False).sum())
+
+
 def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_time, end_time,
                                 window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                 pdp_variant="fundamental", external_points=None):
     """
+    Compute PDP distance matrix for all selected configurations (cached).
+
+    The DataFrame itself is excluded from the cache key, but a fingerprint of its
+    content is included, so loading a different dataset never returns stale distances.
+    Arguments and result are as for _compute_pdp_distance_matrix_cached.
+    """
+    return _compute_pdp_distance_matrix_cached(
+        _df, _data_fingerprint(_df), selected_configs, selected_objects, start_time, end_time,
+        window_length, buffer_x, buffer_y, rough_x, rough_y, pdp_variant, external_points)
+
+
+@st.cache_data
+def _compute_pdp_distance_matrix_cached(_df, data_fingerprint, selected_configs, selected_objects, start_time, end_time,
+                                        window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                                        pdp_variant="fundamental", external_points=None):
+    """
     Compute PDP distance matrix for all selected configurations.
-    
-    Note: _df has underscore prefix to exclude it from cache key (large DataFrames 
-    can cause hashing issues). Cache invalidation relies on other parameters.
-    
+
+    Note: _df has underscore prefix to exclude it from cache key (large DataFrames
+    can cause hashing issues); data_fingerprint identifies its content instead.
+
     Args:
         _df: DataFrame with trajectory data (excluded from cache key)
         selected_configs: List of configuration IDs to analyze (tuple for reliable hashing)
@@ -512,6 +557,202 @@ def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
     return pd.DataFrame(buffer_points)
 
 
+# =============================================================================
+# POINT-MATRIX DISPLAY (object-major ordering)
+# =============================================================================
+# Inequality matrices are computed in time-major point order (all points at the
+# first timestamp, then the next, ...). For display only, rows and columns are
+# regrouped object by object ("object-major"), chronologically within each object,
+# so self-precedence (diagonal blocks) and mutual precedence (off-diagonal blocks)
+# appear as contiguous blocks. The computed matrices themselves are never changed:
+# the same permutation is applied to both dimensions of a copy, and to the labels.
+
+INEQ_COLORS = ['#2ecc71', '#ffeb3b', '#e74c3c']   # 0: row < column, 1: equal, 2: row > column
+DIFF_COLORS = ['#e3f2fd', '#ffcc80', '#e65100']   # |difference| 0: none, 1: adjacent, 2: opposite
+INEQ_SYMBOLS = {0: '<', 1: '=', 2: '>'}
+DIFF_MEANINGS = {0: 'no relation difference', 1: 'adjacent relation difference', 2: 'opposite relation difference'}
+SUBPOINT_SUFFIX = {'left': '_L', 'right': '_R', 'bottom': '_B', 'top': '_U'}
+
+
+def _discrete_colorscale(colors):
+    """Three-step colorscale for integer values 0, 1, 2 (use with zmin=-0.5, zmax=2.5)."""
+    return [[0, colors[0]], [1 / 3, colors[0]], [1 / 3, colors[1]],
+            [2 / 3, colors[1]], [2 / 3, colors[2]], [1, colors[2]]]
+
+
+def point_metadata(window_data, window_times):
+    """
+    Describe each point (row) of a window in the order used for computation.
+
+    Args:
+        window_data: DataFrame of the window's points, in computational order
+        window_times: Sorted timestamps of the window
+
+    Returns:
+        List of dicts with obj, tst, t_rel, sub_type, sub_order, is_external, name
+    """
+    t_index = {t: i for i, t in enumerate(window_times)}
+    meta = []
+    for _, row in window_data.iterrows():
+        obj = row['obj']
+        is_ext = row.get('is_external', None)
+        is_ext = str(obj).startswith('EXT_') if is_ext is None or pd.isna(is_ext) else bool(is_ext)
+        sub_type = row.get('sub_type', None)
+        sub_type = 'orig' if sub_type is None or pd.isna(sub_type) else str(sub_type)
+        sub_order = row.get('sub_order', None)
+        sub_order = 0.0 if sub_order is None or pd.isna(sub_order) else float(sub_order)
+        name = row.get('external_name', None) if is_ext else None
+        name = str(obj) if name is None or pd.isna(name) or str(name) == '' else str(name)
+        meta.append({'obj': obj, 'tst': row['tst'], 't_rel': t_index[row['tst']], 'sub_type': sub_type,
+                     'sub_order': sub_order, 'is_external': is_ext, 'name': name})
+    return meta
+
+
+def _object_sort_key(obj, is_external):
+    """Real objects first (numeric IDs in numeric order), then external points by their index."""
+    text = str(obj)
+    if is_external and text.startswith('EXT_') and text[4:].isdigit():
+        return (1, 0, float(text[4:]), text)
+    try:
+        return (int(is_external), 0, float(obj), text)
+    except (TypeError, ValueError):
+        return (int(is_external), 1, 0.0, text)
+
+
+def object_major_display(meta, rough=0):
+    """
+    Build the object-major display order, labels and object-block boundaries.
+
+    Points are grouped by object (real objects first, then each external point as its
+    own group), then ordered by actual timestamp and by the existing subpoint order.
+    Spatial coordinates are never used for ordering.
+
+    Args:
+        meta: Point metadata in computational order (from point_metadata)
+        rough: Rough tolerance of the descriptor (only used for explanatory text)
+
+    Returns:
+        dict with 'perm' (computational index of each displayed position),
+        'tick_labels', 'hover_labels' and 'groups' [(start, end, heading), ...]
+    """
+    perm = sorted(range(len(meta)), key=lambda i: (_object_sort_key(meta[i]['obj'], meta[i]['is_external']),
+                                                   meta[i]['tst'], meta[i]['sub_order'], i))
+    tick_labels, hover_labels, groups = [], [], []
+    for pos, i in enumerate(perm):
+        m = meta[i]
+        suffix = SUBPOINT_SUFFIX.get(m['sub_type'], '')
+        if m['is_external']:
+            short_name = m['name'] if len(m['name']) <= 10 else m['name'][:8] + '..'
+            tick_labels.append(f"E:{short_name}_T{m['t_rel']}{suffix}")
+            text = f"External point '{m['name']}'"
+            heading = f"Ext. {short_name}"
+        else:
+            tick_labels.append(f"O{m['obj']}_T{m['t_rel']}{suffix}")
+            text = f"Object {m['obj']}"
+            heading = f"Object {m['obj']}"
+        text += f", T{m['t_rel']} (window position; input TST {m['tst']:g})"
+        if m['sub_type'] not in ('orig', 'external'):
+            text += f", {m['sub_type']} buffer point"
+        hover_labels.append(text)
+        key = (m['is_external'], str(m['obj']))
+        if not groups or groups[-1][3] != key:
+            groups.append([pos, pos + 1, heading, key])
+        else:
+            groups[-1][1] = pos + 1
+    return {'perm': np.array(perm, dtype=int), 'tick_labels': tick_labels, 'hover_labels': hover_labels,
+            'groups': [(g[0], g[1], g[2]) for g in groups], 'rough': rough}
+
+
+def _relation_text(value, rough):
+    if value == 1 and rough > 0:
+        return f"= (equal within tolerance ±{rough:g})"
+    return {0: '< (row smaller than column)', 1: '= (equal)', 2: '> (row greater than column)'}[int(value)]
+
+
+def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='ineq', compared=None):
+    """
+    Add one PDP point matrix to a subplot in object-major order, first row at the top.
+
+    Args:
+        fig: Plotly figure with subplots
+        matrix: Matrix in computational order (not modified)
+        display: Result of object_major_display
+        row, col: Subplot position
+        descriptor: 'x' or 'y' (for hover text)
+        kind: 'ineq' (relation 0/1/2) or 'diff' (absolute difference 0/1/2)
+        compared: For kind='diff': ((label1, ineq1), (label2, ineq2)) in computational order
+    """
+    perm = display['perm']
+    n = len(perm)
+    z = np.asarray(matrix)[np.ix_(perm, perm)]
+    rows_txt, cols_txt = display['hover_labels'], display['hover_labels']
+    if kind == 'diff' and compared is not None:
+        (name1, ineq1), (name2, ineq2) = compared
+        ineq1 = np.asarray(ineq1)[np.ix_(perm, perm)]
+        ineq2 = np.asarray(ineq2)[np.ix_(perm, perm)]
+    hover = []
+    for i in range(n):
+        hover_row = []
+        for j in range(n):
+            text = f"Row: {rows_txt[i]}<br>Column: {cols_txt[j]}<br>Descriptor: {descriptor}<br>"
+            if kind == 'ineq':
+                text += f"Relation (row vs column): {_relation_text(z[i, j], display['rough'])}"
+            else:
+                text += f"|Difference| = {int(z[i, j])}: {DIFF_MEANINGS[int(z[i, j])]}"
+                if compared is not None:
+                    text += (f"<br>{name1}: {INEQ_SYMBOLS[int(ineq1[i, j])]}"
+                             f" · {name2}: {INEQ_SYMBOLS[int(ineq2[i, j])]}")
+            hover_row.append(text)
+        hover.append(hover_row)
+
+    fig.add_trace(go.Heatmap(
+        z=z, x=list(range(n)), y=list(range(n)),
+        colorscale=_discrete_colorscale(INEQ_COLORS if kind == 'ineq' else DIFF_COLORS),
+        zmin=-0.5, zmax=2.5, showscale=False,
+        customdata=hover, hovertemplate='%{customdata}<extra></extra>',
+        xgap=1, ygap=1
+    ), row=row, col=col)
+
+    # Axis labels: columns above the matrix, rows on the left; sample labels for large matrices
+    step = max(1, int(np.ceil(n / 30)))
+    tickvals = list(range(0, n, step))
+    ticktext = [display['tick_labels'][k] for k in tickvals]
+    fig.update_xaxes(tickvals=tickvals, ticktext=ticktext, side='top', tickangle=-45,
+                     range=[-0.5, n - 0.5], showgrid=False, zeroline=False, tickfont=dict(size=9),
+                     row=row, col=col)
+    fig.update_yaxes(tickvals=tickvals, ticktext=ticktext, autorange='reversed',
+                     showgrid=False, zeroline=False, tickfont=dict(size=9), row=row, col=col)
+
+    # Object-block separators and block headings
+    subplot = fig.get_subplot(row, col)
+    xref = subplot.xaxis.plotly_name.replace('axis', '')
+    yref = subplot.yaxis.plotly_name.replace('axis', '')
+    for start, end, heading in display['groups']:
+        if start > 0:
+            for coords in ({'x0': start - 0.5, 'x1': start - 0.5, 'y0': -0.5, 'y1': n - 0.5},
+                           {'x0': -0.5, 'x1': n - 0.5, 'y0': start - 0.5, 'y1': start - 0.5}):
+                fig.add_shape(type='line', xref=xref, yref=yref, line=dict(color='black', width=2), **coords)
+        centre = (start + end - 1) / 2
+        fig.add_annotation(x=centre, y=n - 0.5, xref=xref, yref=yref, text=heading, showarrow=False,
+                           yanchor='top', yshift=-4, font=dict(size=10))
+        fig.add_annotation(x=n - 0.5, y=centre, xref=xref, yref=yref, text=heading, showarrow=False,
+                           xanchor='left', xshift=4, textangle=90, font=dict(size=10))
+
+
+def add_matrix_legend(fig, rough=0, include_diff=False):
+    """Add a discrete legend for the relation colours (and difference colours if requested)."""
+    entries = [(INEQ_COLORS[0], '< row smaller than column'),
+               (INEQ_COLORS[1], '= equal' + (' (within rough tolerance)' if rough else '')),
+               (INEQ_COLORS[2], '> row greater than column')]
+    if include_diff:
+        entries += [(DIFF_COLORS[k], f'|diff| = {k}: {DIFF_MEANINGS[k]}') for k in range(3)]
+    for color, name in entries:
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=name, showlegend=True,
+                                 marker=dict(symbol='square', size=14, color=color,
+                                             line=dict(color='#666', width=1)),
+                                 hoverinfo='skip'), row=1, col=1)
+
+
 def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, end_time,
                                    window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                    window_indices=None, external_points=None):
@@ -631,9 +872,9 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
     total_rows = n_configs * n_windows
     row_heights = [1] * total_rows  # Equal weight for all rows
     
-    # Vertical spacing: smaller fraction for more rows
-    # Increased spacing to prevent overlap between rotated x-axis labels and subplot titles
-    vertical_spacing = max(0.05, 0.15 / total_rows)
+    # Vertical spacing: about 200 px between rows, for block headings below each matrix,
+    # column labels above the next matrix and its subplot title
+    vertical_spacing = min(200 / (760 * total_rows + 120), 0.9 / max(1, total_rows - 1))
     
     fig = make_subplots(
         rows=total_rows,
@@ -643,18 +884,6 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         horizontal_spacing=0.12,
         vertical_spacing=vertical_spacing
     )
-    
-    # Discrete colorscale for inequality values (0, 1, 2)
-    # 0 = Green (smaller/left/below), 1 = Yellow (equal), 2 = Red (bigger/right/above)
-    # Use sharp transitions to make it truly discrete
-    colorscale = [
-        [0, '#2ecc71'],      # 0 = green (smaller)
-        [0.333, '#2ecc71'],  # hold green
-        [0.333, '#ffeb3b'],  # 1 = bright yellow (equal)
-        [0.666, '#ffeb3b'],  # hold yellow
-        [0.666, '#e74c3c'],  # 2 = red (bigger)
-        [1, '#e74c3c']       # hold red
-    ]
     
     current_row = 1
     
@@ -673,9 +902,8 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
         if buffer_x > 0 or buffer_y > 0:
             config_data = apply_buffer_to_trajectories(config_data, buffer_x, buffer_y)
         
-        # Sort by tst, then sub_order (which groups regular objects before external points)
-        # sub_order: 0 = regular objects, 100+ = external points
-        config_data = config_data.sort_values(['tst', 'sub_order', 'obj'])
+        # Sort by tst, then obj, then sub_order: the same point order as the distance computation
+        config_data = sort_points(config_data, ['tst', 'obj', 'sub_order'])
         
         # Get timestamps
         timestamps = sorted(config_data['tst'].unique())
@@ -693,8 +921,8 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             
             # Get data for this time window
             window_times = timestamps[window_idx:window_idx + window_length]
-            # Sort consistently: tst, then sub_order, then obj
-            window_data = config_data[config_data['tst'].isin(window_times)].sort_values(['tst', 'sub_order', 'obj'])
+            # Sort consistently with the distance computation: tst, then obj, then sub_order
+            window_data = sort_points(config_data[config_data['tst'].isin(window_times)], ['tst', 'obj', 'sub_order'])
             
             x_vals = window_data['x'].values
             y_vals = window_data['y'].values
@@ -703,118 +931,38 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             ineq_x = compute_inequality_matrix(x_vals, x_vals, window_length, rough_x)
             ineq_y = compute_inequality_matrix(y_vals, y_vals, window_length, rough_y)
             
-            # Create labels for axes (object-timestamp pairs)
-            # Build a mapping from timestamp to relative index for faster lookup
-            window_times_list = list(window_times)
-            tst_to_idx = {tst: idx for idx, tst in enumerate(window_times_list)}
-            
-            labels = []
-            # Iterate through the actual data rows to ensure labels match the matrix dimensions
-            for _, row in window_data.iterrows():
-                # Find relative time index using the mapping
-                t_idx = tst_to_idx.get(row['tst'], -1)
-                if t_idx == -1:
-                    # This shouldn't happen, but add a fallback label
-                    labels.append(f"???")
-                    continue
-                    
-                obj = row['obj']
-                
-                # Check if this is an external point
-                is_external = row.get('is_external', False) if 'is_external' in row.index else False
-                # Handle NaN values for is_external
-                if pd.isna(is_external):
-                    is_external = False
-                
-                if is_external:
-                    # For external points, use short name from external_name or obj
-                    ext_name = row.get('external_name', None) if 'external_name' in row.index else None
-                    # Handle NaN values - use obj ID as fallback
-                    if ext_name is None or pd.isna(ext_name) or str(ext_name) == 'nan':
-                        ext_name = obj
-                    # Shorten the name if too long
-                    if len(str(ext_name)) > 10:
-                        ext_name = str(ext_name)[:8] + ".."
-                    labels.append(f"EXT:{ext_name}_T{t_idx}")
-                else:
-                    # Add suffix for buffer points if present
-                    sub_type = row.get('sub_type', None) if 'sub_type' in row.index else None
-                    # Handle NaN values properly
-                    if pd.isna(sub_type):
-                        sub_type = None
-                    if sub_type and sub_type not in ['orig', 'external', None]:
-                        # Use short suffix to keep labels compact
-                        suffix_map = {
-                            'left': '_L', 'right': '_R', 
-                            'top': '_T', 'bottom': '_B'
-                        }
-                        suffix = suffix_map.get(sub_type, f"_{sub_type}")
-                    else:
-                        suffix = ""
-                    
-                    labels.append(f"O{obj}_T{t_idx}{suffix}")
-            
-            # Verify labels count matches matrix dimensions
-            if len(labels) != len(x_vals):
-                # Something went wrong - use numeric labels as fallback
-                labels = [f"Point_{i}" for i in range(len(x_vals))]
-            
-            # X dimension heatmap (without text annotations and without colorbar)
-            fig.add_trace(
-                go.Heatmap(
-                    z=ineq_x,
-                    x=labels,
-                    y=labels,
-                    colorscale=colorscale,
-                    zmin=0,
-                    zmax=2,
-                    showscale=False,  # No colorbar - legend is in text above
-                    hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
-                ),
-                row=current_row,
-                col=1
-            )
-            
-            # Y dimension heatmap (without text annotations and without colorbar)
-            fig.add_trace(
-                go.Heatmap(
-                    z=ineq_y,
-                    x=labels,
-                    y=labels,
-                    colorscale=colorscale,
-                    zmin=0,
-                    zmax=2,
-                    showscale=False,  # No colorbar - legend is in text above
-                    hovertemplate='Row: %{y}<br>Col: %{x}<br>Value: %{z}<extra></extra>'
-                ),
-                row=current_row,
-                col=2
-            )
-            
+            # Display in object-major order (presentation only; ineq_x/ineq_y stay as computed)
+            meta = point_metadata(window_data, list(window_times))
+            display_x = object_major_display(meta, rough=rough_x)
+            display_y = object_major_display(meta, rough=rough_y)
+            add_point_matrix_heatmap(fig, ineq_x, display_x, current_row, 1, 'x')
+            add_point_matrix_heatmap(fig, ineq_y, display_y, current_row, 2, 'y')
+
             current_row += 1
-    
-    # Update layout - each matrix needs LARGE fixed height to maintain size
-    # With subplots, Plotly divides space proportionally, so we need generous height
-    # to ensure matrices don't shrink when adding more rows
-    height_per_row = 700  # Large fixed height per row
-    total_height = height_per_row * total_rows
-    
-    # Fixed width for consistent display
+
+    # Each matrix gets a large, roughly square area so cells stay square and readable
+    height_per_row = 760
+    total_height = height_per_row * total_rows + 120
     width = 1400
-    
+
+    add_matrix_legend(fig, rough=max(rough_x, rough_y))
     fig.update_layout(
-        title=f"Inequality Matrices - First Time Window (window_length={window_length})",
+        title=dict(text=f"Inequality Matrices (window_length={window_length}) – each cell compares its row point with its column point",
+                   yref='container', y=1, yanchor='top', pad=dict(t=12)),
         height=total_height,
         width=width,
-        showlegend=False
+        showlegend=True,
+        legend=dict(orientation='h', yref='container', y=1 - 45 / total_height, yanchor='top',
+                    xanchor='center', x=0.5, font=dict(size=11)),
+        margin=dict(t=210)
     )
-    
-    # Update axes - synchronize zooming and set tick angle
-    # We use matches='x' and matches='y' to ensure that zooming on one matrix
-    # updates all other matrices simultaneously.
-    fig.update_xaxes(matches='x', tickangle=-45)
-    fig.update_yaxes(matches='y')
-    
+    # Lift subplot titles above the column labels, which sit on top of each matrix
+    fig.update_annotations(selector=dict(xref='paper', yref='paper'), yshift=60)
+
+    # Synchronise zooming across all matrices (all share the same point order and size)
+    fig.update_xaxes(matches='x')
+    fig.update_yaxes(matches='y', autorange='reversed')
+
     return fig
 
 
@@ -2825,7 +2973,9 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
     result = {
         'windows': list(range(n_windows)),
         'differences': [],
-        'objects': objects
+        'objects': objects,
+        'rough_x': rough_x,
+        'rough_y': rough_y
     }
     
     # Process each time window
@@ -2838,23 +2988,23 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
         if 'sub_order' in config1_data.columns:
             sort_cols.append('sub_order')
             
-        window_data1 = config1_data[config1_data['tst'].isin(window_times1)].sort_values(sort_cols)
-        window_data2 = config2_data[config2_data['tst'].isin(window_times2)].sort_values(sort_cols)
+        window_data1 = sort_points(config1_data[config1_data['tst'].isin(window_times1)], sort_cols)
+        window_data2 = sort_points(config2_data[config2_data['tst'].isin(window_times2)], sort_cols)
         
         if len(window_data1) == 0 or len(window_data2) == 0:
             continue
         
-        # Build position mappings
+        # Build position mappings (obj, tst) -> (x, y) from the original points only,
+        # so buffer subpoints of the same point do not overwrite its true position
         positions1 = {}
         positions2 = {}
-        
-        for _, row in window_data1.iterrows():
-            key = (row['obj'], row['tst'])
-            positions1[key] = (row['x'], row['y'])
-            
-        for _, row in window_data2.iterrows():
-            key = (row['obj'], row['tst'])
-            positions2[key] = (row['x'], row['y'])
+
+        for positions, window_data in ((positions1, window_data1), (positions2, window_data2)):
+            for _, row in window_data.iterrows():
+                key = (row['obj'], row['tst'])
+                sub_type = row.get('sub_type', 'orig')
+                if key not in positions or sub_type in ('orig', 'external') or pd.isna(sub_type):
+                    positions[key] = (row['x'], row['y'])
         
         # Compute inequality matrices
         x_vals1 = window_data1['x'].values
@@ -2892,6 +3042,9 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
             'ineq_y2': ineq_y2,
             'timestamps': list(window_times1),
             'labels': labels,
+            # Full point metadata (incl. buffer subpoints / external points) for display
+            'point_meta1': point_metadata(window_data1, list(window_times1)),
+            'point_meta2': point_metadata(window_data2, list(window_times2)),
             'positions1': positions1,
             'positions2': positions2
         })
@@ -3301,57 +3454,65 @@ def create_difference_matrices_figure(diff_result, config1_id, config2_id, windo
             f"W{win_idx}: Y Diff"
         ])
     
+    height_per_row = 420
     fig = make_subplots(
         rows=n_windows, cols=6,
         subplot_titles=subplot_titles,
-        horizontal_spacing=0.02,
-        vertical_spacing=0.1
+        horizontal_spacing=0.045,
+        vertical_spacing=min(190 / (height_per_row * n_windows + 150), 0.9 / max(1, n_windows - 1))
     )
-    
-    # Colorscale for inequality matrices (0=green, 1=yellow, 2=red)
-    ineq_colorscale = [
-        [0, '#2ecc71'], [0.333, '#2ecc71'],
-        [0.333, '#ffeb3b'], [0.666, '#ffeb3b'],
-        [0.666, '#e74c3c'], [1, '#e74c3c']
-    ]
-    
-    # Colorscale for difference matrices: light blue (same) to orange (different)
-    # Using distinct colors from inequality matrices to avoid confusion
-    diff_colorscale = [[0, '#e3f2fd'], [0.5, '#ffcc80'], [1, '#e65100']]
-    
+
+    rough_x = diff_result.get('rough_x', 0)
+    rough_y = diff_result.get('rough_y', 0)
+    misaligned = False
+
     for row_idx, window_data in enumerate(windows_to_show, 1):
-        labels = [f"O{l[0]}_T{l[2]}" for l in window_data['labels']]
-        
+        # Both configurations are compared position by position; check that each position
+        # refers to the same object, window time and subpoint in both, then use one order
+        meta1 = window_data['point_meta1']
+        meta2 = window_data['point_meta2']
+        identity = lambda m: (str(m['obj']), m['t_rel'], m['sub_type'], m['is_external'])
+        if [identity(m) for m in meta1] != [identity(m) for m in meta2]:
+            misaligned = True
+        display_x = object_major_display(meta1, rough=rough_x)
+        display_y = object_major_display(meta1, rough=rough_y)
+
         # X matrices
-        fig.add_trace(go.Heatmap(z=window_data['ineq_x1'], x=labels, y=labels,
-                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=1)
-        fig.add_trace(go.Heatmap(z=window_data['ineq_x2'], x=labels, y=labels,
-                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=2)
-        fig.add_trace(go.Heatmap(z=window_data['x_diff_matrix'], x=labels, y=labels,
-                                colorscale=diff_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=3)
-        
+        add_point_matrix_heatmap(fig, window_data['ineq_x1'], display_x, row_idx, 1, 'x')
+        add_point_matrix_heatmap(fig, window_data['ineq_x2'], display_x, row_idx, 2, 'x')
+        add_point_matrix_heatmap(fig, window_data['x_diff_matrix'], display_x, row_idx, 3, 'x', kind='diff',
+                                 compared=((str(config1_id), window_data['ineq_x1']),
+                                           (str(config2_id), window_data['ineq_x2'])))
+
         # Y matrices
-        fig.add_trace(go.Heatmap(z=window_data['ineq_y1'], x=labels, y=labels,
-                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=4)
-        fig.add_trace(go.Heatmap(z=window_data['ineq_y2'], x=labels, y=labels,
-                                colorscale=ineq_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=5)
-        fig.add_trace(go.Heatmap(z=window_data['y_diff_matrix'], x=labels, y=labels,
-                                colorscale=diff_colorscale, zmin=0, zmax=2, showscale=False),
-                     row=row_idx, col=6)
-    
+        add_point_matrix_heatmap(fig, window_data['ineq_y1'], display_y, row_idx, 4, 'y')
+        add_point_matrix_heatmap(fig, window_data['ineq_y2'], display_y, row_idx, 5, 'y')
+        add_point_matrix_heatmap(fig, window_data['y_diff_matrix'], display_y, row_idx, 6, 'y', kind='diff',
+                                 compared=((str(config1_id), window_data['ineq_y1']),
+                                           (str(config2_id), window_data['ineq_y2'])))
+
+    # Square cells: each matrix's y axis is scaled to its own x axis
+    for row_idx in range(1, n_windows + 1):
+        for col_idx in range(1, 7):
+            subplot = fig.get_subplot(row_idx, col_idx)
+            fig.update_yaxes(scaleanchor=subplot.xaxis.plotly_name.replace('axis', ''), scaleratio=1,
+                             constrain='domain', row=row_idx, col=col_idx)
+            fig.update_xaxes(constrain='domain', row=row_idx, col=col_idx)
+
+    title = f"Inequality Matrix Comparison: {config1_id} vs {config2_id} – row point compared with column point"
+    if misaligned:
+        title += "<br><sup>Warning: point identities differ between the two configurations</sup>"
+    add_matrix_legend(fig, rough=max(rough_x, rough_y), include_diff=True)
+    total_height = height_per_row * n_windows + 190
     fig.update_layout(
-        title=f"Inequality Matrix Comparison: {config1_id} vs {config2_id}",
-        height=300 * n_windows + 100,
-        width=1400,
-        showlegend=False
+        title=dict(text=title, yref='container', y=1, yanchor='top', pad=dict(t=12)),
+        height=total_height,
+        width=1600,
+        showlegend=True,
+        legend=dict(orientation='h', yref='container', y=1 - 50 / total_height, yanchor='top',
+                    xanchor='center', x=0.5, font=dict(size=11)),
+        margin=dict(t=240)
     )
-    
-    # Rotate x-axis labels
-    fig.update_xaxes(tickangle=45)
-    
+    fig.update_annotations(selector=dict(xref='paper', yref='paper'), yshift=55)
+
     return fig
