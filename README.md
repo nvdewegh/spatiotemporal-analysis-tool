@@ -1,5 +1,7 @@
 # Trajectory Clustering Analysis Tool
 
+> **New here? Start with [START_HERE.md](START_HERE.md)**: how to run the tool, the current data format and where things are in the code. This README is older and partly outdated (notably the data format).
+
 A comprehensive Streamlit-based web application for analyzing and clustering spatiotemporal trajectory data using hierarchical clustering methods.
 
 ## 📋 Table of Contents
