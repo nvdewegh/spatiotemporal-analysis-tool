@@ -1355,9 +1355,9 @@ def create_tennis_court_base():
 def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end_time, 
                                selected_objects=None, cluster_labels=None, distance_matrix=None,
                                show_buffers=False, buffer_size=0.5, show_rough=False, 
-                               rough_x=0.3, rough_y=0.3):
+                               rough_x=0.3, rough_y=0.3, show_court=True):
     """
-    Compare trajectories of selected configurations on tennis court.
+    Compare trajectories of selected configurations (on a tennis court if show_court).
     
     Args:
         df: DataFrame with trajectory data
@@ -1373,7 +1373,8 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         show_rough: Whether to show rough tolerance zones (rectangles)
         rough_x: Rough tolerance for X dimension (half-width of rectangle in meters)
         rough_y: Rough tolerance for Y dimension (half-height of rectangle in meters)
-    
+        show_court: Whether to draw the tennis court (False = plain x/y axes)
+
     Returns:
         plotly.graph_objects.Figure: Tennis court with trajectories
     """
@@ -1447,7 +1448,15 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         hovermode='closest',
         dragmode='pan'
     )
-    
+
+    # No court selected: remove the court lines and use plain axes fitted to the data
+    if not show_court:
+        fig.layout.shapes = ()
+        fig.layout.width = None
+        fig.update_layout(height=600, plot_bgcolor='white')
+        fig.update_xaxes(range=None, autorange=True, showgrid=True, title="x (m)")
+        fig.update_yaxes(range=None, autorange=True, showgrid=True, title="y (m)")
+
     # Color palette for configurations
     colors = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
     
@@ -1589,7 +1598,7 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         fig.update_layout(
             title=f"Trajectory Comparison<br>" +
                   f"<sub>{len(selected_configs)} configurations, " +
-                  f"Time: {start_time:.1f}s - {end_time:.1f}s</sub>",
+                  f"Time: TST {start_time:g} - TST {end_time:g}</sub>",
             uirevision=f"traj-{'-'.join(map(str, selected_configs))}-{'-'.join(map(str, selected_objects))}"
         )
     
@@ -2893,9 +2902,9 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
 def create_difference_visualization(df, config1_id, config2_id, selected_objects, 
                                      start_time, end_time, window_length,
                                      buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                     external_points=None):
+                                     external_points=None, show_court=True):
     """
-    Create side-by-side tennis court visualization showing where two configurations differ.
+    Create side-by-side visualization (on tennis courts if show_court) showing where two configurations differ.
     
     Draws difference lines between objects at time points where the inequality matrices differ.
     Line thickness indicates the magnitude of difference.
@@ -2970,7 +2979,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
     net_position = court_length / 2
     
     # Add court shapes to both subplots
-    for col in [1, 2]:
+    for col in ([1, 2] if show_court else []):
         # Outer boundary
         fig.add_shape(type="rect", 
                      x0=-doubles_alley_width, y0=0,
@@ -3182,7 +3191,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
                            line=dict(color='white', width=1)),
                 text=['', str(diff_id), ''],  # Show ID number at midpoint
                 textposition='top center',
-                textfont=dict(size=10, color='white', family='Arial Black'),
+                textfont=dict(size=10, color='white' if show_court else 'black', family='Arial Black'),
                 showlegend=False,
                 hoverinfo='text',
                 hovertext=[hover_text, hover_text, hover_text],
@@ -3202,7 +3211,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
                            line=dict(color='white', width=1)),
                 text=['', str(diff_id), ''],  # Show ID number at midpoint
                 textposition='top center',
-                textfont=dict(size=10, color='white', family='Arial Black'),
+                textfont=dict(size=10, color='white' if show_court else 'black', family='Arial Black'),
                 showlegend=False,
                 hoverinfo='text',
                 hovertext=[hover_text, hover_text, hover_text],
@@ -3219,23 +3228,25 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
         width=1200,
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        plot_bgcolor='#25D366'
+        plot_bgcolor='#25D366' if show_court else 'white'
     )
-    
-    # Update axes for both subplots
+
+    # Update axes for both subplots (court extent, or fitted to the data without a court)
     for col in [1, 2]:
         fig.update_xaxes(
-            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
-            showgrid=False,
+            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin] if show_court else None,
+            autorange=not show_court,
+            showgrid=not show_court,
             zeroline=False,
-            title="Court Width (m)",
+            title="Court Width (m)" if show_court else "x (m)",
             row=1, col=col
         )
         fig.update_yaxes(
-            range=[-y_margin, court_length + y_margin],
-            showgrid=False,
+            range=[-y_margin, court_length + y_margin] if show_court else None,
+            autorange=not show_court,
+            showgrid=not show_court,
             zeroline=False,
-            title="Court Length (m)",
+            title="Court Length (m)" if show_court else "y (m)",
             scaleanchor="x" if col == 1 else "x2",
             scaleratio=1,
             row=1, col=col

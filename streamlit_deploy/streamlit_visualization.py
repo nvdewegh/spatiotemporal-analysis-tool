@@ -3600,7 +3600,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
 **Use Cases:**
 
 - Compare tactical patterns independent of exact positions
-- Find similar movement strategies across different court areas
+- Find similar movement strategies across different areas
 - Robust to small measurement noise
 """)
         
@@ -3732,42 +3732,44 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         use_external_points = st.checkbox(
             "Enable External Reference Points",
             value=False,
-            help="Add static reference points (e.g., court corners) that stay fixed during analysis. "
+            help="Add static reference points (e.g., fixed landmarks) that stay fixed during analysis. "
                  "This helps differentiate configurations with similar relative movements but different absolute positions.",
             key="pdp_use_external"
         )
         
         if use_external_points:
+            # Predefined points are tennis court landmarks, so only offer them for the Tennis court type
+            is_tennis = st.session_state.court_type == 'Tennis'
             col_preset, col_manual = st.columns(2)
-            
+
             with col_preset:
-                st.write("**Predefined Tennis Court Points**")
-                
-                # Get available reference points from pdp_analysis module
-                ref_points_dict = pdp_analysis.get_reference_points_dict()
-                ref_point_names = list(ref_points_dict.keys())
-                
-                # Group reference points for better organization
-                corner_points = [p for p in ref_point_names if "Corner" in p]
-                net_points = [p for p in ref_point_names if "Net" in p]
-                service_points = [p for p in ref_point_names if "Service" in p]
-                center_points = [p for p in ref_point_names if "Center" in p and "Service" not in p]
-                
-                selected_preset_points = st.multiselect(
-                    "Select predefined points",
-                    options=ref_point_names,
-                    default=[],
-                    help="Choose from predefined tennis court reference points",
-                    key="pdp_preset_points"
-                )
-                
-                # Show selected points info
-                if selected_preset_points:
-                    st.write("**Selected points:**")
-                    for point_name in selected_preset_points:
-                        x, y, desc = ref_points_dict[point_name]
-                        st.caption(f"• {point_name}: ({x:.2f}, {y:.2f})")
-            
+                if is_tennis:
+                    st.write("**Predefined Tennis Court Points**")
+
+                    # Get available reference points from pdp_analysis module
+                    ref_points_dict = pdp_analysis.get_reference_points_dict()
+                    ref_point_names = list(ref_points_dict.keys())
+
+                    selected_preset_points = st.multiselect(
+                        "Select predefined points",
+                        options=ref_point_names,
+                        default=[],
+                        help="Choose from predefined tennis court reference points",
+                        key="pdp_preset_points"
+                    )
+
+                    # Show selected points info
+                    if selected_preset_points:
+                        st.write("**Selected points:**")
+                        for point_name in selected_preset_points:
+                            x, y, desc = ref_points_dict[point_name]
+                            st.caption(f"• {point_name}: ({x:.2f}, {y:.2f})")
+                else:
+                    st.write("**Predefined Points**")
+                    st.caption("Predefined reference points are only available for the Tennis court type. "
+                               "Use manual point input instead.")
+                    selected_preset_points = []
+
             with col_manual:
                 st.write("**Manual Point Input**")
                 
@@ -3845,10 +3847,10 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             if all_external_points:
                 st.info(f"**{len(all_external_points)} external point(s)** will be included in PDP analysis")
                 
-                # Visualize external points on tennis court
-                with st.expander("Preview External Points on Court", expanded=True):
-                    # Create tennis court figure
-                    fig_ext = create_tennis_court()
+                # Visualize external points (on the tennis court only when Tennis is selected)
+                with st.expander("Preview External Points", expanded=True):
+                    fig_ext = create_tennis_court() if is_tennis else create_pitch_figure('No selection')
+                    label_color = 'white' if is_tennis else 'black'
                     
                     # Extract coordinates and names
                     ext_x = [p[1] for p in all_external_points]
@@ -3868,7 +3870,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         ),
                         text=ext_names,
                         textposition='top center',
-                        textfont=dict(size=10, color='white'),
+                        textfont=dict(size=10, color=label_color),
                         name='External Points',
                         hovertemplate='<b>%{text}</b><br>X: %{x:.2f}m<br>Y: %{y:.2f}m<extra></extra>'
                     ))
@@ -3877,7 +3879,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     fig_ext.update_layout(
                         title=dict(
                             text="External Reference Points",
-                            font=dict(size=14, color='white')
+                            font=dict(size=14, color=label_color)
                         ),
                         height=500,
                         showlegend=True,
@@ -4543,7 +4545,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                         buffer_size=0.5,
                         show_rough=False,
                         rough_x=0.3,
-                        rough_y=0.3
+                        rough_y=0.3,
+                        show_court=(st.session_state.court_type == 'Tennis')
                     )
                     
                     # Create a unique key based on selections to force chart recreation
@@ -5013,7 +5016,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 df, fg_config1, fg_config2, selected_objects,
                                 start_time, end_time, window_length,
                                 fg_buffer_x, fg_buffer_y, fg_rough_x, fg_rough_y,
-                                fg_external_points
+                                fg_external_points,
+                                show_court=(st.session_state.court_type == 'Tennis')
                             )
                         
                         if fig_diff is not None:
@@ -5029,7 +5033,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 max_win = diff_summary.get('max_difference_window')
                                 st.metric("Max Diff Window", f"W{max_win}" if max_win is not None else "N/A")
                             
-                            # Show the side-by-side tennis court visualization
+                            # Show the side-by-side difference visualization
                             st.markdown("#### Trajectory Comparison with Difference Lines")
                             st.markdown("**Red lines** connect positions where the inequality matrices differ. **Thicker lines** = larger differences.")
                             render_interactive_chart(fig_diff)
@@ -5090,8 +5094,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # TRAJECTORY COMPARISON VISUALIZATION
                     # ===============================================================
                     st.markdown("---")
-                    st.markdown("### Trajectory Comparison on Tennis Court " + 
-                        '<span title="Visualize and compare actual trajectories on the tennis court:&#10;&#10;• Select configurations to overlay their movement patterns&#10;• Compare similar or dissimilar configurations side-by-side&#10;• Start points marked with circles ⭕, end points with squares ◼️" style="cursor: help; font-size: 0.8em;">❓</span>', 
+                    st.markdown("### Trajectory Comparison " +
+                        '<span title="Visualize and compare actual trajectories:&#10;&#10;• Select configurations to overlay their movement patterns&#10;• Compare similar or dissimilar configurations side-by-side&#10;• Start points marked with circles ⭕, end points with squares ◼️" style="cursor: help; font-size: 0.8em;">❓</span>', 
                         unsafe_allow_html=True)
                     
                     col_traj1, col_traj2 = st.columns([1, 1])
@@ -5317,7 +5321,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                             buffer_size=buffer_size,
                             show_rough=show_rough,
                             rough_x=viz_rough_x,
-                            rough_y=viz_rough_y
+                            rough_y=viz_rough_y,
+                            show_court=(st.session_state.court_type == 'Tennis')
                         )
                         
                         render_interactive_chart(fig_traj, 
