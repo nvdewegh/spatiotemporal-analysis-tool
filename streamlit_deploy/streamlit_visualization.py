@@ -527,6 +527,26 @@ def apply_readable_map_labels(fig):
     fig.update_yaxes(**axis_style)
     return fig
 
+def fit_axes_to_data(fig, xs, ys):
+    """
+    Set the initial view (also what "Reset axes" returns to) to all plotted data plus the court,
+    if one is drawn, so no trajectory starts outside the view.
+    """
+    xs = [v for v in xs if v is not None and np.isfinite(v)]
+    ys = [v for v in ys if v is not None and np.isfinite(v)]
+    if not xs or not ys:
+        return fig
+    x_min, x_max, y_min, y_max = min(xs), max(xs), min(ys), max(ys)
+    if fig.layout.xaxis.range is not None:
+        x_min, x_max = min(x_min, fig.layout.xaxis.range[0]), max(x_max, fig.layout.xaxis.range[1])
+    if fig.layout.yaxis.range is not None:
+        y_min, y_max = min(y_min, fig.layout.yaxis.range[0]), max(y_max, fig.layout.yaxis.range[1])
+    x_margin = max(0.05 * (x_max - x_min), 0.5)
+    y_margin = max(0.05 * (y_max - y_min), 0.5)
+    fig.update_xaxes(range=[x_min - x_margin, x_max + x_margin], autorange=False)
+    fig.update_yaxes(range=[y_min - y_margin, y_max + y_margin], autorange=False)
+    return fig
+
 # Unified function to create pitch based on court type
 def create_pitch_figure(court_type='Football'):
     """Create a Plotly figure with pitch markings based on court type"""
@@ -854,7 +874,10 @@ def visualize_static(df, selected_configs, selected_objects, start_time, end_tim
                     customdata=[timestamps[-1]],
                     hovertemplate=point_hover_template
                 ))
-    
+
+    # Initial view and "Reset axes" cover all trajectories (and the court, if drawn)
+    data_traces = [t for t in fig.data if t.x is not None and t.y is not None]
+    fit_axes_to_data(fig, [v for t in data_traces for v in t.x], [v for t in data_traces for v in t.y])
     return fig
 
 # Create animated visualization with Plotly frames
@@ -1082,18 +1105,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
     # so the animation is not zoomed to the first frame only
     episode_points = [p for config_points in data_cache.values() for points in config_points.values()
                       for p in points if p['timestamp'] <= end_time]
-    if episode_points:
-        xs = [p['x'] for p in episode_points]
-        ys = [p['y'] for p in episode_points]
-        x_min, x_max, y_min, y_max = min(xs), max(xs), min(ys), max(ys)
-        if fig.layout.xaxis.range is not None:
-            x_min, x_max = min(x_min, fig.layout.xaxis.range[0]), max(x_max, fig.layout.xaxis.range[1])
-        if fig.layout.yaxis.range is not None:
-            y_min, y_max = min(y_min, fig.layout.yaxis.range[0]), max(y_max, fig.layout.yaxis.range[1])
-        x_margin = max(0.05 * (x_max - x_min), 0.5)
-        y_margin = max(0.05 * (y_max - y_min), 0.5)
-        fig.update_xaxes(range=[x_min - x_margin, x_max + x_margin], autorange=False)
-        fig.update_yaxes(range=[y_min - y_margin, y_max + y_margin], autorange=False)
+    fit_axes_to_data(fig, [p['x'] for p in episode_points], [p['y'] for p in episode_points])
 
     # Add animation controls
     # Set transition duration to create smooth movement between frames

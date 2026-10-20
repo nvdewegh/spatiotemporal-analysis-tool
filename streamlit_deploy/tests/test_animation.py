@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore')
 APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'streamlit_visualization.py')
 FUNCTIONS = {'format_tst', 'create_pitch_figure', '_create_pitch_figure', 'apply_readable_map_labels',
              'get_court_dimensions', 'aggregate_points', 'interpolate_points', 'visualize_animated',
-             'MAP_LABEL_COLOR'}
+             'MAP_LABEL_COLOR', 'fit_axes_to_data'}
 
 
 def load_app_functions():
