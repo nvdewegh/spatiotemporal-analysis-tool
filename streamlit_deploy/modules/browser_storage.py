@@ -154,6 +154,13 @@ def restore_from_snapshot(snapshot):
         s._bs_notice = 'Saved data could not be fully restored; defaults are used where needed.'
 
 
+def current_settings(setting_keys):
+    """Current values of the settings, falling back to the last saved value for hidden widgets."""
+    settings = dict(_state()._bs_last_settings)
+    settings.update({k: _json_safe(st.session_state[k]) for k in setting_keys if k in st.session_state})
+    return settings
+
+
 def take_notice():
     s = _state()
     notice, s._bs_notice = s._bs_notice, None
@@ -173,8 +180,7 @@ def sync(setting_keys):
     settings = None
     if s._bs_restored:   # never save before the saved state has been read
         # Keep the last known value of settings whose widget is not shown in this run
-        settings = dict(s._bs_last_settings)
-        settings.update({k: _json_safe(st.session_state[k]) for k in setting_keys if k in st.session_state})
+        settings = current_settings(setting_keys)
         s._bs_last_settings = settings
     value = _component(namespace=NAMESPACE, settings=settings, ops=list(s._bs_ops),
                        key='samtool_browser_storage', default=None)

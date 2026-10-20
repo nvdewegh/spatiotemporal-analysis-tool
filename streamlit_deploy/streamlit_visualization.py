@@ -2,6 +2,7 @@ import streamlit as st
 import locale
 import os
 import re
+import json
 
 # Detect user's locale for consistent number formatting
 # We'll use European format (comma as decimal) if detected, otherwise US format
@@ -66,28 +67,112 @@ from modules import association_rules, clustering, sequence_analysis, outlier_de
 from modules import browser_storage
 
 # Settings saved in the browser and restored on the next visit (session-state keys)
+# These are also the settings that "Copy / import settings" exchanges.
 PERSISTED_SETTINGS = ['court_type', 'show_court_background', 'sidebar_configs', 'sidebar_objects',
-                      'analysis_method', 'visual_agg_type', 'visual_temp_res']
+                      'analysis_method', 'visual_start', 'visual_end', 'visual_agg_type', 'visual_temp_res',
+                      'anim_speed', 'anim_smooth', 'anim_interp_steps']
 COURT_OPTIONS = ["No selection", "Football", "Tennis"]
 ANALYSIS_METHODS = ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis",
                     "PDP Analysis", "Outlier Detection", "Heat Maps", "Extra"]
+SETTINGS_FORMAT = 'samtool-settings'
+SETTINGS_VERSION = 1
 
 
-def persisted_setting_validators(config_sources, objects):
+def widget_default(key, value):
+    """Pass a widget's default only when its key has no value yet (restored or imported)."""
+    return {} if key in st.session_state else {'value': value}
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def persisted_setting_validators(config_sources, objects, time_range=None):
     """Checks for restored settings: return a valid value, or None to keep the default."""
     def subset(options):
         return lambda v: [o for o in options if o in v] if isinstance(v, list) and any(o in v for o in options) else None
     def choice(options):
         return lambda v: v if v in options else None
+    def in_time_range(v):
+        if not _is_number(v) or time_range is None:
+            return None
+        return float(v) if time_range[0] <= v <= time_range[1] else None
     return {
         'court_type': choice(COURT_OPTIONS),
         'show_court_background': lambda v: v if isinstance(v, bool) else None,
         'sidebar_configs': subset(config_sources),
         'sidebar_objects': subset(objects),
         'analysis_method': choice(ANALYSIS_METHODS),
+        'visual_start': in_time_range,
+        'visual_end': in_time_range,
         'visual_agg_type': choice(["none", "mean", "median"]),
-        'visual_temp_res': lambda v: float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0.1 else None,
+        'visual_temp_res': lambda v: float(v) if _is_number(v) and v >= 0.1 else None,
+        'anim_speed': lambda v: int(v) if _is_number(v) and v == int(v) and 50 <= v <= 1000 and v % 50 == 0 else None,
+        'anim_smooth': lambda v: v if isinstance(v, bool) else None,
+        'anim_interp_steps': lambda v: int(v) if _is_number(v) and v == int(v) and 2 <= v <= 20 else None,
     }
+
+
+def export_settings_json(df):
+    """The current settings as portable JSON (no data, only the choices that shape the views)."""
+    settings = browser_storage.current_settings(PERSISTED_SETTINGS)
+    payload = {
+        'format': SETTINGS_FORMAT,
+        'version': SETTINGS_VERSION,
+        'dataset_files': st.session_state.get('filename'),   # for reference only, not checked
+        'settings': {k: settings[k] for k in PERSISTED_SETTINGS if k in settings},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def parse_settings_import(text, df):
+    """
+    Validate pasted settings against the loaded dataset.
+    Returns (settings, errors); settings is only usable when errors is empty.
+    """
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError) as e:
+        return None, [f"This is not valid JSON ({e})."]
+    if not isinstance(payload, dict) or payload.get('format') != SETTINGS_FORMAT:
+        return None, ["This is not a SAMTool settings text (the field \"format\": \"samtool-settings\" is missing)."]
+    version = payload.get('version')
+    if not isinstance(version, int) or version > SETTINGS_VERSION:
+        return None, [f"Unsupported settings version {version!r}; this tool reads version {SETTINGS_VERSION}."]
+    settings = payload.get('settings')
+    if not isinstance(settings, dict) or not settings:
+        return None, ["The required field \"settings\" is missing or empty."]
+
+    config_sources = sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key)
+    objects = sorted(df['obj'].unique())
+    time_range = (float(df['tst'].min()), float(df['tst'].max()))
+    validators = persisted_setting_validators(config_sources, objects, time_range)
+    errors, cleaned = [], {}
+    unknown = [k for k in settings if k not in validators]
+    if unknown:
+        errors.append("Unknown settings: " + ", ".join(unknown) + ".")
+    for key, value in settings.items():
+        if key not in validators:
+            continue
+        if key in ('sidebar_configs', 'sidebar_objects'):
+            options = config_sources if key == 'sidebar_configs' else objects
+            if not isinstance(value, list) or not value:
+                errors.append(f"\"{key}\" must be a non-empty list.")
+                continue
+            missing = [v for v in value if v not in options]
+            if missing:
+                what = 'Configurations' if key == 'sidebar_configs' else 'Objects'
+                errors.append(f"{what} not in the loaded dataset: " + ", ".join(map(str, missing)) + ".")
+                continue
+        result = validators[key](value)
+        if result is None:
+            hint = f" (allowed: {time_range[0]:g} to {time_range[1]:g})" if key in ('visual_start', 'visual_end') else ""
+            errors.append(f"Unsupported value for \"{key}\": {value!r}{hint}.")
+        else:
+            cleaned[key] = result
+    if 'visual_start' in cleaned and 'visual_end' in cleaned and cleaned['visual_start'] > cleaned['visual_end']:
+        errors.append("\"visual_start\" is after \"visual_end\".")
+    return cleaned, errors
 from ui_components import configuration_selector
 
 # Common Plotly configuration for interactive charts
@@ -1626,6 +1711,32 @@ def main():
                 st.session_state.sidebar_configs = sorted(data['config_source'].drop_duplicates().tolist(), key=config_sort_key)
                 st.session_state.sidebar_objects = default_objects[:min(5, len(default_objects))]
 
+        # Copy settings out of the tool and paste them back in (to reproduce a view exactly)
+        import_message = st.session_state.pop('settings_import_message', None)
+        if import_message:
+            st.success(import_message)
+        with st.expander("Copy / import settings"):
+            if st.session_state.data is None:
+                st.caption("Load a dataset first: settings refer to its configurations and objects.")
+            else:
+                settings_json = export_settings_json(st.session_state.data)
+                st.caption("**Copy:** use the copy icon at the top right of the box below.")
+                st.code(settings_json, language="json")
+                st.download_button("Download settings (JSON)", settings_json, file_name="samtool_settings.json",
+                                   mime="application/json", key="btn_download_settings")
+                pasted_settings = st.text_area("**Import:** paste settings here", key="settings_import_text", height=120)
+                settings_file = st.file_uploader("…or load a settings file", type=["json"], key="settings_import_file")
+                if st.button("Import settings", key="btn_import_settings"):
+                    source = settings_file.getvalue().decode("utf-8", errors="replace") if settings_file else pasted_settings
+                    imported, errors = parse_settings_import(source, st.session_state.data)
+                    if errors:
+                        st.error("Settings not imported; your current settings are unchanged.\n\n- " + "\n- ".join(errors))
+                    else:
+                        for key, value in imported.items():
+                            st.session_state[key] = value
+                        st.session_state.settings_import_message = f"Imported {len(imported)} settings."
+                        st.rerun()
+
         if uploaded_files is not None and len(uploaded_files) == 0:
             # User cleared the uploader
             if st.session_state.data is not None:
@@ -1685,14 +1796,14 @@ def main():
             # Apply settings restored from the browser (once), before the widgets are created
             browser_storage.apply_pending_settings(persisted_setting_validators(
                 sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key),
-                sorted(df['obj'].unique())))
+                sorted(df['obj'].unique()),
+                (float(df['tst'].min()), float(df['tst'].max()))))
             st.info(f"Current file(s): {st.session_state.filename}")
             
             st.header("Court Type")
             st.checkbox(
                 "Show court background",
-                # No default when the value is already in session state (e.g. restored settings)
-                **({} if "show_court_background" in st.session_state else {"value": False}),
+                **widget_default("show_court_background", False),
                 key="show_court_background"
             )
             court_options = COURT_OPTIONS
@@ -1948,7 +2059,7 @@ def main():
                 "Start time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(min_time),
+                **widget_default("visual_start", float(min_time)),
                 step=0.01,
                 format="%.2f",
                 key="visual_start"
@@ -1959,7 +2070,7 @@ def main():
                 "End time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(max_time),
+                **widget_default("visual_end", float(max_time)),
                 step=0.01,
                 format="%.2f",
                 key="visual_end"
@@ -1979,7 +2090,7 @@ def main():
             temporal_resolution = st.number_input(
                 "Temporal resolution (s)",
                 min_value=0.1,
-                **({} if "visual_temp_res" in st.session_state else {"value": 1.0}),
+                **widget_default("visual_temp_res", 1.0),
                 step=0.1,
                 format="%.2f",
                 key="visual_temp_res"
@@ -2031,25 +2142,28 @@ def main():
                         "Animation Speed (ms per frame)",
                         min_value=50,
                         max_value=1000,
-                        value=200,
+                        **widget_default("anim_speed", 200),
                         step=50,
-                        help="Lower values = faster animation, higher values = slower animation"
+                        help="Lower values = faster animation, higher values = slower animation",
+                        key="anim_speed"
                     )
                 
                 with anim_col2:
                     use_interpolation_anim = st.checkbox(
                         "Smooth continuous movement",
-                        value=False,
-                        help="Interpolate between timestamps for smooth continuous motion"
+                        **widget_default("anim_smooth", False),
+                        help="Interpolate between timestamps for smooth continuous motion",
+                        key="anim_smooth"
                     )
-                    
+
                     if use_interpolation_anim:
                         interpolation_steps_anim = st.slider(
                             "Interpolation detail",
                             min_value=2,
                             max_value=20,
-                            value=5,
-                            help="Number of intermediate points between timestamps (higher = smoother but slower)"
+                            **widget_default("anim_interp_steps", 5),
+                            help="Number of intermediate points between timestamps (higher = smoother but slower)",
+                            key="anim_interp_steps"
                         )
                     else:
                         interpolation_steps_anim = 5
