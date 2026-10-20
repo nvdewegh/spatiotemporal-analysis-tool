@@ -866,6 +866,15 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                 x_coords = [p['x'] for p in points]
                 y_coords = [p['y'] for p in points]
                 current_point = points[-1]
+
+                # Give the trail the same number of points in every frame (pad with the current
+                # position). Plotly only tweens a line between frames when the point count is
+                # unchanged; otherwise it redraws the longer line instantly while the head is still
+                # transitioning, so the line appears ahead of the head.
+                trail_length = len(all_points) + 1  # all points plus one interpolated point at current_time
+                padding = trail_length - len(points)
+                trail_x = x_coords + [current_point['x']] * padding
+                trail_y = y_coords + [current_point['y']] * padding
                 
                 # Calculate arrow angle if we have at least 2 points
                 marker_angle = 0
@@ -883,7 +892,7 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                 
                 # Trace 1: Trail (Line)
                 frame_data.append(go.Scatter(
-                    x=x_coords, y=y_coords,
+                    x=trail_x, y=trail_y,
                     mode='lines',
                     name=f'{config} - Obj {obj_id}',
                     legendgroup=legend_group,
