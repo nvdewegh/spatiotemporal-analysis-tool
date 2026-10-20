@@ -63,6 +63,31 @@ from sklearn.metrics import silhouette_score
 
 # Import analysis modules
 from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
+from modules import browser_storage
+
+# Settings saved in the browser and restored on the next visit (session-state keys)
+PERSISTED_SETTINGS = ['court_type', 'show_court_background', 'sidebar_configs', 'sidebar_objects',
+                      'analysis_method', 'visual_agg_type', 'visual_temp_res']
+COURT_OPTIONS = ["No selection", "Football", "Tennis"]
+ANALYSIS_METHODS = ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis",
+                    "PDP Analysis", "Outlier Detection", "Heat Maps", "Extra"]
+
+
+def persisted_setting_validators(config_sources, objects):
+    """Checks for restored settings: return a valid value, or None to keep the default."""
+    def subset(options):
+        return lambda v: [o for o in options if o in v] if isinstance(v, list) and any(o in v for o in options) else None
+    def choice(options):
+        return lambda v: v if v in options else None
+    return {
+        'court_type': choice(COURT_OPTIONS),
+        'show_court_background': lambda v: v if isinstance(v, bool) else None,
+        'sidebar_configs': subset(config_sources),
+        'sidebar_objects': subset(objects),
+        'analysis_method': choice(ANALYSIS_METHODS),
+        'visual_agg_type': choice(["none", "mean", "median"]),
+        'visual_temp_res': lambda v: float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0.1 else None,
+    }
 from ui_components import configuration_selector
 
 # Common Plotly configuration for interactive charts
@@ -1553,7 +1578,34 @@ def main():
                  "• Long format: config, tst, obj, x, y\n"
                  "• Wide format: config_id, x1, y1, x2, y2, ..."
         )
-        
+
+        # Browser storage: remember uploads; reuse the saved dataset when nothing is uploaded
+        if uploaded_files:
+            browser_storage.remember_uploaded(uploaded_files)
+            st.session_state.uploader_had_files = True
+        elif st.session_state.get('uploader_had_files'):
+            # The user removed the files from the uploader: forget the saved copy too
+            st.session_state.uploader_had_files = False
+            browser_storage.forget_dataset()
+        elif browser_storage.has_saved_dataset():
+            uploaded_files = browser_storage.restored_files()
+            st.caption("Using your saved dataset (stored in this browser only).")
+            if st.button("Remove saved dataset", key="btn_remove_saved_dataset"):
+                browser_storage.forget_dataset()
+                uploaded_files = []
+        notice = browser_storage.take_notice()
+        if notice:
+            st.info(notice)
+        if st.button("Reset settings to defaults", key="btn_reset_settings",
+                     help="Clears the settings saved in this browser (the dataset is kept)"):
+            browser_storage.reset_settings(PERSISTED_SETTINGS)
+            st.session_state.court_type = 'No selection'
+            if st.session_state.data is not None:
+                data = st.session_state.data
+                default_objects = sorted(data['obj'].unique())
+                st.session_state.sidebar_configs = sorted(data['config_source'].drop_duplicates().tolist(), key=config_sort_key)
+                st.session_state.sidebar_objects = default_objects[:min(5, len(default_objects))]
+
         if uploaded_files is not None and len(uploaded_files) == 0:
             # User cleared the uploader
             if st.session_state.data is not None:
@@ -1610,15 +1662,20 @@ def main():
             df = st.session_state.data
         
         if df is not None:
+            # Apply settings restored from the browser (once), before the widgets are created
+            browser_storage.apply_pending_settings(persisted_setting_validators(
+                sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key),
+                sorted(df['obj'].unique())))
             st.info(f"Current file(s): {st.session_state.filename}")
             
             st.header("Court Type")
             st.checkbox(
                 "Show court background",
-                value=False,
+                # No default when the value is already in session state (e.g. restored settings)
+                **({} if "show_court_background" in st.session_state else {"value": False}),
                 key="show_court_background"
             )
-            court_options = ["No selection", "Football", "Tennis"]
+            court_options = COURT_OPTIONS
             court_type = st.radio(
                 "Select court type",
                 court_options,
@@ -1758,9 +1815,14 @@ def main():
             st.header("Analysis Method")
             analysis_method = st.selectbox(
                 "Select method",
-                ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis", "PDP Analysis", "Outlier Detection", "Heat Maps", "Extra"]
+                ANALYSIS_METHODS,
+                key="analysis_method"
             )
     
+    # Save changed settings / dataset in the browser (and restore them once per page load).
+    # Done here, before the analysis views are built, so saving never waits for heavy plots.
+    browser_storage.sync(PERSISTED_SETTINGS)
+
     # Main content
     if df is None:
         st.info("Please upload a CSV file to begin.")
@@ -1897,7 +1959,7 @@ def main():
             temporal_resolution = st.number_input(
                 "Temporal resolution (s)",
                 min_value=0.1,
-                value=1.0,
+                **({} if "visual_temp_res" in st.session_state else {"value": 1.0}),
                 step=0.1,
                 format="%.2f",
                 key="visual_temp_res"

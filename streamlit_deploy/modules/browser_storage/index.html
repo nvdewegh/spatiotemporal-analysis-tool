@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0">
+<script>
+// Minimal Streamlit component (no build step) that keeps SAMTool settings in localStorage
+// and the uploaded dataset in IndexedDB, in the user's own browser.
+//
+// Python -> component (args):  namespace, settings (object or null), ops [{id, type, ...}]
+// Component -> Python (value): {snapshot: {settings, dataset, error}, done: <last op id>}
+//   The snapshot is read once per page load and sent with the first value.
+
+const DB_VERSION = 1;
+let snapshotSent = false;
+let lastDone = 0;
+let lastSettingsJson = null;
+let queue = Promise.resolve();
+
+function send(type, extra) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage: true, type: type}, extra), '*');
+}
+function setValue(value) { send('streamlit:setComponentValue', {value: value, dataType: 'json'}); }
+
+function openDb(namespace) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(namespace, DB_VERSION);
+    request.onupgradeneeded = () => request.result.createObjectStore('datasets');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function dbCall(namespace, mode, action) {
+  const db = await openDb(namespace);
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('datasets', mode);
+      const request = action(tx.objectStore('datasets'));
+      tx.oncomplete = () => resolve(request ? request.result : undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+async function readSnapshot(namespace) {
+  const snapshot = {settings: null, dataset: null, error: null};
+  try {
+    const raw = localStorage.getItem(namespace + ':settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) snapshot.settings = parsed;
+      else localStorage.removeItem(namespace + ':settings');
+    }
+  } catch (e) {
+    snapshot.error = 'settings: ' + e;
+    try { localStorage.removeItem(namespace + ':settings'); } catch (ignored) {}
+  }
+  try {
+    const dataset = await dbCall(namespace, 'readonly', store => store.get('current'));
+    if (dataset && Array.isArray(dataset.files)) snapshot.dataset = dataset;
+  } catch (e) {
+    snapshot.error = (snapshot.error ? snapshot.error + '; ' : '') + 'dataset: ' + e;
+  }
+  return snapshot;
+}
+
+async function runOp(namespace, op) {
+  if (op.type === 'save_dataset') {
+    await dbCall(namespace, 'readwrite', store => store.put({files: op.files, hash: op.hash}, 'current'));
+  } else if (op.type === 'clear_dataset') {
+    await dbCall(namespace, 'readwrite', store => store.delete('current'));
+  } else if (op.type === 'clear_settings') {
+    localStorage.removeItem(namespace + ':settings');
+    lastSettingsJson = null;
+  }
+}
+
+async function handleRender(args) {
+  const namespace = args.namespace || 'samtool';
+  const value = {};
+  if (!snapshotSent) {
+    value.snapshot = await readSnapshot(namespace);
+    snapshotSent = true;
+  }
+  for (const op of (args.ops || [])) {
+    if (op.id <= lastDone) continue;
+    try { await runOp(namespace, op); } catch (e) { value.op_error = String(e); }
+    lastDone = op.id;
+  }
+  if (args.settings) {
+    const json = JSON.stringify(args.settings);
+    if (json !== lastSettingsJson) {
+      try { localStorage.setItem(namespace + ':settings', json); lastSettingsJson = json; }
+      catch (e) { value.op_error = String(e); }
+    }
+  }
+  // Only report back when there is something new, to avoid needless reruns
+  if (value.snapshot || (args.ops || []).length) {
+    value.done = lastDone;
+    setValue(value);
+  }
+}
+
+window.addEventListener('message', event => {
+  if (event.data && event.data.type === 'streamlit:render') {
+    const args = event.data.args || {};
+    queue = queue.then(() => handleRender(args)).catch(e => setValue({error: String(e), done: lastDone}));
+  }
+});
+send('streamlit:componentReady', {apiVersion: 1});
+send('streamlit:setFrameHeight', {height: 0});
+</script>
+</body>
+</html>
