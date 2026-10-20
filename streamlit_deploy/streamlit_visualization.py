@@ -1663,14 +1663,8 @@ def main():
                             
                         range_selection = config_sources[start_idx : end_idx + 1]
                         
-                        # Combine with existing selection or replace? 
-                        # Usually range selection implies "this is what I want", but in multiselect context, 
-                        # users might want to add a range to existing. 
-                        # Let's add to existing to be safe, user can deselect all first if they want only the range.
-                        current_selection = st.session_state.sidebar_configs if "sidebar_configs" in st.session_state else []
-                        new_selection = list(set(current_selection + range_selection))
-                        
-                        st.session_state.sidebar_configs = new_selection
+                        # Replace the current selection with exactly this range
+                        st.session_state.sidebar_configs = list(range_selection)
                         st.rerun()
                     except ValueError:
                         st.error("Invalid range selection")
@@ -1717,10 +1711,8 @@ def main():
                             
                         range_selection = objects[start_idx : end_idx + 1]
                         
-                        current_selection = st.session_state.sidebar_objects if "sidebar_objects" in st.session_state else []
-                        new_selection = list(set(current_selection + range_selection))
-                        
-                        st.session_state.sidebar_objects = new_selection
+                        # Replace the current selection with exactly this range
+                        st.session_state.sidebar_objects = list(range_selection)
                         st.rerun()
                     except ValueError:
                         st.error("Invalid range selection")
