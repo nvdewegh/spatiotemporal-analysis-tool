@@ -2201,13 +2201,32 @@ def main():
                         use_interpolation_anim,
                         interpolation_steps_anim
                     )
-                    # Use unique key based on selections to force chart refresh on changes
-                    config_str = "_".join(sorted(str(c) for c in selected_configs))
-                    obj_str = "_".join(sorted(str(o) for o in selected_objects))
-                    chart_key = f"animated_traj_{config_str}_{obj_str}"
-                    render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating animated visualization: {str(e)}")
+                    fig = None
+                    st.error(f"The animation could not be created: {e}. Try other settings or a smaller selection.")
+                    with st.expander("Technical details"):
+                        st.exception(e)
+
+                if fig is not None:
+                    has_points = any(len(t.x or []) > 0 for frame in fig.frames for t in frame.data)
+                    if start_time > end_time:
+                        st.warning("Start time is after end time: adjust the time range to see the animation.")
+                    elif not fig.frames or not has_points:
+                        st.warning("No positions in the selected time range for these configurations and objects.")
+                    else:
+                        # Key on everything that changes the figure, so a changed animation is mounted as a
+                        # new chart instead of being patched in place (Plotly does not reliably patch frames)
+                        config_str = "_".join(sorted(str(c) for c in selected_configs))
+                        obj_str = "_".join(sorted(str(o) for o in selected_objects))
+                        settings_str = (f"{start_time}_{end_time}_{aggregation_type}_{temporal_resolution}_{court_type}_"
+                                        f"{animation_speed}_{use_interpolation_anim}_{interpolation_steps_anim}")
+                        chart_key = f"animated_traj_{config_str}_{obj_str}_{settings_str}"
+                        try:
+                            render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
+                        except Exception as e:
+                            st.error(f"The animation could not be displayed: {e}. Reload the page or reduce the selection.")
+                            with st.expander("Technical details"):
+                                st.exception(e)
             
             with viz_tabs[2]:
                 st.markdown("### Time Point View")
