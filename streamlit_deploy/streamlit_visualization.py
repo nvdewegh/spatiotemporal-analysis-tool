@@ -1,6 +1,7 @@
 import streamlit as st
 import locale
 import os
+import re
 
 # Detect user's locale for consistent number formatting
 # We'll use European format (comma as decimal) if detected, otherwise US format
@@ -422,6 +423,11 @@ def create_pitch_figure(court_type='Football'):
         return create_tennis_court()
     else:
         return create_football_pitch()
+
+# Sort key for configuration names by their numeric parts, e.g. Config_2 before Config_10
+def config_sort_key(config):
+    parts = re.split(r'(\d+)', str(config))
+    return [(0, int(p), '') if p.isdigit() else (1, 0, p) for p in parts]
 
 # Format a raw timestamp value as given in the data (no unit assumed)
 def format_tst(value):
@@ -1585,10 +1591,10 @@ def main():
                 if uploaded_names != st.session_state.uploaded_filenames:
                     st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
                     st.session_state.uploaded_filenames = uploaded_names
-                    st.session_state.config_sources = df['config_source'].drop_duplicates().tolist()
-                    
+                    config_sources = sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key)
+                    st.session_state.config_sources = config_sources
+
                     # Initialize shared selections when new data is loaded
-                    config_sources = df['config_source'].drop_duplicates().tolist()
                     objects = sorted(df['obj'].unique())
                     st.session_state.shared_selected_configs = config_sources
                     st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
@@ -1624,9 +1630,10 @@ def main():
             st.header("Data Selection")
             st.markdown("**Manage your selections here** - these selections apply to all analysis methods.")
             
-            config_sources = df['config_source'].drop_duplicates().tolist()
+            # Numeric order, so ranges and legends follow Config_1, Config_2, ..., Config_10
+            config_sources = sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key)
             objects = sorted(df['obj'].unique())
-            
+
             # One-time sync: On first render with data, ensure widget keys match shared state
             # This prevents the first-interaction flicker by syncing before widgets are created
             if not st.session_state.widgets_synced and st.session_state.data is not None:
@@ -1686,8 +1693,8 @@ def main():
                 key="sidebar_configs",
                 help="These configurations will be used across all analysis methods"
             )
-            # Sync back to shared state
-            st.session_state.shared_selected_configs = selected_configs
+            # Sync back to shared state, in numeric order whatever the order of selection
+            st.session_state.shared_selected_configs = sorted(selected_configs, key=config_sort_key)
             
             # Object selection
             st.subheader("Objects (Players/Entities)")
