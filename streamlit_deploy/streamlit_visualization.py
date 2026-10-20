@@ -194,9 +194,9 @@ PLOTLY_CONFIG = {
 
 
 def render_interactive_chart(fig, caption=None, key=None, use_container_width=True):
+    """Render a Plotly figure with consistent interactive controls."""
     if fig.layout.uirevision == 'plain-coordinates':
         use_container_width = True
-    """Render a Plotly figure with consistent interactive controls."""
     if not use_container_width:
         # Center the chart using columns when fixed width is used
         # Using [1, 2, 1] ratio to center the 500px chart
@@ -1142,10 +1142,21 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
             'x': 0.1,
             'y': 1.15,
             'xanchor': 'left',
-            'yanchor': 'top'
+            'yanchor': 'top',
+            # Explicit high-contrast colours, independent of Streamlit's light/dark theme
+            'bgcolor': '#f0f2f6',
+            'bordercolor': '#8a8d99',
+            'borderwidth': 1,
+            'font': {'color': MAP_LABEL_COLOR, 'size': 13}
         }],
         sliders=[{
             'active': 0,
+            'bgcolor': '#f0f2f6',
+            'bordercolor': '#8a8d99',
+            'activebgcolor': '#ff4b4b',
+            'font': {'color': MAP_LABEL_COLOR},
+            'currentvalue': {'font': {'color': MAP_LABEL_COLOR}},
+            'tickcolor': MAP_LABEL_COLOR,
             'steps': [
                 {
                     'args': [[f.name], {
