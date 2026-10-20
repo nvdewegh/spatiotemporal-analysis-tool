@@ -21,8 +21,9 @@ import streamlit as st
 
 warnings.filterwarnings('ignore')
 APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'streamlit_visualization.py')
-FUNCTIONS = {'format_tst', 'create_pitch_figure', 'get_court_dimensions', 'aggregate_points',
-             'interpolate_points', 'visualize_animated'}
+FUNCTIONS = {'format_tst', 'create_pitch_figure', '_create_pitch_figure', 'apply_readable_map_labels',
+             'get_court_dimensions', 'aggregate_points', 'interpolate_points', 'visualize_animated',
+             'MAP_LABEL_COLOR'}
 
 
 def load_app_functions():
@@ -30,7 +31,8 @@ def load_app_functions():
     tree = ast.parse(open(APP).read())
     namespace = {'np': np, 'pd': pd, 'go': go, 'st': st}
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
+        is_constant = isinstance(node, ast.Assign) and any(getattr(t, 'id', None) in FUNCTIONS for t in node.targets)
+        if is_constant or (isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS):
             exec(compile(ast.Module([node], []), APP, 'exec'), namespace)
     return namespace
 

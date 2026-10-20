@@ -427,9 +427,27 @@ def create_tennis_court():
     
     return fig
 
+MAP_LABEL_COLOR = '#262730'   # dark text for maps, which always have a light (white/green) background
+
+def apply_readable_map_labels(fig):
+    """
+    Give a map figure a white canvas with dark labels. Streamlit's chart theme otherwise uses
+    light text in dark mode, which disappears against the maps' white or green backgrounds.
+    """
+    axis_style = dict(tickfont=dict(color=MAP_LABEL_COLOR), title_font=dict(color=MAP_LABEL_COLOR),
+                      gridcolor='#e6e6e6', zerolinecolor='#cccccc', linecolor='#cccccc')
+    fig.update_layout(paper_bgcolor='white', font=dict(color=MAP_LABEL_COLOR),
+                      legend=dict(font=dict(color=MAP_LABEL_COLOR)))
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
+    return fig
+
 # Unified function to create pitch based on court type
 def create_pitch_figure(court_type='Football'):
     """Create a Plotly figure with pitch markings based on court type"""
+    return apply_readable_map_labels(_create_pitch_figure(court_type))
+
+def _create_pitch_figure(court_type):
     if court_type not in ('Tennis', 'Football') or not st.session_state.get('show_court_background', True):
         fig = go.Figure()
         fig.update_layout(
@@ -1208,6 +1226,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
                     marker=dict(size=15, color=color, symbol=marker_shape),
                     text=[f'Obj {obj_id}'],
                     textposition="top center",
+                    textfont=dict(color=MAP_LABEL_COLOR),
                     name=f'{config} - Obj {obj_id} Avg',
                     legendgroup=legend_group,
                     hovertemplate=(
@@ -1227,6 +1246,7 @@ def visualize_average_position(df, selected_configs, selected_objects, start_tim
             marker=dict(size=20, color='black', symbol='star'),
             text=['Overall Avg'],
             textposition="top center",
+            textfont=dict(color=MAP_LABEL_COLOR),
             name='Overall Average',
             hovertemplate=f'Overall Average<br>x: {overall_avg_x:.2f}m<br>y: {overall_avg_y:.2f}m<extra></extra>'
         ))
