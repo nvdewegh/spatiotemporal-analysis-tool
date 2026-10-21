@@ -268,3 +268,22 @@ def test_more_than_ten_objects_with_external_points_sort_numerically():
     ext_b = p.add_external_points_to_data(other, [('Pole', 1.0, 2.0)], [0, 1, 2])
     d = p.compute_pdp_distance_pair(ext, ext_b, 2)
     assert d == p.compute_pdp_distance_pair(ext.sample(frac=1, random_state=1), ext_b.sample(frac=1, random_state=2), 2)
+
+
+# ---------------------------------------------------------------- trajectory comparison shows the PDP settings
+
+def test_trajectory_comparison_shows_current_pdp_settings():
+    df = time_major_frame(2, 3)
+    fig = p.plot_trajectory_comparison(df, ['A'], ['A'], 0, 2, selected_objects=[0, 1], show_court=False,
+                                       show_buffers=True, buffer_x=0.4, buffer_y=0.0,
+                                       show_rough=True, rough_x=0.2, rough_y=0.1,
+                                       external_points=[('Pole', 30.0, -12.5)])
+    buffer_traces = [t for t in fig.data if t.hovertemplate and 'Buffer Point' in t.hovertemplate]
+    assert len(buffer_traces) == 2                                   # one per object
+    xs, ys = list(buffer_traces[0].x), list(buffer_traces[0].y)
+    assert len(xs) == 2 * 3                                          # only left/right (buffer_y = 0)
+    assert xs[:2] == [df.iloc[0]['x'] - 0.4, df.iloc[0]['x'] + 0.4] and ys[:2] == [df.iloc[0]['y']] * 2
+    rects = [s for s in fig.layout.shapes if s.type == 'rect']
+    assert len(rects) == 6 and abs((rects[0].x1 - rects[0].x0) - 0.4) < 1e-9 and abs((rects[0].y1 - rects[0].y0) - 0.2) < 1e-9
+    ext = [t for t in fig.data if t.name == 'External points']
+    assert len(ext) == 1 and list(ext[0].x) == [30.0] and list(ext[0].y) == [-12.5]   # far outside old limits

@@ -4032,8 +4032,6 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 with col_x:
                     custom_x = st.number_input(
                         "X coordinate (m)",
-                        min_value=-10.0,
-                        max_value=30.0,
                         value=0.0,
                         step=0.1,
                         format="%.2f",
@@ -4042,8 +4040,6 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 with col_y:
                     custom_y = st.number_input(
                         "Y coordinate (m)",
-                        min_value=-10.0,
-                        max_value=40.0,
                         value=0.0,
                         step=0.1,
                         format="%.2f",
@@ -5512,39 +5508,44 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # Visualization options for buffer and rough zones
                     st.markdown("---")
                     st.markdown("**Advanced Visualization Options:**")
-                    st.caption("Visualize how buffer and rough parameters affect PDP computation")
-                    
-                    col_viz1, col_viz2 = st.columns(2)
-                    
+                    st.caption("Shows the current PDP settings (buffer, rough tolerance and external points) "
+                               "on the trajectories. Change them in the PDP parameters above.")
+
+                    viz_external_points = (st.session_state.get('pdp_external_points', [])
+                                           if st.session_state.get('pdp_use_external', False) else [])
+                    has_buffer = buffer_x > 0 or buffer_y > 0
+                    has_rough = rough_x > 0 or rough_y > 0
+
+                    col_viz1, col_viz2, col_viz3 = st.columns(3)
+
                     with col_viz1:
                         st.markdown("**Buffer Points (Data Expansion)**")
-                        show_buffers = st.checkbox("Show buffer points", value=False, key="pdp_show_buffers",
+                        show_buffers = st.checkbox("Show buffer points", **widget_default("pdp_show_buffers", has_buffer),
+                                                  key="pdp_show_buffers", disabled=not has_buffer,
                                                   help="Buffer ADDS extra data points around each original point at cardinal directions (left/right/up/down)")
-                        if show_buffers:
-                            buffer_size = st.slider("Buffer distance (meters)", min_value=0.1, max_value=2.0, 
-                                                   value=0.5, step=0.1, key="pdp_buffer_size",
-                                                   help="Distance of buffer points from original point")
-                        else:
-                            buffer_size = 0.5
-                    
+                        st.caption(f"Buffer X = {buffer_x:g} m, Buffer Y = {buffer_y:g} m" if has_buffer
+                                   else "No buffer set (Buffer X and Y are 0).")
+
                     with col_viz2:
                         st.markdown("**Rough Tolerance (Comparison Zone)**")
-                        show_rough = st.checkbox("Show rough zones", value=False, key="pdp_show_rough",
+                        show_rough = st.checkbox("Show rough zones", **widget_default("pdp_show_rough", has_rough),
+                                                key="pdp_show_rough", disabled=not has_rough,
                                                 help="Rough defines a TOLERANCE ZONE (rectangle) where points are considered 'approximately equal' in comparisons")
-                        if show_rough:
-                            col_rough_x, col_rough_y = st.columns(2)
-                            with col_rough_x:
-                                viz_rough_x = st.slider("Rough X (meters)", min_value=0.1, max_value=2.0, 
-                                                       value=0.3, step=0.1, key="pdp_viz_rough_x",
-                                                       help="Half-width of tolerance rectangle (X dimension)")
-                            with col_rough_y:
-                                viz_rough_y = st.slider("Rough Y (meters)", min_value=0.1, max_value=2.0, 
-                                                       value=0.3, step=0.1, key="pdp_viz_rough_y",
-                                                       help="Half-height of tolerance rectangle (Y dimension)")
-                        else:
-                            viz_rough_x = 0.3
-                            viz_rough_y = 0.3
-                    
+                        st.caption(f"Rough X = {rough_x:g} m, Rough Y = {rough_y:g} m" if has_rough
+                                   else "No rough tolerance set (Rough X and Y are 0).")
+
+                    with col_viz3:
+                        st.markdown("**External Reference Points**")
+                        show_external = st.checkbox("Show external points",
+                                                    **widget_default("pdp_show_external", bool(viz_external_points)),
+                                                    key="pdp_show_external", disabled=not viz_external_points)
+                        st.caption(f"{len(viz_external_points)} external point(s) in use" if viz_external_points
+                                   else "No external points enabled.")
+
+                    show_buffers = show_buffers and has_buffer
+                    show_rough = show_rough and has_rough
+                    viz_rough_x, viz_rough_y = rough_x, rough_y
+
                     if show_buffers or show_rough:
                         st.info(f"""
                         **Visualization Legend:**
@@ -5570,11 +5571,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                             cluster_labels=st.session_state.pdp_cluster_labels,
                             distance_matrix=distance_matrix,
                             show_buffers=show_buffers,
-                            buffer_size=buffer_size,
+                            buffer_x=buffer_x,
+                            buffer_y=buffer_y,
                             show_rough=show_rough,
                             rough_x=viz_rough_x,
                             rough_y=viz_rough_y,
-                            show_court=(st.session_state.court_type == 'Tennis')
+                            show_court=(st.session_state.court_type == 'Tennis'),
+                            external_points=viz_external_points if show_external else None
                         )
                         
                         render_interactive_chart(fig_traj, 

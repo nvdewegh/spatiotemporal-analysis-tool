@@ -1502,8 +1502,9 @@ def create_tennis_court_base():
 
 def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end_time, 
                                selected_objects=None, cluster_labels=None, distance_matrix=None,
-                               show_buffers=False, buffer_size=0.5, show_rough=False, 
-                               rough_x=0.3, rough_y=0.3, show_court=True):
+                               show_buffers=False, buffer_size=0.5, show_rough=False,
+                               rough_x=0.3, rough_y=0.3, show_court=True,
+                               buffer_x=None, buffer_y=None, external_points=None):
     """
     Compare trajectories of selected configurations (on a tennis court if show_court).
     
@@ -1522,6 +1523,9 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         rough_x: Rough tolerance for X dimension (half-width of rectangle in meters)
         rough_y: Rough tolerance for Y dimension (half-height of rectangle in meters)
         show_court: Whether to draw the tennis court (False = plain x/y axes)
+        buffer_x, buffer_y: Buffer distances per dimension, as in the PDP analysis
+            (override buffer_size; a dimension with 0 gets no buffer points)
+        external_points: List of (name, x, y) external reference points to draw
 
     Returns:
         plotly.graph_objects.Figure: Tennis court with trajectories
@@ -1643,24 +1647,20 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
             
             # Add buffer POINTS if requested (visualize buffer parameter)
             # Buffer adds actual extra points to the data at cardinal directions
-            if show_buffers and buffer_size > 0:
+            bx = buffer_size if buffer_x is None else buffer_x
+            by = buffer_size if buffer_y is None else buffer_y
+            if show_buffers and (bx > 0 or by > 0):
                 buffer_x_coords = []
                 buffer_y_coords = []
-                
+
                 for idx, row in obj_data.iterrows():
-                    # Add 4 buffer points: left, right, bottom, top
-                    buffer_x_coords.extend([
-                        row['x'] - buffer_size,  # left
-                        row['x'] + buffer_size,  # right
-                        row['x'],                # bottom (same x)
-                        row['x']                 # top (same x)
-                    ])
-                    buffer_y_coords.extend([
-                        row['y'],                # left (same y)
-                        row['y'],                # right (same y)
-                        row['y'] - buffer_size,  # bottom
-                        row['y'] + buffer_size   # top
-                    ])
+                    # Buffer points as in apply_buffer_to_trajectories: left/right if bx > 0, bottom/top if by > 0
+                    if bx > 0:
+                        buffer_x_coords.extend([row['x'] - bx, row['x'] + bx])
+                        buffer_y_coords.extend([row['y'], row['y']])
+                    if by > 0:
+                        buffer_x_coords.extend([row['x'], row['x']])
+                        buffer_y_coords.extend([row['y'] - by, row['y'] + by])
                 
                 # Plot buffer points as small markers
                 fig.add_trace(go.Scatter(
@@ -1729,7 +1729,18 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                 legendgroup=legend_group,
                 hovertemplate=f"<b>END: {config} - Obj {obj_id}</b><extra></extra>"
             ))
-    
+
+    # External reference points used in the PDP analysis (static, same for all configurations)
+    if external_points:
+        fig.add_trace(go.Scatter(
+            x=[p[1] for p in external_points], y=[p[2] for p in external_points],
+            mode='markers+text', text=[str(p[0]) for p in external_points], textposition='top center',
+            textfont=dict(color='white' if show_court else '#262730', size=11),
+            marker=dict(size=14, color='red', symbol='star', line=dict(color='white', width=1.5)),
+            name='External points',
+            hovertemplate='<b>External point %{text}</b><br>X: %{x:.2f}m<br>Y: %{y:.2f}m<extra></extra>'
+        ))
+
     # Add similarity info if distance matrix provided
     if distance_matrix is not None and len(selected_configs) == 2:
         idx1 = config_ids.index(selected_configs[0])
