@@ -54,6 +54,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import time
+import traceback
+from contextlib import contextmanager
 from itertools import combinations, groupby
 from collections import Counter
 from scipy.spatial.distance import cdist, euclidean, squareform
@@ -193,6 +195,354 @@ PLOTLY_CONFIG = {
 }
 
 
+def reconcile_pdp_choices(config_ids):
+    """
+    Keep the user's chosen cluster count, similarity target and K across reruns in which their
+    widgets are hidden (Streamlit drops hidden widget values) and across recomputations, and adjust
+    them visibly when a changed configuration selection makes them invalid.
+    Returns the chosen cluster count (always valid for config_ids) and messages to show.
+    """
+    s = st.session_state
+    notes = []
+    n_configs = len(config_ids)
+    max_clusters = min(10, n_configs)
+    chosen = s.get('pdp_n_clusters', s.get('pdp_chosen_n_clusters'))
+    if chosen is None:
+        chosen = s.get('pdp_optimal_n') or 2
+    if n_configs >= 2:
+        valid = min(max(2, int(chosen)), max_clusters)
+        if valid != chosen:
+            notes.append(f"Number of clusters adjusted from {chosen} to {valid}: only {n_configs} configurations are selected.")
+        chosen = valid
+    else:
+        chosen = n_configs
+    s.pdp_chosen_n_clusters = chosen
+    if max_clusters > 2:
+        s.pdp_n_clusters = chosen          # restore the slider (before it is created)
+
+    target = s.get('pdp_target_config', s.get('pdp_chosen_target'))
+    if target is not None and target not in config_ids and config_ids:
+        notes.append(f"Similarity query reset: {target} is no longer selected; showing {config_ids[0]}.")
+        target = config_ids[0]
+    if target is not None:
+        s.pdp_chosen_target = target
+        s.pdp_target_config = target
+
+    max_k = n_configs - 1
+    k = s.get('pdp_k_similar', s.get('pdp_chosen_k'))
+    if k is not None and max_k > 1:
+        valid_k = min(max(1, int(k)), max_k)
+        if valid_k != k:
+            notes.append(f"Number of similar configurations (K) adjusted from {k} to {valid_k}: "
+                         f"only {max_k} other configurations are selected.")
+        s.pdp_chosen_k = valid_k
+        s.pdp_k_similar = valid_k
+    return chosen, notes
+
+
+def pdp_partition(variant_key, n_clusters):
+    """
+    Cluster labels for one computed variant with the chosen count, always from that variant's own
+    distance matrix and configuration order (shared average-linkage hierarchy). Cached per run.
+    """
+    s = st.session_state
+    cache_key = (s.get('pdp_run_signature'), variant_key, n_clusters, tuple(s.pdp_config_ids))
+    cache = s.setdefault('_pdp_partition_cache', {})
+    if cache_key not in cache:
+        if len(cache) > 32:
+            cache.clear()
+        if len(s.pdp_config_ids) < 2:
+            labels = np.zeros(len(s.pdp_config_ids), dtype=int)
+        else:
+            labels, _ = pdp_analysis.perform_hierarchical_clustering(s.pdp_results_all[variant_key], n_clusters)
+        cache[cache_key] = labels
+    return cache[cache_key]
+
+
+def pdp_norm_kwargs(variant_key):
+    """Normalisation context of the completed run (stored at compute time, not pending widgets)."""
+    s = st.session_state
+    return dict(n_objects=s.get('pdp_norm_n_objects'),
+                window_length=s.get('pdp_norm_window_length'),
+                n_windows=s.get('pdp_norm_n_windows'),
+                buffer_factor=pdp_analysis.pdp_buffer_factor(variant_key, s.get('pdp_norm_buffer_x', 0),
+                                                             s.get('pdp_norm_buffer_y', 0)),
+                n_external_points=s.get('pdp_norm_n_external_points', 0))
+
+
+def pdp_max_distance(variant_key):
+    """Analytical maximum raw distance for one variant of the completed run (None if unknown)."""
+    return pdp_analysis.pdp_max_possible_distance(**pdp_norm_kwargs(variant_key))
+
+
+def pdp_pair_rows(config_ids, distance_matrix, max_possible, configs):
+    """Pairwise table rows: raw distance, normalised distance and its complement (same run and variant)."""
+    rows = []
+    for a in range(len(configs)):
+        for b in range(a + 1, len(configs)):
+            raw = distance_matrix[list(config_ids).index(configs[a]), list(config_ids).index(configs[b])]
+            normalised = pdp_analysis.normalised_pdp_percent(raw, max_possible)
+            row = {'Config A': configs[a], 'Config B': configs[b], 'Raw PDP distance': f"{raw:g}"}
+            if normalised is not None:
+                row['Normalised distance (%)'] = f"{normalised:.2f}%"
+                row['Similarity complement (100 − %)'] = f"{100 - normalised:.2f}%"
+            rows.append(row)
+    return rows
+
+
+PDP_VARIANT_NAMES = {"fundamental": "Fundamental", "buffer": "Buffer", "rough": "Rough",
+                     "buffer_rough": "Buffer + Rough"}
+
+
+class PdpProgress:
+    """
+    Progress of the configuration pairs actually calculated, one bar per variant (inside st.status).
+
+    The bar moves only when a pair is finished, and the page is updated at most every
+    MIN_INTERVAL seconds so reporting does not slow the calculation. The cached calculation calls
+    back only when it runs, so a variant without any callback was not recalculated: its stored
+    result for identical settings and data was returned.
+    """
+    MIN_INTERVAL = 0.25
+
+    def __init__(self, variant_keys):
+        self.variant_keys = list(variant_keys)
+        self.started = time.perf_counter()
+        self.lines = []
+        self.current = None
+
+    def start(self, variant_key):
+        self._close_variant()
+        self.current, self.pairs = variant_key, None
+        self.variant_started, self.last_update = time.perf_counter(), 0.0
+        position = (f" (variant {self.variant_keys.index(variant_key) + 1} of {len(self.variant_keys)})"
+                    if variant_key in self.variant_keys and len(self.variant_keys) > 1 else "")
+        self.label = PDP_VARIANT_NAMES.get(variant_key, variant_key) + position
+        self.bar = st.progress(0.0, text=f"{self.label}: preparing data")
+
+    def __call__(self, completed, total):
+        self.pairs = (completed, total)
+        now = time.perf_counter()
+        if completed == total or now - self.last_update >= self.MIN_INTERVAL:
+            self.last_update = now
+            self.bar.progress(completed / total,
+                              text=f"{self.label}: {completed:,} of {total:,} configuration pairs calculated "
+                                   f"· {now - self.started:.0f} s elapsed")
+
+    def _close_variant(self):
+        if self.current is None:
+            return
+        name = PDP_VARIANT_NAMES.get(self.current, self.current)
+        if self.pairs is None:
+            text = f"{name}: stored results for identical settings and data reused (no pairs recalculated)"
+        else:
+            text = (f"{name}: {self.pairs[1]:,} configuration pairs calculated in "
+                    f"{time.perf_counter() - self.variant_started:.1f} s")
+        self.bar.progress(1.0, text=text)
+        self.lines.append(text)
+        self.current = None
+
+    def finish(self):
+        self._close_variant()
+        return self.lines
+
+
+def pdp_settings_text(n_configs, objects, start, end, window, variant_keys, buffer_xy, rough_xy, n_external):
+    """Run settings for messages (no credentials or other session contents)."""
+    return (f"{n_configs} configurations, objects {', '.join(map(str, objects))}, "
+            f"time {start:g}–{end:g}, window {window}, "
+            f"variants {', '.join(PDP_VARIANT_NAMES.get(k, k) for k in variant_keys)}, "
+            f"Buffer X/Y {buffer_xy[0]:g}/{buffer_xy[1]:g} m, Rough X/Y {rough_xy[0]:g}/{rough_xy[1]:g} m, "
+            f"external points {n_external}")
+
+
+def pdp_settings_record(df, configs, objects, start, end, window, variant_keys,
+                        buffer_xy, rough_xy, external_points):
+    """
+    Settings of a PDP computation, as shown to the user (pending or completed). Buffer and Rough
+    values are kept only when a selected variant uses them.
+    """
+    mask = df['config_source'].isin(configs) & df['obj'].isin(objects)
+    all_times = np.sort(df.loc[mask, 'tst'].unique())
+    used = all_times[(all_times >= start) & (all_times <= end)]
+    uses_buffer = any(k in pdp_analysis.BUFFER_VARIANTS for k in variant_keys)
+    uses_rough = any(k in pdp_analysis.ROUGH_VARIANTS for k in variant_keys)
+    return {
+        'filename': st.session_state.get('filename') or 'unknown file',
+        'configs': list(configs), 'objects': list(objects),
+        'start': start, 'end': end, 'n_steps': len(used),
+        # Position of the first and last used time step among all time steps of the selected data
+        'first_index': int(np.searchsorted(all_times, used[0])) if len(used) else None,
+        'last_index': int(np.searchsorted(all_times, used[-1])) if len(used) else None,
+        'window': window, 'n_windows': max(0, len(used) - window + 1),
+        'variants': list(variant_keys),
+        'buffer': tuple(buffer_xy) if uses_buffer else None,
+        'rough': tuple(rough_xy) if uses_rough else None,
+        'external': [tuple(p) for p in external_points or ()],
+        'external_switch': bool(st.session_state.get('pdp_use_external', False)),
+    }
+
+
+def pdp_run_params(variant_key):
+    """Buffer/Rough values the completed result of one variant actually used."""
+    run = st.session_state.get('pdp_run_settings') or {}
+    return pdp_analysis.pdp_variant_parameters(variant_key, *(run.get('buffer') or (0, 0)),
+                                               *(run.get('rough') or (0, 0)))
+
+
+def pdp_run_external():
+    """External points the completed results used ([] when they were off)."""
+    return list((st.session_state.get('pdp_run_settings') or {}).get('external', []))
+
+
+def pdp_variant_caption(variant_key):
+    """One line for a result view: its variant and the completed-run settings that shaped it."""
+    run = st.session_state.get('pdp_run_settings')
+    if not run:
+        return f"{PDP_VARIANT_NAMES.get(variant_key, variant_key)} result"
+    prm = pdp_run_params(variant_key)
+    buffer = (f"Buffer X/Y {prm['buffer_x']:g}/{prm['buffer_y']:g} m" if variant_key in pdp_analysis.BUFFER_VARIANTS
+              else "no Buffer")
+    rough = (f"Rough X/Y {prm['rough_x']:g}/{prm['rough_y']:g} m" if variant_key in pdp_analysis.ROUGH_VARIANTS
+             else "no Rough")
+    external = f"{len(run['external'])} external point(s)" if run['external'] else "external points off"
+    return (f"**{PDP_VARIANT_NAMES.get(variant_key, variant_key)} result** · {buffer} · {rough} · "
+            f"window {run['window']} ({run['n_windows']} window{'s' if run['n_windows'] != 1 else ''}) · {external}")
+
+
+def show_pdp_settings(run, entered_buffer=None, entered_rough=None):
+    """Compact settings summary. entered_*: field values, to say when they are not used."""
+    configs = run['configs']
+    names = ", ".join(str(c).replace('Config_', '') for c in configs)
+    index_note = (f", time-step positions {run['first_index']}–{run['last_index']} of the selected data"
+                  if run['first_index'] is not None and
+                  (run['first_index'], run['last_index']) != (run['start'], run['end']) else "")
+
+    def used(values, variant_names, entered):
+        if values is not None:
+            return f"X/Y {values[0]:g}/{values[1]:g} m (used by {variant_names})"
+        if entered is not None and any(entered):
+            return (f"not used: entered X/Y {entered[0]:g}/{entered[1]:g} m apply only if you select "
+                    f"{variant_names}")
+        return "not used"
+
+    lines = [
+        f"**Data:** {run['filename']} · {len(configs)} configurations"
+        + (f" ({names})" if len(configs) <= 12 else "") + f" · objects {', '.join(map(str, run['objects']))}",
+        f"**Time:** tst {run['start']:g} to {run['end']:g} ({run['n_steps']} time steps{index_note}). "
+        "tst is the time index in the file; its unit depends on the dataset.",
+        f"**Window:** {run['window']} observations → {run['n_windows']} analysed "
+        f"window{'s' if run['n_windows'] != 1 else ''}",
+        f"**Variants:** {', '.join(PDP_VARIANT_NAMES.get(k, k) for k in run['variants']) or 'none selected'}",
+        f"**Buffer:** {used(run['buffer'], 'Buffer or Buffer + Rough', entered_buffer)}",
+        f"**Rough:** {used(run['rough'], 'Rough or Buffer + Rough', entered_rough)}",
+        "**External points:** " + ("ON: " + "; ".join(f"#{i + 1} {n} ({x:.10g}, {y:.10g})"
+                                                      for i, (n, x, y) in enumerate(run['external']))
+                                   if run['external'] else
+                                   "ON, but no points chosen: nothing is added" if run.get('external_switch')
+                                   else "OFF"),
+    ]
+    st.markdown("  \n".join(lines))
+    if len(configs) > 12:
+        with st.expander(f"Show all {len(configs)} configuration IDs"):
+            st.write(names)
+
+
+def show_observation_lookup(df):
+    """
+    Read the X/Y of one measured observation (configuration, object, timestamp) and, on request, copy
+    them unrounded into the external-point fields. Uses its own selections, so the analysis selection is
+    unchanged, and adds nothing by itself: the point stays static wherever the object moves.
+    """
+    def keep_valid(key, options):
+        if key in st.session_state and st.session_state[key] not in options:
+            del st.session_state[key]          # e.g. after loading another dataset
+
+    configs = sorted(df['config_source'].unique(), key=config_sort_key)
+    keep_valid('pdp_src_config', configs)
+    src_config = st.selectbox("Configuration", configs, key='pdp_src_config')
+    in_config = df[df['config_source'] == src_config]
+    objects = sorted(in_config['obj'].unique())
+    keep_valid('pdp_src_obj', objects)
+    src_obj = st.selectbox("Object", objects, key='pdp_src_obj')
+    rows = in_config[in_config['obj'] == src_obj].sort_values('tst')
+    times = list(rows['tst'].unique())
+    keep_valid('pdp_src_tst', times)
+    src_tst = st.selectbox("Measured timestamp (tst)", times, key='pdp_src_tst', format_func=lambda t: f"{t:g}")
+    row = rows[rows['tst'] == src_tst].iloc[0]
+    x, y = float(row['x']), float(row['y'])
+    st.markdown(f"Observed position: **X = {x!r}**, **Y = {y!r}**")
+
+    def use_coordinates():
+        st.session_state.pdp_custom_x, st.session_state.pdp_custom_y = x, y
+        if not st.session_state.get('pdp_custom_name'):
+            st.session_state.pdp_custom_name = f"{src_config} obj {src_obj} tst {src_tst:g}"
+
+    st.button("Use these coordinates in the fields below", key='pdp_src_use', on_click=use_coordinates)
+    st.caption("This only fills the X/Y fields (and an empty name) as a starting point. Edit them if needed, "
+               "then click **Add Custom Point**. The point stays fixed; it does not follow the object.")
+
+
+def show_pdp_failure(failure):
+    """A failed PDP calculation: stage, explanation, settings, next action and collapsed details."""
+    if failure['error_type'] == 'MemoryError':
+        explanation = "The calculation needed more memory than is available."
+    else:
+        explanation = "The calculation stopped because of an unexpected error."
+    completed = (f"Completed before the failure: {', '.join(failure['completed'])}. "
+                 if failure['completed'] else "")
+    st.error(f"**PDP calculation failed during: {failure['stage']}.** {explanation}\n\n"
+             f"**Settings:** {failure['settings']}\n\n"
+             f"{completed}No results were stored for this request, so no results are shown for these settings. "
+             "Try fewer configurations, a shorter time range, a smaller window or fewer variants, "
+             "then click **Compute PDP Analysis** again.")
+    with st.expander("Technical details"):
+        st.code(failure['details'])
+
+
+def pdp_result_settings_text():
+    """Settings behind the stored PDP results (for view messages)."""
+    s = st.session_state
+    return (f"{len(s.get('pdp_config_ids') or [])} configurations, {s.get('pdp_norm_n_objects')} objects, "
+            f"window {s.get('pdp_norm_window_length')}, "
+            f"variants {', '.join(PDP_VARIANT_NAMES.get(k, k) for k in (s.get('pdp_results_all') or {}))}")
+
+
+@contextmanager
+def pdp_view_guard(view, next_action="Try opening this view again, or select fewer configurations or windows."):
+    """
+    Build one PDP result view; if it fails, say so without discarding the computed distances.
+    Streamlit's stop/rerun signals are not Exceptions and pass through unchanged.
+    """
+    try:
+        yield
+    except Exception:
+        st.warning(f"**Could not build the {view}.** The PDP distance results are not affected and remain "
+                   f"valid for the current settings ({pdp_result_settings_text()}). {next_action}")
+        with st.expander("Technical details"):
+            st.code(traceback.format_exc())
+
+
+PDP_ADVANCED_SECTIONS_NOTE = (
+    "**Parameter Impact Analysis, Configuration Similarity Explorer and Cluster Quality Metrics** appear "
+    "below the results once **Compute PDP Analysis** has finished for the current settings. With detailed "
+    "data, start with a few configurations or a shorter time range so the run finishes quickly.")
+
+
+PDP_COMPLEMENT_NOTE = ("Normalised distance = raw distance ÷ analytical maximum for this run and variant × 100. "
+                       "The similarity complement is 100 minus that percentage: a rescaled distance, not a "
+                       "probability, a safety score or proof that two encounters behave the same.")
+
+
+def show_point_lookup(fig):
+    """For dense PDP matrices (hover shows row/column indices): index-to-point tables."""
+    tables = pdp_analysis.point_lookup_tables(fig)
+    if tables:
+        with st.expander("Point index lookup (large matrices show indices in hover)"):
+            for panels, table in tables.items():
+                st.caption(panels)
+                st.dataframe(table, hide_index=True, height=240, use_container_width=True)
+
 def render_interactive_chart(fig, caption=None, key=None, use_container_width=True):
     """Render a Plotly figure with consistent interactive controls."""
     if fig.layout.uirevision == 'plain-coordinates':
@@ -233,9 +583,9 @@ def check_password():
     
     def password_entered():
         """Checks whether a password entered by the user is correct."""
-        if st.session_state["password"] == "GIST":
+        if st.session_state.get("password") == "GIST":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]
+            st.session_state.pop("password", None)
         else:
             st.session_state["password_correct"] = False
 
@@ -3839,8 +4189,8 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
 **Four PDP Variants:**
 
 - **Fundamental**: Basic qualitative comparison
-- **Buffer**: Add tolerance zones around each point
-- **Rough**: Allow approximate equality in comparisons
+- **Buffer**: Add virtual points around each position (left/right for Buffer X, below/above for Buffer Y)
+- **Rough**: Treat positions within a tolerance as equal in comparisons
 - **Buffer + Rough**: Combined approach (most flexible)
 
 **Use Cases:**
@@ -3919,9 +4269,19 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 )
         
         with col3:
-            st.write("**Tolerance Parameters**")
-            st.caption("Used for Buffer/Rough variants")
-            
+            st.write("**Buffer and Rough Parameters**")
+            # The variant selector comes later on the page; its current value is already in session state
+            chosen_variants = st.session_state.get('pdp_variants', ["Fundamental"])
+            buffer_users = [v for v in chosen_variants if v in ("Buffer", "Buffer + Rough")]
+            rough_users = [v for v in chosen_variants if v in ("Rough", "Buffer + Rough")]
+            st.caption("Values are used only by the matching variants chosen in "
+                       "**Select PDP Variants to Compute** below.  \n"
+                       + (f"Buffer: used by {', '.join(buffer_users)}." if buffer_users
+                          else "Buffer: not used (Buffer variants not selected).")
+                       + "  \n"
+                       + (f"Rough: used by {', '.join(rough_users)}." if rough_users
+                          else "Rough: not used (Rough variants not selected)."))
+
             buffer_x = st.number_input(
                 "Buffer X (m)",
                 min_value=0.0,
@@ -4020,6 +4380,9 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             with col_manual:
                 st.write("**Manual Point Input**")
                 
+                with st.expander("Find coordinates from a measured observation"):
+                    show_observation_lookup(df)
+
                 # Input for adding a custom point
                 custom_name = st.text_input(
                     "Point name",
@@ -4027,42 +4390,50 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     placeholder="e.g., My Reference Point",
                     key="pdp_custom_name"
                 )
-                
+
+                # No coordinate limits; 8 decimals keep the precision of copied observations
                 col_x, col_y = st.columns(2)
                 with col_x:
                     custom_x = st.number_input(
                         "X coordinate (m)",
-                        value=0.0,
+                        **widget_default("pdp_custom_x", 0.0),
                         step=0.1,
-                        format="%.2f",
+                        format="%.8f",
                         key="pdp_custom_x"
                     )
                 with col_y:
                     custom_y = st.number_input(
                         "Y coordinate (m)",
-                        value=0.0,
+                        **widget_default("pdp_custom_y", 0.0),
                         step=0.1,
-                        format="%.2f",
+                        format="%.8f",
                         key="pdp_custom_y"
                     )
-                
+                st.caption("The candidate is shown as an open diamond in the preview below. It is not used "
+                           "until you click **Add Custom Point**.")
+
                 if st.button("Add Custom Point", key="pdp_add_custom"):
                     if custom_name:
                         new_point = (custom_name, custom_x, custom_y)
-                        if new_point not in st.session_state.pdp_manual_points:
+                        if new_point in st.session_state.pdp_manual_points:
+                            st.info("This point (same name and coordinates) is already in the list.")
+                        else:
                             st.session_state.pdp_manual_points.append(new_point)
-                            st.success(f"Added: {custom_name} ({custom_x:.2f}, {custom_y:.2f})")
+                            st.success(f"Added: {custom_name} ({custom_x:.10g}, {custom_y:.10g})")
                             st.rerun()
                     else:
                         st.warning("Please enter a point name")
-                
+
                 # Show and manage manual points
                 if st.session_state.pdp_manual_points:
                     st.write("**Custom points added:**")
+                    manual_names = [p[0] for p in st.session_state.pdp_manual_points]
                     for i, (name, x, y) in enumerate(st.session_state.pdp_manual_points):
                         col_info, col_del = st.columns([3, 1])
                         with col_info:
-                            st.caption(f"• {name}: ({x:.2f}, {y:.2f})")
+                            # Points sharing a name stay separate points; the number tells them apart
+                            st.caption(f"• #{i + 1} {name}: ({x:.10g}, {y:.10g})"
+                                       + (" (name shared with another point)" if manual_names.count(name) > 1 else ""))
                         with col_del:
                             if st.button("🗑️", key=f"pdp_del_manual_{i}"):
                                 st.session_state.pdp_manual_points.pop(i)
@@ -4087,59 +4458,82 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             st.session_state.pdp_external_points = all_external_points
             
             # Show summary and visualization
+            if not all_external_points:
+                st.warning("**External points: ON, but no points chosen yet.** Nothing is added until you "
+                           "select or add a point.")
             if all_external_points:
-                st.info(f"**{len(all_external_points)} external point(s)** will be included in PDP analysis")
-                
-                # Visualize external points (on the tennis court only when Tennis is selected)
-                with st.expander("Preview External Points", expanded=True):
-                    fig_ext = create_tennis_court() if is_tennis else create_pitch_figure('No selection')
-                    label_color = 'white' if is_tennis else 'black'
-                    
-                    # Extract coordinates and names
-                    ext_x = [p[1] for p in all_external_points]
-                    ext_y = [p[2] for p in all_external_points]
-                    ext_names = [p[0] for p in all_external_points]
-                    
-                    # Add external points as markers
+                st.info(f"**External points: ON.** {len(all_external_points)} point(s) included in the next "
+                        "computation: " + "; ".join(f"{n} ({x:.10g}, {y:.10g})" for n, x, y in all_external_points))
+
+            # Preview: selected trajectories, points in the list and the candidate from the fields
+            # (on the tennis court only when Tennis is selected)
+            with st.expander("Preview External Points", expanded=True):
+                fig_ext = create_tennis_court() if is_tennis else create_pitch_figure('No selection')
+                label_color = 'white' if is_tennis else 'black'
+                preview_xs, preview_ys = [], []
+
+                # Selected configurations and objects in the PDP time range (thin lines, for orientation)
+                traj = df[df['config_source'].isin(selected_configs) & df['obj'].isin(selected_objects) &
+                          (df['tst'] >= start_time) & (df['tst'] <= end_time)]
+                for config in sorted(traj['config_source'].unique(), key=config_sort_key):
+                    xs, ys, hover = [], [], []
+                    for obj, part in traj[traj['config_source'] == config].sort_values('tst').groupby('obj'):
+                        xs += list(part['x']) + [None]
+                        ys += list(part['y']) + [None]
+                        hover += [f"{config}, object {obj}, tst {t:g}" for t in part['tst']] + [None]
+                    preview_xs += xs
+                    preview_ys += ys
                     fig_ext.add_trace(go.Scatter(
-                        x=ext_x,
-                        y=ext_y,
+                        x=xs, y=ys, mode='lines+markers', name=str(config),
+                        line=dict(width=1.5), marker=dict(size=4), opacity=0.7, text=hover,
+                        hovertemplate='%{text}<br>X: %{x:.4f} m<br>Y: %{y:.4f} m<extra></extra>'))
+
+                # Points in the list (used in the next computation)
+                if all_external_points:
+                    fig_ext.add_trace(go.Scatter(
+                        x=[p[1] for p in all_external_points],
+                        y=[p[2] for p in all_external_points],
                         mode='markers+text',
-                        marker=dict(
-                            size=12,
-                            color='red',
-                            symbol='star',
-                            line=dict(width=2, color='white')
-                        ),
-                        text=ext_names,
+                        marker=dict(size=14, color='red', symbol='star', line=dict(width=2, color='white')),
+                        text=[f"#{i + 1} {p[0]}" for i, p in enumerate(all_external_points)],
                         textposition='top center',
                         textfont=dict(size=10, color=label_color),
-                        name='External Points',
-                        hovertemplate='<b>%{text}</b><br>X: %{x:.2f}m<br>Y: %{y:.2f}m<extra></extra>'
+                        name='External points (in the list)',
+                        hovertemplate='<b>%{text}</b> (in the list)<br>X: %{x:.4f} m<br>Y: %{y:.4f} m<extra></extra>'
                     ))
-                    
-                    # Update layout for better display
-                    fig_ext.update_layout(
-                        title=dict(
-                            text="External Reference Points",
-                            font=dict(size=14, color=label_color)
-                        ),
-                        height=500,
-                        showlegend=True,
-                        legend=dict(
-                            yanchor="top",
-                            y=0.99,
-                            xanchor="left",
-                            x=0.01,
-                            bgcolor='rgba(0,0,0,0.5)',
-                            font=dict(color='white')
-                        )
-                    )
-                    
-                    st.plotly_chart(fig_ext, use_container_width=True, key="pdp_external_points_preview")
+                    preview_xs += [p[1] for p in all_external_points]
+                    preview_ys += [p[2] for p in all_external_points]
+
+                # Candidate from the X/Y fields (not used until added)
+                fig_ext.add_trace(go.Scatter(
+                    x=[custom_x], y=[custom_y], mode='markers',
+                    marker=dict(size=13, color='rgba(0,0,0,0)', symbol='diamond-open',
+                                line=dict(width=2.5, color='darkorange')),
+                    name='Candidate (not added)',
+                    hovertemplate='Candidate (not added)<br>X: %{x:.4f} m<br>Y: %{y:.4f} m<extra></extra>'
+                ))
+                preview_xs.append(custom_x)
+                preview_ys.append(custom_y)
+
+                # Initial view and "Reset axes" cover all of the above; zooming is kept across reruns
+                fit_axes_to_data(fig_ext, preview_xs, preview_ys)
+                fig_ext.update_layout(
+                    title=dict(text="External Reference Points: preview", font=dict(size=14, color=label_color)),
+                    height=500,
+                    showlegend=True,
+                    uirevision='pdp-external-preview',
+                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                                bgcolor='rgba(255,255,255,0.8)', font=dict(color='black'))
+                )
+
+                st.plotly_chart(fig_ext, use_container_width=True, key="pdp_external_points_preview")
+                st.caption("Lines: selected configurations and objects in the PDP time range (ground-plane "
+                           "coordinates as in the file). Stars: points in the list. Open diamond: the candidate "
+                           "from the X/Y fields. Use **Reset axes** in the chart toolbar to fit everything.")
         else:
             st.session_state.pdp_external_points = []
-        
+            st.caption("**External points: OFF.** Not included in the next computation.")
+
         if not selected_configs or not selected_objects:
             st.warning("Please select at least one configuration and one object from the sidebar.")
         elif len(selected_configs) < 2:
@@ -4156,8 +4550,10 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             variants_to_compute = st.multiselect(
                 "Select PDP Variants to Compute",
                 options=["Fundamental", "Buffer", "Rough", "Buffer + Rough"],
-                default=["Fundamental"],
-                help="Choose which variants to calculate. Fundamental is the baseline (no parameters). Add Buffer/Rough variants to compare parameter effects."
+                default=None if "pdp_variants" in st.session_state else ["Fundamental"],
+                key="pdp_variants",
+                help="Choose which variants to calculate. Fundamental is the baseline and ignores the Buffer and "
+                     "Rough fields. Buffer, Rough and Buffer + Rough use the Buffer and Rough Parameters above."
             )
             
             # Map display names to internal keys
@@ -4170,6 +4566,22 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
             
             selected_variant_keys = [variant_map_reverse[v] for v in variants_to_compute]
             
+            external_for_run = (st.session_state.get('pdp_external_points', [])
+                                if st.session_state.get('pdp_use_external', False) else [])
+            current_run_signature = pdp_analysis.pdp_run_signature(
+                df, selected_configs, selected_objects, start_time, end_time, window_length,
+                buffer_x, buffer_y, rough_x, rough_y, selected_variant_keys, external_for_run)
+            pending_settings = pdp_settings_record(
+                df, selected_configs, selected_objects, start_time, end_time, window_length,
+                selected_variant_keys, (buffer_x, buffer_y), (rough_x, rough_y), external_for_run)
+            with st.container(border=True):
+                st.markdown("**Next computation** (settings as entered now)")
+                show_pdp_settings(pending_settings, (buffer_x, buffer_y), (rough_x, rough_y))
+            st.caption("PDP Analysis compares whole configurations, including all selected objects: its clustering, "
+                       "MDS and rankings group configurations. To group individual object trajectories, use the "
+                       "separate **Clustering** method in the sidebar. After changing inputs, compute again "
+                       "before interpreting results.")
+
             # Compute button
             if st.button("Compute PDP Analysis", type="primary", key="compute_pdp"):
                 if not selected_variant_keys:
@@ -4179,64 +4591,62 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     external_points_list = st.session_state.get('pdp_external_points', []) if st.session_state.get('pdp_use_external', False) else []
                     external_points = tuple(external_points_list) if external_points_list else None
                     
-                    with st.spinner(f"Computing PDP distances for {len(selected_variant_keys)} variants..."):
-                        results_all = {}
-                        config_ids = None
-                        
-                        # 1. Fundamental
-                        if "fundamental" in selected_variant_keys:
-                            dist_fund, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, tuple(selected_configs), tuple(selected_objects),
-                                start_time, end_time,
-                                window_length=window_length,
-                                buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                pdp_variant="fundamental",
-                                external_points=external_points
+                    # Parameters per variant (Fundamental uses none)
+                    variant_params = {k: pdp_analysis.pdp_variant_parameters(k, buffer_x, buffer_y, rough_x, rough_y)
+                                      for k in PDP_VARIANT_NAMES}
+                    n_pairs = len(selected_configs) * (len(selected_configs) - 1) // 2
+                    run_settings = pdp_settings_text(
+                        len(selected_configs), selected_objects, start_time, end_time, window_length,
+                        selected_variant_keys, (buffer_x, buffer_y), (rough_x, rough_y), len(external_points or ()))
+                    st.session_state.pop('pdp_failure', None)
+                    results_all = {}
+                    config_ids = None
+                    stage = "preparing the calculation"
+
+                    with st.status(f"Computing PDP analysis: {len(selected_variant_keys)} variant(s), "
+                                   f"{n_pairs:,} configuration pairs per variant", expanded=True) as status:
+                        progress = PdpProgress(selected_variant_keys)
+                        try:
+                            for variant_key in [k for k in variant_params if k in selected_variant_keys]:
+                                stage = f"distance calculation ({PDP_VARIANT_NAMES[variant_key]} variant)"
+                                progress.start(variant_key)
+                                results_all[variant_key], c_ids = pdp_analysis.compute_pdp_distance_matrix(
+                                    df, tuple(selected_configs), tuple(selected_objects),
+                                    start_time, end_time,
+                                    window_length=window_length,
+                                    pdp_variant=variant_key,
+                                    external_points=external_points,
+                                    progress=progress,
+                                    **variant_params[variant_key]
+                                )
+                                if config_ids is None: config_ids = c_ids
+                            run_lines = progress.finish()
+
+                            # Initial clustering (no measurable fraction: the status spinner shows it is running)
+                            stage = "clustering"
+                            st.write("Clustering: choosing the recommended number of clusters and building the hierarchy")
+                            first_key = selected_variant_keys[0]
+                            optimal_n = pdp_analysis.detect_optimal_clusters(results_all[first_key])
+                            cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
+                                results_all[first_key], optimal_n
                             )
-                            results_all['fundamental'] = dist_fund
-                            config_ids = c_ids
-                        
-                        # 2. Buffer
-                        if "buffer" in selected_variant_keys:
-                            dist_buff, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, tuple(selected_configs), tuple(selected_objects),
-                                start_time, end_time,
-                                window_length=window_length,
-                                buffer_x=buffer_x, buffer_y=buffer_y, rough_x=0, rough_y=0,
-                                pdp_variant="buffer",
-                                external_points=external_points
-                            )
-                            results_all['buffer'] = dist_buff
-                            if config_ids is None: config_ids = c_ids
-                        
-                        # 3. Rough
-                        if "rough" in selected_variant_keys:
-                            dist_rough, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, tuple(selected_configs), tuple(selected_objects),
-                                start_time, end_time,
-                                window_length=window_length,
-                                buffer_x=0, buffer_y=0, rough_x=rough_x, rough_y=rough_y,
-                                pdp_variant="rough",
-                                external_points=external_points
-                            )
-                            results_all['rough'] = dist_rough
-                            if config_ids is None: config_ids = c_ids
-                        
-                        # 4. Buffer + Rough
-                        if "buffer_rough" in selected_variant_keys:
-                            dist_br, c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                df, tuple(selected_configs), tuple(selected_objects),
-                                start_time, end_time,
-                                window_length=window_length,
-                                buffer_x=buffer_x, buffer_y=buffer_y, rough_x=rough_x, rough_y=rough_y,
-                                pdp_variant="buffer_rough",
-                                external_points=external_points
-                            )
-                            results_all['buffer_rough'] = dist_br
-                            if config_ids is None: config_ids = c_ids
-                        
+                        except Exception as exc:
+                            status.update(label=f"PDP calculation failed during: {stage}", state="error")
+                            st.session_state.pdp_failure = {
+                                'stage': stage, 'signature': current_run_signature, 'settings': run_settings,
+                                'completed': [PDP_VARIANT_NAMES[k] for k in results_all],
+                                'error_type': type(exc).__name__, 'details': traceback.format_exc()}
+                        else:
+                            status.update(label=f"PDP analysis ready ({time.perf_counter() - progress.started:.1f} s)",
+                                          state="complete", expanded=False)
+
+                    if 'pdp_failure' not in st.session_state:
+                        st.session_state.pdp_last_run_report = {'signature': current_run_signature,
+                                                                'lines': run_lines}
                         # Store results
                         st.session_state.pdp_results_all = results_all
+                        st.session_state.pdp_run_signature = current_run_signature
+                        st.session_state.pdp_run_settings = pending_settings
                         st.session_state.pdp_config_ids = config_ids
                         
                         # Store parameters for normalized distance calculation (use different keys to avoid widget conflicts)
@@ -4245,33 +4655,47 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         st.session_state.pdp_norm_n_external_points = len(external_points) if external_points else 0
                         st.session_state.pdp_norm_buffer_x = buffer_x
                         st.session_state.pdp_norm_buffer_y = buffer_y
-                        # Calculate number of windows based on data
-                        n_timestamps = len(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
-                        st.session_state.pdp_norm_n_windows = max(1, n_timestamps - window_length + 1)
+                        st.session_state.pdp_norm_n_windows = pdp_analysis.pdp_count_windows(
+                            df, selected_configs, selected_objects, start_time, end_time, window_length)
                         
                         # Set default active variant (first available)
-                        first_key = selected_variant_keys[0]
                         st.session_state.pdp_active_variant = first_key
                         st.session_state.pdp_distance_matrix = results_all[first_key]
-                        
-                        # Perform initial clustering
-                        optimal_n = pdp_analysis.detect_optimal_clusters(results_all[first_key])
+
+                        # Initial clustering (computed above)
                         st.session_state.pdp_optimal_n = optimal_n
                         st.session_state.pdp_current_n = optimal_n
-                        
-                        cluster_labels, linkage_matrix = pdp_analysis.perform_hierarchical_clustering(
-                            results_all[first_key], optimal_n
-                        )
                         st.session_state.pdp_cluster_labels = cluster_labels
                         st.session_state.pdp_linkage_matrix = linkage_matrix
-                    
-                    st.success(f"PDP analysis computed for {len(selected_variant_keys)} variants!")
-                    st.rerun()
-            
+                        st.rerun()
+
+            # Outcome of the last Compute for these settings (shown once after a success, kept after a failure)
+            failure = st.session_state.get('pdp_failure')
+            if failure and failure['signature'] == current_run_signature:
+                show_pdp_failure(failure)
+            report = st.session_state.pop('pdp_last_run_report', None)
+            if report and report['signature'] == current_run_signature:
+                st.success("**PDP analysis ready.**  \n" + "  \n".join(report['lines']))
+
             # SELECTION LOGIC
+            if (st.session_state.get('pdp_results_all') and
+                    st.session_state.get('pdp_run_signature') != current_run_signature):
+                st.warning("Inputs or analysis options changed. Click Compute PDP Analysis to refresh "
+                           "all results before interpreting or exporting them.")
+                st.caption(PDP_ADVANCED_SECTIONS_NOTE)
+                st.stop()
+
             if 'pdp_results_all' in st.session_state and st.session_state.pdp_results_all:
+                # The user's chosen cluster count (kept across recomputations, adjusted visibly if invalid)
+                chosen_n_clusters, choice_notes = reconcile_pdp_choices(st.session_state.pdp_config_ids)
+                for note in choice_notes:
+                    st.info(note)
                 st.markdown("### Analysis View Settings")
-                
+                if st.session_state.get('pdp_run_settings'):
+                    with st.expander("Settings of the completed results", expanded=False):
+                        show_pdp_settings(st.session_state.pdp_run_settings)
+                        st.caption("Each view below names its variant and the Buffer/Rough values that variant used.")
+
                 # Get available variants from results
                 available_keys = list(st.session_state.pdp_results_all.keys())
                 
@@ -4353,16 +4777,14 @@ The PDP distance between two configurations is the **sum of differences** across
                         # Get window information first
                         from modules.pdp_analysis import visualize_inequality_matrices
                         
-                        # Determine parameters based on active variant
-                        active_variant = active_variant_ineq
-                        
-                        viz_buffer_x = buffer_x if active_variant in ['buffer', 'buffer_rough'] else 0
-                        viz_buffer_y = buffer_y if active_variant in ['buffer', 'buffer_rough'] else 0
-                        viz_rough_x = rough_x if active_variant in ['rough', 'buffer_rough'] else 0
-                        viz_rough_y = rough_y if active_variant in ['rough', 'buffer_rough'] else 0
-                        
-                        # Get external points for visualization
-                        viz_external_points = st.session_state.get('pdp_external_points', []) if st.session_state.get('pdp_use_external', False) else None
+                        # Parameters the completed result of this variant used
+                        st.caption(pdp_variant_caption(active_variant_ineq))
+                        ineq_params = pdp_run_params(active_variant_ineq)
+                        viz_buffer_x, viz_buffer_y = ineq_params['buffer_x'], ineq_params['buffer_y']
+                        viz_rough_x, viz_rough_y = ineq_params['rough_x'], ineq_params['rough_y']
+
+                        # External points of the completed results
+                        viz_external_points = pdp_run_external() or None
                         
                         window_info = visualize_inequality_matrices(
                             df, configs_to_compare, selected_objects,
@@ -4438,24 +4860,40 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     if total_matrices > 20:
                                         st.warning("Large visualization!")
                             
+                            matrix_count = len(configs_to_compare) * len(selected_windows) * 2
                             if not selected_windows:
                                 st.warning("Please select at least one window to visualize.")
+                            elif matrix_count > 24:
+                                st.warning("Select fewer configurations or time windows to display at most "
+                                           "24 inequality matrices at once. Distances still include every window.")
                             else:
                                 # Show active parameters for this variant
                                 st.caption(f"**Active variant:** {ineq_variant_name} | Buffer: ({viz_buffer_x}, {viz_buffer_y}) | Rough: ({viz_rough_x}, {viz_rough_y})")
                                 
-                                # Display inequality matrices for selected configurations and windows
-                                fig_ineq = visualize_inequality_matrices(
-                                    df, configs_to_compare, selected_objects,
-                                    start_time, end_time,
-                                    window_length=window_length,
-                                    buffer_x=viz_buffer_x, buffer_y=viz_buffer_y,
-                                    rough_x=viz_rough_x, rough_y=viz_rough_y,
-                                    window_indices=selected_windows,
-                                    external_points=viz_external_points
-                                )
-                                
-                                render_interactive_chart(fig_ineq, caption=None)
+                                # On demand: a collapsed section still runs, and the matrices are by far the
+                                # largest figure (sent to and drawn by the browser on every rerun otherwise)
+                                show_matrices = st.toggle(
+                                    "Show matrices", value=False, key="pdp_show_ineq_matrices",
+                                    help="Draws the selected inequality matrices. Off by default because detailed data "
+                                         "gives large matrices; the distances are computed either way.")
+                                if show_matrices:
+                                    # Display inequality matrices for selected configurations and windows
+                                    with pdp_view_guard("inequality matrices",
+                                                        "Select fewer configurations or windows, or switch "
+                                                        "'Show matrices' off and on to try again."):
+                                        with st.spinner(f"Building {matrix_count} inequality matrices"):
+                                            fig_ineq = visualize_inequality_matrices(
+                                                df, configs_to_compare, selected_objects,
+                                                start_time, end_time,
+                                                window_length=window_length,
+                                                buffer_x=viz_buffer_x, buffer_y=viz_buffer_y,
+                                                rough_x=viz_rough_x, rough_y=viz_rough_y,
+                                                window_indices=selected_windows,
+                                                external_points=viz_external_points
+                                            )
+
+                                        render_interactive_chart(fig_ineq, caption=None)
+                                        show_point_lookup(fig_ineq)
                     
                 st.markdown("---")
                 
@@ -4471,7 +4909,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                         key="pdp_dm_variant"
                     )
                     active_variant_dm = variant_map_reverse[dm_variant_name]
-                
+                st.caption(pdp_variant_caption(active_variant_dm))
+
                 distance_matrix = st.session_state.pdp_results_all[active_variant_dm]
                 config_ids = st.session_state.pdp_config_ids
                 n_configs = len(config_ids)
@@ -4481,47 +4920,33 @@ Each window captures a snapshot of spatial relationships at different points in 
                 col_display1, col_display2 = st.columns([1, 2])
                 
                 with col_display1:
+                    # Keep the choice when the checkbox was not drawn (e.g. while results were outdated)
+                    if 'pdp_show_normalized' not in st.session_state:
+                        st.session_state.pdp_show_normalized = st.session_state.get('_pdp_show_normalized_choice', False)
                     show_normalized = st.checkbox(
-                        "Show normalized distances (0-100%)",
-                        value=False,
+                        "Show normalised distances (%)",
                         key="pdp_show_normalized",
-                        help="""Convert raw distances to 0-100% scale for easier interpretation.
-                        Because, raw PDP distances can be hard to interpret - is a distance of 50 large or small?
-                        Normalization helps by scaling distances to a 0-100 range for easier interpretation.
-                        """
+                        help="Switches the matrix between raw PDP distances and the same distances as a percentage "
+                             "of the analytical maximum. Uses the stored results: nothing is recalculated."
                     )
-                
+                    st.session_state._pdp_show_normalized_choice = show_normalized
+
+                # Normalisation context of the completed run (raw distances are reused)
+                dm_max_possible = pdp_max_distance(active_variant_dm)
                 with col_display2:
                     if show_normalized:
-                        st.info("Showing normalized distances (percentage of maximum possible difference)")
+                        st.info(f"Scale: **normalised distance (%)**, {dm_variant_name} result. Raw distance ÷ "
+                                f"analytical maximum for this run and variant "
+                                f"({format_number(dm_max_possible, 0) if dm_max_possible else 'unavailable'}) × 100. "
+                                "Lower = more similar.")
                     else:
-                        st.info("Showing raw PDP distances (sum of inequality matrix differences)")
-                
-                # Compute normalized distances if needed
+                        st.info(f"Scale: **raw PDP distance**, {dm_variant_name} result (number of differing "
+                                "inequality-matrix cells). Lower = more similar.")
+                st.caption("Explanation, histogram and normalised CSV: **Normalised distances: explanation, "
+                           "histogram and CSV**, directly below the matrix.")
                 if show_normalized:
-                    # Calculate buffer factor based on active variant
-                    # buffer_factor: 1 = no buffer, up to 5 = full buffer (left, right, orig, bottom, top)
-                    buffer_factor = 1
-                    if active_variant_dm in ['buffer', 'buffer_rough']:
-                        buffer_x_used = st.session_state.get('pdp_norm_buffer_x', 0)
-                        buffer_y_used = st.session_state.get('pdp_norm_buffer_y', 0)
-                        # Each buffer dimension adds 2 points (left/right or bottom/top), plus 1 for original
-                        if buffer_x_used > 0 and buffer_y_used > 0:
-                            buffer_factor = 5  # left, right, orig, bottom, top
-                        elif buffer_x_used > 0:
-                            buffer_factor = 3  # left, right, orig
-                        elif buffer_y_used > 0:
-                            buffer_factor = 3  # bottom, top, orig
-                    
                     norm_info = pdp_analysis.compute_distance_normalization_info(
-                        distance_matrix, 
-                        config_ids,
-                        n_objects=st.session_state.get('pdp_norm_n_objects'),
-                        window_length=st.session_state.get('pdp_norm_window_length'),
-                        buffer_factor=buffer_factor,
-                        n_external_points=st.session_state.get('pdp_norm_n_external_points', 0),
-                        n_windows=st.session_state.get('pdp_norm_n_windows')
-                    )
+                        distance_matrix, config_ids, **pdp_norm_kwargs(active_variant_dm))
                     display_matrix = norm_info['normalized_matrix']
                     colorbar_title = "Distance (%)"
                     # Fixed scale 0-100% for consistent comparison across matrices
@@ -4615,7 +5040,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     hover_row = []
                     for j, col_id in enumerate(config_ids):
                         dist_val = display_matrix[i, j]
-                        hover_row.append(f"From: {row_id}<br>To: {col_id}<br>Distance: {dist_val:.2f}")
+                        if show_normalized:
+                            hover_row.append(f"From: {row_id}<br>To: {col_id}<br>Normalised distance: {dist_val:.2f}%"
+                                             f"<br>Raw PDP distance: {distance_matrix[i, j]:g}")
+                        else:
+                            hover_row.append(f"From: {row_id}<br>To: {col_id}<br>Raw PDP distance: {dist_val:g}")
                     hover_text.append(hover_row)
 
                 # Create heatmap - respect user's choice regardless of matrix size
@@ -4722,158 +5151,30 @@ Each window captures a snapshot of spatial relationships at different points in 
                 )
                 
                 render_interactive_chart(fig_heatmap, caption="") 
-                        
-                # Use reusable configuration selector component
-                selected_configs_inspect = configuration_selector(
-                    config_ids=config_ids,
-                    key_prefix="pdp_matrix_inspect",
-                    default_configs=[],
-                    max_selections=5,
-                    label="Select configurations to visualize",
-                    help_text="Choose configurations from the distance matrix to see their actual trajectories",
-                    show_metrics=True
-                )
-                
-                # Visualize selected configurations
-                if len(selected_configs_inspect) > 0:
-                    st.markdown("---")
-                    
-                    # Show distance information if 2+ configs selected
-                    if len(selected_configs_inspect) >= 2:
-                        st.markdown("**Pairwise Distances Between Selected Configurations:**")
-                        
-                        # Create distance table
-                        selected_indices = [config_ids.index(cfg) for cfg in selected_configs_inspect]
-                        
-                        dist_pairs = []
-                        for i, cfg1 in enumerate(selected_configs_inspect):
-                            for j, cfg2 in enumerate(selected_configs_inspect):
-                                if i < j:
-                                    idx1 = config_ids.index(cfg1)
-                                    idx2 = config_ids.index(cfg2)
-                                    dist_val = distance_matrix[idx1, idx2]
-                                    
-                                    if show_normalized:
-                                        dist_pairs.append({
-                                            'Config A': cfg1,
-                                            'Config B': cfg2,
-                                            'Distance': f"{norm_info['normalized_matrix'][idx1, idx2]:.1f}%",
-                                            'Raw': f"{dist_val:.1f}"
-                                        })
-                                    else:
-                                        dist_pairs.append({
-                                            'Config A': cfg1,
-                                            'Config B': cfg2,
-                                            'Distance': f"{dist_val:.1f}"
-                                        })
-                        
-                        if dist_pairs:
-                            dist_df = pd.DataFrame(dist_pairs)
-                            st.dataframe(dist_df, use_container_width=True, hide_index=True)
-                    
-                    # Plot trajectories
-                    st.markdown("**Trajectory Visualization:**")
-                    
-                    # Get objects from global selection if available
-                    if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
-                        inspect_objects = st.session_state.shared_selected_objects
-                    else:
-                        inspect_objects = selected_objects
-                    
-                    fig_inspect = pdp_analysis.plot_trajectory_comparison(
-                        df=st.session_state.data,
-                        config_ids=config_ids,
-                        selected_configs=selected_configs_inspect,
-                        start_time=start_time,
-                        end_time=end_time,
-                        selected_objects=inspect_objects,
-                        cluster_labels=st.session_state.pdp_cluster_labels,
-                        distance_matrix=distance_matrix,
-                        show_buffers=False,
-                        buffer_size=0.5,
-                        show_rough=False,
-                        rough_x=0.3,
-                        rough_y=0.3,
-                        show_court=(st.session_state.court_type == 'Tennis')
-                    )
-                    
-                    # Create a unique key based on selections to force chart recreation
-                    chart_key = f"pdp_inspect_chart_{'-'.join(map(str, selected_configs_inspect))}_{'-'.join(map(str, inspect_objects))}"
-                    
-                    render_interactive_chart(fig_inspect, 
-                                           caption=f"Showing {len(selected_configs_inspect)} configuration(s) | " +
-                                                  f"Time: {format_tst(start_time)} - {format_tst(end_time)}",
-                                           key=chart_key)
-                    
-                    # Interpretation help
-                    with st.expander("💡 How to interpret this visualization"):
-                        st.markdown("""
-                        **What you're seeing:**
-                        - Each color represents a different configuration
-                        - Trajectories show the movement paths of all selected objects
-                        - Start points: ⭕ (circles), End points: ◼️ (squares)
-                        
-                        **Compare with the distance matrix:**
-                        - **Small distances** → Similar trajectory patterns (paths overlap or follow similar patterns)
-                        - **Large distances** → Very different trajectory patterns (paths diverge significantly)
-                        
-                        **Tips:**
-                        - Hover over points to see configuration, object, and timestamp details
-                        - Use the quick selection buttons to explore interesting patterns
-                        - Compare 2-3 configurations to understand what causes high/low distances
-                        """)
-                
-                # Summary statistics
-                st.markdown("---")
-                st.markdown("**Distance Matrix Statistics:**")
-                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                with col_stat1:
-                    st.metric("Matrix Size", f"{n_configs}×{n_configs}")
-                with col_stat2:
-                    # Get upper triangle (exclude diagonal)
-                    triu_indices = np.triu_indices_from(distance_matrix, k=1)
-                    distances = distance_matrix[triu_indices]
-                    st.metric("Mean Distance", format_number(np.mean(distances), 1))
-                with col_stat3:
-                    st.metric("Min Distance", format_number(np.min(distances), 1))
-                with col_stat4:
-                    st.metric("Max Distance", format_number(np.max(distances), 1))
-                
+
                 # ========================================
                 # DISTANCE NORMALIZATION & DISTRIBUTION
                 # ========================================
-                with st.expander("Distance Normalization & Distribution Analysis", expanded=False):
+                with st.expander("Normalised distances: explanation, histogram and CSV", expanded=False):
+                    st.caption(pdp_variant_caption(active_variant_dm) + " (the variant chosen for the matrix above).")
 
                     # Display formula
                     st.markdown("### Normalization Formula")
                     st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
                     
-                    # Calculate buffer factor for this variant
-                    norm_buffer_factor = 1
-                    if active_variant_dm in ['buffer', 'buffer_rough']:
-                        buffer_x_used = st.session_state.get('pdp_norm_buffer_x', 0)
-                        buffer_y_used = st.session_state.get('pdp_norm_buffer_y', 0)
-                        if buffer_x_used > 0 and buffer_y_used > 0:
-                            norm_buffer_factor = 5
-                        elif buffer_x_used > 0 or buffer_y_used > 0:
-                            norm_buffer_factor = 3
-                    
-                    # Compute normalization info with all parameters
+                    # Compute normalization info with the completed run's parameters for this variant
                     norm_info = pdp_analysis.compute_distance_normalization_info(
-                        distance_matrix, 
-                        config_ids,
-                        n_objects=st.session_state.get('pdp_norm_n_objects'),
-                        window_length=st.session_state.get('pdp_norm_window_length'),
-                        buffer_factor=norm_buffer_factor,
-                        n_external_points=st.session_state.get('pdp_norm_n_external_points', 0),
-                        n_windows=st.session_state.get('pdp_norm_n_windows')
-                    )
-                    
+                        distance_matrix, config_ids, **pdp_norm_kwargs(active_variant_dm))
+
                     col_formula1, col_formula2 = st.columns(2)
                     with col_formula1:
-                        st.metric("Max Possible Distance", format_number(norm_info['max_possible_distance'], 1))
+                        st.metric("Max Possible Distance",
+                                  format_number(norm_info['max_possible_distance'], 1)
+                                  if norm_info['max_possible_distance'] else "unavailable")
                     with col_formula2:
-                        st.info("This is the theoretical maximum distance observed in your dataset")
+                        st.info("Analytical maximum for this run and variant: selected objects, window length, "
+                                "number of windows, Buffer expansion and external points. It is not the largest "
+                                "distance observed.")
                     
                     # Example calculation
                     st.markdown("### Example Calculation")
@@ -4939,7 +5240,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     fig_hist = pdp_analysis.create_distance_distribution_plot(
                         norm_info['histogram_data'],
-                        show_normalized=(show_normalized_hist == "Normalized (0-100)")
+                        show_normalized=(show_normalized_hist == "Normalized (0-100)"),
+                        variant_label=dm_variant_name
                     )
                     
                     render_interactive_chart(fig_hist)
@@ -4959,6 +5261,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     for i in range(len(config_ids)):
                         for j in range(i+1, len(config_ids)):
                             export_data.append({
+                                'Variant': dm_variant_name,
                                 'Config_A': config_ids[i],
                                 'Config_B': config_ids[j],
                                 'Raw_Distance': distance_matrix[i, j],
@@ -4972,10 +5275,108 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.download_button(
                         label="📥 Download Normalized Distances (CSV)",
                         data=csv_export,
-                        file_name="pdp_normalized_distances.csv",
+                        file_name=f"pdp_normalized_distances_{active_variant_dm}.csv",
                         mime="text/csv",
-                        help="Download pairwise distances with both raw and normalized values"
+                        help=f"Unique configuration pairs of the {dm_variant_name} result: raw distance, unrounded "
+                             "normalised distance and a formatted percentage"
                     )
+                        
+                # Use reusable configuration selector component
+                selected_configs_inspect = configuration_selector(
+                    config_ids=config_ids,
+                    key_prefix="pdp_matrix_inspect",
+                    default_configs=[],
+                    max_selections=5,
+                    label="Select configurations to visualize",
+                    help_text="Choose configurations from the distance matrix to see their actual trajectories",
+                    show_metrics=True
+                )
+                
+                # Visualize selected configurations
+                if len(selected_configs_inspect) > 0:
+                    st.markdown("---")
+                    
+                    # Show distance information if 2+ configs selected
+                    if len(selected_configs_inspect) >= 2:
+                        st.markdown("**Pairwise Distances Between Selected Configurations:**")
+                        
+                        dist_pairs = pdp_pair_rows(config_ids, distance_matrix, dm_max_possible,
+                                                   selected_configs_inspect)
+                        if dist_pairs:
+                            dist_df = pd.DataFrame(dist_pairs)
+                            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                            st.caption(PDP_COMPLEMENT_NOTE)
+                    
+                    # Plot trajectories
+                    st.markdown("**Trajectory Visualization:**")
+                    
+                    # Get objects from global selection if available
+                    if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
+                        inspect_objects = st.session_state.shared_selected_objects
+                    else:
+                        inspect_objects = selected_objects
+                    
+                    fig_inspect = pdp_analysis.plot_trajectory_comparison(
+                        df=st.session_state.data,
+                        config_ids=config_ids,
+                        selected_configs=selected_configs_inspect,
+                        start_time=start_time,
+                        end_time=end_time,
+                        selected_objects=inspect_objects,
+                        # Partition of THIS view's variant (distance matrix variant), chosen count
+                        cluster_labels=pdp_partition(active_variant_dm, chosen_n_clusters),
+                        distance_matrix=distance_matrix,
+                        max_possible_distance=dm_max_possible,
+                        show_buffers=False,
+                        buffer_size=0.5,
+                        show_rough=False,
+                        rough_x=0.3,
+                        rough_y=0.3,
+                        show_court=(st.session_state.court_type == 'Tennis')
+                    )
+                    
+                    # Create a unique key based on selections to force chart recreation
+                    chart_key = f"pdp_inspect_chart_{'-'.join(map(str, selected_configs_inspect))}_{'-'.join(map(str, inspect_objects))}"
+                    
+                    render_interactive_chart(fig_inspect, 
+                                           caption=f"Showing {len(selected_configs_inspect)} configuration(s) | " +
+                                                  f"Time: {format_tst(start_time)} - {format_tst(end_time)}",
+                                           key=chart_key)
+                    
+                    # Interpretation help
+                    with st.expander("💡 How to interpret this visualization"):
+                        st.markdown("""
+                        **What you're seeing:**
+                        - Each color represents a different configuration
+                        - Trajectories show the movement paths of all selected objects
+                        - Start points: ⭕ (circles), End points: ◼️ (squares)
+                        
+                        **Compare with the distance matrix:**
+                        - **Small distances** → Similar trajectory patterns (paths overlap or follow similar patterns)
+                        - **Large distances** → Very different trajectory patterns (paths diverge significantly)
+                        
+                        **Tips:**
+                        - Hover over points to see configuration, object, and timestamp details
+                        - Use the quick selection buttons to explore interesting patterns
+                        - Compare 2-3 configurations to understand what causes high/low distances
+                        """)
+                
+                # Summary statistics
+                st.markdown("---")
+                st.markdown("**Distance Matrix Statistics:**")
+                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                with col_stat1:
+                    st.metric("Matrix Size", f"{n_configs}×{n_configs}")
+                with col_stat2:
+                    # Get upper triangle (exclude diagonal)
+                    triu_indices = np.triu_indices_from(distance_matrix, k=1)
+                    distances = distance_matrix[triu_indices]
+                    st.metric("Mean raw distance", format_number(np.mean(distances), 1))
+                with col_stat3:
+                    st.metric("Min raw distance", format_number(np.min(distances), 1))
+                with col_stat4:
+                    st.metric("Max raw distance", format_number(np.max(distances), 1))
+                
                 # End of Basic Results expander
                 
                 # ========================================
@@ -4992,7 +5393,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                             key="pdp_clust_variant"
                         )
                         active_variant_clust = variant_map_reverse[clust_variant_name]
-                    
+                    st.caption(pdp_variant_caption(active_variant_clust))
+
                     # Get matrix for this variant
                     clust_distance_matrix = st.session_state.pdp_results_all[active_variant_clust]
                     
@@ -5007,23 +5409,21 @@ Each window captures a snapshot of spatial relationships at different points in 
                     )
 
                     # Dendrogram
+                    st.caption("Average linkage: the dendrogram and cluster assignments use the same hierarchy.")
                     st.markdown("### Hierarchical Clustering Dendrogram", help="**How to read the dendrogram:**\n\n• Height of branches indicates the distance between clusters (higher = more different)\n\n• Different colors represent different clusters automatically identified by the algorithm\n\n• Configurations connected at lower heights are more similar\n\n• The x-axis shows each configuration label")
                     
                     if linkage_matrix_clust is not None:
-                        # We need to know the current N clusters to color the dendrogram
-                        # Use the slider value if available (prevents lag), otherwise use optimal
-                        if 'pdp_n_clusters' in st.session_state:
-                            current_n = st.session_state.pdp_n_clusters
-                        else:
-                            current_n = optimal_n_clust
-                        
-                        fig_dend = pdp_analysis.create_interactive_dendrogram(
-                            linkage_matrix_clust,
-                            config_ids,
-                            clust_distance_matrix,
-                            current_n
-                        )
-                        render_interactive_chart(fig_dend)
+                        # Colour/cut the dendrogram at the user's chosen count (not the recommendation)
+                        current_n = chosen_n_clusters
+
+                        with pdp_view_guard("dendrogram", "Try changing the number of clusters, or reload the page."):
+                            fig_dend = pdp_analysis.create_interactive_dendrogram(
+                                linkage_matrix_clust,
+                                config_ids,
+                                clust_distance_matrix,
+                                current_n
+                            )
+                            render_interactive_chart(fig_dend)
                         
                         # Cluster selection
                         st.markdown("---")
@@ -5042,17 +5442,20 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     "Number of clusters",
                                     min_value=2,
                                     max_value=max_clusters,
-                                    value=min(optimal_n_clust, max_clusters),  # Ensure value doesn't exceed max
-                                    key="pdp_n_clusters"
+                                    **widget_default("pdp_n_clusters", chosen_n_clusters),
+                                    key="pdp_n_clusters",
+                                    help="Your choice controls the table, dendrogram cut, MDS colours, "
+                                         "cluster-based selections and the cluster export."
                                 )
-                            
-                            # Update current N in session state (optional, but good for consistency)
+
+                            # The chosen count is shared by all cluster-based views and the export
                             st.session_state.pdp_current_n = n_clusters
-                            
-                            # Re-compute labels based on slider
-                            cluster_labels_clust, _ = pdp_analysis.perform_hierarchical_clustering(
-                                clust_distance_matrix, n_clusters
-                            )
+                            st.session_state.pdp_chosen_n_clusters = n_clusters
+                            chosen_n_clusters = n_clusters
+
+                            cluster_labels_clust = pdp_partition(active_variant_clust, n_clusters)
+                            st.session_state.pdp_cluster_labels = cluster_labels_clust
+                            st.caption(f"Partition for variant **{clust_variant_name}** with {n_clusters} clusters.")
                         
                         with col2:
                             st.metric("Optimal Clusters", optimal_n_clust, help="Recommended number of clusters detected using the Elbow Method. This analyzes within-cluster distances for k=2 to k=10, finds the 'elbow point' where adding more clusters yields diminishing returns, and validates with silhouette scores. Use this as a starting point - you can adjust manually based on your domain knowledge.")
@@ -5098,50 +5501,58 @@ Each window captures a snapshot of spatial relationships at different points in 
                     if cluster_labels_clust is not None:
                         if mds_dims == 2:
                             # 2D MDS
-                            fig_mds, stress = pdp_analysis.create_mds_visualization(
-                                clust_distance_matrix,
-                                config_ids,
-                                cluster_labels_clust
-                            )
-                            render_interactive_chart(fig_mds)
-                            
-                            # Show stress interpretation
-                            with st.expander("Understanding the Stress Value"):
-                                st.markdown(f"""
-                                **Current Stress: {stress:.2f}**
-                                
-                                The stress value indicates how well the 2D projection preserves the original distances:
-                                - **< 0.05**: Excellent representation
-                                - **0.05 - 0.10**: Good representation
-                                - **0.10 - 0.20**: Fair representation
-                                - **> 0.20**: Poor representation (consider using 3D or more clusters)
-                                
-                                Lower stress means the 2D visualization more accurately represents the true distances between configurations.
-                                """)
+                            fig_mds = None
+                            with pdp_view_guard("2D MDS projection", "Try the 3D projection, or select 2D again to retry."):
+                                with st.spinner("Building the 2D MDS projection"):
+                                    fig_mds, stress = pdp_analysis.create_mds_visualization(
+                                        clust_distance_matrix,
+                                        config_ids,
+                                        cluster_labels_clust
+                                    )
+                            if fig_mds is not None:
+                                render_interactive_chart(fig_mds)
+
+                                # Show stress interpretation
+                                with st.expander("Understanding the Stress Value"):
+                                    st.markdown(f"""
+                                    **Current Stress: {stress:.2f}**
+
+                                    The stress value indicates how well the 2D projection preserves the original distances:
+                                    - **< 0.05**: Excellent representation
+                                    - **0.05 - 0.10**: Good representation
+                                    - **0.10 - 0.20**: Fair representation
+                                    - **> 0.20**: Poor representation (consider using 3D or more clusters)
+
+                                    Lower stress means the 2D visualization more accurately represents the true distances between configurations.
+                                    """)
                         else:
                             # 3D MDS
-                            fig_mds_3d, stress = pdp_analysis.create_mds_visualization_3d(
-                                clust_distance_matrix,
-                                config_ids,
-                                cluster_labels_clust
-                            )
-                            render_interactive_chart(fig_mds_3d)
-                            
-                            st.success(f"💡 **Tip**: Use your mouse to rotate, zoom, and explore the 3D space! Stress: {stress:.2f}")
-                            
-                            # Show stress interpretation
-                            with st.expander("Understanding the Stress Value"):
-                                st.markdown(f"""
-                                **Current Stress: {stress:.2f}**
-                                
-                                The stress value indicates how well the 3D projection preserves the original distances:
-                                - **< 0.05**: Excellent representation
-                                - **0.05 - 0.10**: Good representation
-                                - **0.10 - 0.20**: Fair representation
-                                - **> 0.20**: Poor representation
-                                
-                                3D projections typically have lower stress than 2D, providing a more accurate representation of configuration similarities.
-                                """)
+                            fig_mds_3d = None
+                            with pdp_view_guard("3D MDS projection", "Try the 2D projection, or select 3D again to retry."):
+                                with st.spinner("Building the 3D MDS projection"):
+                                    fig_mds_3d, stress = pdp_analysis.create_mds_visualization_3d(
+                                        clust_distance_matrix,
+                                        config_ids,
+                                        cluster_labels_clust
+                                    )
+                            if fig_mds_3d is not None:
+                                render_interactive_chart(fig_mds_3d)
+
+                                st.success(f"💡 **Tip**: Use your mouse to rotate, zoom, and explore the 3D space! Stress: {stress:.2f}")
+
+                                # Show stress interpretation
+                                with st.expander("Understanding the Stress Value"):
+                                    st.markdown(f"""
+                                    **Current Stress: {stress:.2f}**
+
+                                    The stress value indicates how well the 3D projection preserves the original distances:
+                                    - **< 0.05**: Excellent representation
+                                    - **0.05 - 0.10**: Good representation
+                                    - **0.10 - 0.20**: Fair representation
+                                    - **> 0.20**: Poor representation
+
+                                    3D projections typically have lower stress than 2D, providing a more accurate representation of configuration similarities.
+                                    """)
                     
                     
                     # Top-K Similar Configurations
@@ -5161,6 +5572,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             config_ids,
                             key="pdp_target_config"
                         )
+                        st.session_state.pdp_chosen_target = target_config
                     
                     with col2:
                         max_k = len(config_ids) - 1  # Maximum is all other configurations
@@ -5172,9 +5584,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 "Number of similar configs (K)",
                                 min_value=1,
                                 max_value=max_k,
-                                value=min(5, max_k),
+                                **widget_default("pdp_k_similar", min(5, max_k)),
                                 key="pdp_k_similar"
                             )
+                            st.session_state.pdp_chosen_k = k_similar
                     
                     if target_config:
                         similar_configs = pdp_analysis.find_top_k_similar(
@@ -5184,7 +5597,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                             k=k_similar
                         )
                         
-                        st.markdown(f"**Top {k_similar} configurations most similar to `{target_config}`:**")
+                        st.markdown(f"**Top {k_similar} configurations most similar to `{target_config}`** "
+                                    f"(variant {clust_variant_name}):")
                         
                         similar_df = pd.DataFrame(similar_configs, columns=['Configuration', 'PDP Distance'])
                         similar_df['Rank'] = range(1, len(similar_df) + 1)
@@ -5245,28 +5659,34 @@ Each window captures a snapshot of spatial relationships at different points in 
                         )
                     
                     # Show which variant/settings are being used
-                    st.info(f"**Using PDP settings:** Variant = {clust_variant_name}, Window length = {window_length}")
-                    
-                    if fg_config1 and fg_config2 and fg_config1 != fg_config2:
-                        # Determine parameters based on active variant
-                        fg_variant = active_variant_clust
-                        fg_buffer_x = buffer_x if fg_variant in ['buffer', 'buffer_rough'] else 0
-                        fg_buffer_y = buffer_y if fg_variant in ['buffer', 'buffer_rough'] else 0
-                        fg_rough_x = rough_x if fg_variant in ['rough', 'buffer_rough'] else 0
-                        fg_rough_y = rough_y if fg_variant in ['rough', 'buffer_rough'] else 0
-                        
-                        # Get external points if used
-                        fg_external_points = st.session_state.get('pdp_external_points', []) if st.session_state.get('pdp_use_external', False) else None
+                    st.info(f"**Using the completed settings of the** {pdp_variant_caption(active_variant_clust)}")
+
+                    show_fine_grained = st.checkbox(
+                        "Compute fine-grained differences", value=False,
+                        help="Optional detailed diagnostic. Leave off while comparing distances or rankings.",
+                        key="pdp_show_fine_grained")
+                    if show_fine_grained and fg_config1 and fg_config2 and fg_config1 != fg_config2:
+                        # Parameters the completed result of this variant used
+                        fg_params = pdp_run_params(active_variant_clust)
+                        fg_buffer_x, fg_buffer_y = fg_params['buffer_x'], fg_params['buffer_y']
+                        fg_rough_x, fg_rough_y = fg_params['rough_x'], fg_params['rough_y']
+
+                        # External points of the completed results
+                        fg_external_points = pdp_run_external() or None
                         
                         # Compute and visualize differences
-                        with st.spinner("Computing fine-grained differences..."):
-                            fig_diff, diff_result, diff_summary = pdp_analysis.create_difference_visualization(
-                                df, fg_config1, fg_config2, selected_objects,
-                                start_time, end_time, window_length,
-                                fg_buffer_x, fg_buffer_y, fg_rough_x, fg_rough_y,
-                                fg_external_points,
-                                show_court=(st.session_state.court_type == 'Tennis')
-                            )
+                        fig_diff = None
+                        with pdp_view_guard(f"fine-grained differences for {fg_config1} vs {fg_config2}",
+                                            "Choose another pair or a shorter time range, or switch the "
+                                            "checkbox off and on to try again."):
+                            with st.spinner(f"Computing fine-grained differences for {fg_config1} vs {fg_config2}"):
+                                fig_diff, diff_result, diff_summary = pdp_analysis.create_difference_visualization(
+                                    df, fg_config1, fg_config2, selected_objects,
+                                    start_time, end_time, window_length,
+                                    fg_buffer_x, fg_buffer_y, fg_rough_x, fg_rough_y,
+                                    fg_external_points,
+                                    show_court=(st.session_state.court_type == 'Tennis')
+                                )
                         
                         if fig_diff is not None:
                             # Show summary metrics
@@ -5284,6 +5704,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                             # Show the side-by-side difference visualization
                             st.markdown("#### Trajectory Comparison with Difference Lines")
                             st.markdown("**Red lines** connect positions where the inequality matrices differ. **Thicker lines** = larger differences.")
+                            n_pairs = diff_summary.get('position_differences', 0)
+                            n_drawn = diff_summary.get('drawn_position_differences', n_pairs)
+                            if n_drawn < n_pairs:
+                                st.caption(f"Showing the {n_drawn} strongest of {n_pairs:,} differing position pairs, "
+                                           "to keep the figure responsive. The metrics above count all of them.")
                             render_interactive_chart(fig_diff)
                             
                             # Show detailed matrices in an expander
@@ -5309,6 +5734,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     )
                                     if fig_matrices:
                                         render_interactive_chart(fig_matrices)
+                                        show_point_lookup(fig_matrices)
                             
                             # Show difference by window chart
                             if diff_summary.get('difference_by_window'):
@@ -5397,6 +5823,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                         st.warning("No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
                     
                     # Quick selection buttons with customizable parameters
+                    # Cluster-based selection and the comparison below use this section's variant and the
+                    # chosen partition (never labels from another variant or run)
+                    section_cluster_labels = cluster_labels_clust
                     st.markdown("**Quick Selection:**")
                     st.caption("Use these buttons to automatically select interesting configuration pairs for comparison")
                     
@@ -5411,11 +5840,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                                                            value=2, step=1, key="pdp_n_top_dissimilar",
                                                            help="Number of most dissimilar configurations to select")
                     with col_p3:
-                        if st.session_state.pdp_cluster_labels is not None:
-                            n_clusters = len(set(st.session_state.pdp_cluster_labels))
-                            n_centroids = st.number_input("N centroids", min_value=1, max_value=n_clusters, 
-                                                         value=min(3, n_clusters), step=1, key="pdp_n_centroids",
-                                                         help="Number of cluster centroids to select")
+                        if section_cluster_labels is not None:
+                            n_clusters = len(set(section_cluster_labels))
+                            if st.session_state.get('pdp_n_centroids', 1) > n_clusters:
+                                st.session_state.pdp_n_centroids = n_clusters   # fewer clusters chosen
+                            n_centroids = st.number_input("N centroids", min_value=1, max_value=n_clusters,
+                                                         **widget_default("pdp_n_centroids", min(3, n_clusters)),
+                                                         step=1, key="pdp_n_centroids",
+                                                         help=f"Representatives from the {n_clusters} clusters of variant "
+                                                              f"{clust_variant_name} (your chosen count)")
                         else:
                             st.text("(assign clusters first)")
                             n_centroids = 3
@@ -5477,15 +5910,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 st.success(f"Selected {len(selected_indices)} most dissimilar configs (avg distance: {avg_dist:.2f})")
                     
                     with col_btn3:
-                        if st.session_state.pdp_cluster_labels is not None and st.button("Cluster Centroids", use_container_width=True,
+                        if section_cluster_labels is not None and st.button("Cluster Centroids", use_container_width=True,
                                                                                          help=f"Select {n_centroids} representative configurations from different clusters"):
                             # Select one config from each cluster (the one most central to its cluster)
-                            unique_clusters = sorted(set(st.session_state.pdp_cluster_labels))
+                            unique_clusters = sorted(set(section_cluster_labels))
                             centroid_configs = []
                             for cluster_id in unique_clusters[:min(n_centroids, len(unique_clusters))]:
                                 # Find config closest to cluster center (smallest avg distance to other cluster members)
-                                cluster_indices = [i for i, c in enumerate(st.session_state.pdp_cluster_labels) if c == cluster_id]
-                                cluster_distances = distance_matrix[np.ix_(cluster_indices, cluster_indices)]
+                                cluster_indices = [i for i, c in enumerate(section_cluster_labels) if c == cluster_id]
+                                cluster_distances = clust_distance_matrix[np.ix_(cluster_indices, cluster_indices)]
                                 avg_distances = cluster_distances.mean(axis=1)
                                 centroid_idx = cluster_indices[np.argmin(avg_distances)]
                                 centroid_configs.append(config_ids[centroid_idx])
@@ -5508,13 +5941,16 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # Visualization options for buffer and rough zones
                     st.markdown("---")
                     st.markdown("**Advanced Visualization Options:**")
-                    st.caption("Shows the current PDP settings (buffer, rough tolerance and external points) "
-                               "on the trajectories. Change them in the PDP parameters above.")
+                    st.caption(f"Overlays show only what the **{clust_variant_name}** result above used. "
+                               "Values entered for variants that were not computed are not drawn.")
 
-                    viz_external_points = (st.session_state.get('pdp_external_points', [])
-                                           if st.session_state.get('pdp_use_external', False) else [])
-                    has_buffer = buffer_x > 0 or buffer_y > 0
-                    has_rough = rough_x > 0 or rough_y > 0
+                    # Settings used by the displayed variant's completed result (not pending fields)
+                    clust_params = pdp_run_params(active_variant_clust)
+                    traj_buffer_x, traj_buffer_y = clust_params['buffer_x'], clust_params['buffer_y']
+                    traj_rough_x, traj_rough_y = clust_params['rough_x'], clust_params['rough_y']
+                    viz_external_points = pdp_run_external()
+                    has_buffer = traj_buffer_x > 0 or traj_buffer_y > 0
+                    has_rough = traj_rough_x > 0 or traj_rough_y > 0
 
                     col_viz1, col_viz2, col_viz3 = st.columns(3)
 
@@ -5523,28 +5959,28 @@ Each window captures a snapshot of spatial relationships at different points in 
                         show_buffers = st.checkbox("Show buffer points", **widget_default("pdp_show_buffers", has_buffer),
                                                   key="pdp_show_buffers", disabled=not has_buffer,
                                                   help="Buffer ADDS extra data points around each original point at cardinal directions (left/right/up/down)")
-                        st.caption(f"Buffer X = {buffer_x:g} m, Buffer Y = {buffer_y:g} m" if has_buffer
-                                   else "No buffer set (Buffer X and Y are 0).")
+                        st.caption(f"Used: Buffer X = {traj_buffer_x:g} m, Buffer Y = {traj_buffer_y:g} m" if has_buffer
+                                   else f"Not used by the {clust_variant_name} result.")
 
                     with col_viz2:
                         st.markdown("**Rough Tolerance (Comparison Zone)**")
                         show_rough = st.checkbox("Show rough zones", **widget_default("pdp_show_rough", has_rough),
                                                 key="pdp_show_rough", disabled=not has_rough,
                                                 help="Rough defines a TOLERANCE ZONE (rectangle) where points are considered 'approximately equal' in comparisons")
-                        st.caption(f"Rough X = {rough_x:g} m, Rough Y = {rough_y:g} m" if has_rough
-                                   else "No rough tolerance set (Rough X and Y are 0).")
+                        st.caption(f"Used: Rough X = {traj_rough_x:g} m, Rough Y = {traj_rough_y:g} m" if has_rough
+                                   else f"Not used by the {clust_variant_name} result.")
 
                     with col_viz3:
                         st.markdown("**External Reference Points**")
                         show_external = st.checkbox("Show external points",
                                                     **widget_default("pdp_show_external", bool(viz_external_points)),
                                                     key="pdp_show_external", disabled=not viz_external_points)
-                        st.caption(f"{len(viz_external_points)} external point(s) in use" if viz_external_points
-                                   else "No external points enabled.")
+                        st.caption(f"Used: {len(viz_external_points)} external point(s)" if viz_external_points
+                                   else "External points were off for these results.")
 
                     show_buffers = show_buffers and has_buffer
                     show_rough = show_rough and has_rough
-                    viz_rough_x, viz_rough_y = rough_x, rough_y
+                    viz_rough_x, viz_rough_y = traj_rough_x, traj_rough_y
 
                     if show_buffers or show_rough:
                         st.info(f"""
@@ -5568,11 +6004,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                             start_time=start_time,
                             end_time=end_time,
                             selected_objects=selected_objects_viz,
-                            cluster_labels=st.session_state.pdp_cluster_labels,
-                            distance_matrix=distance_matrix,
+                            cluster_labels=section_cluster_labels,
+                            distance_matrix=clust_distance_matrix,
+                            max_possible_distance=pdp_max_distance(active_variant_clust),
                             show_buffers=show_buffers,
-                            buffer_x=buffer_x,
-                            buffer_y=buffer_y,
+                            buffer_x=traj_buffer_x,
+                            buffer_y=traj_buffer_y,
                             show_rough=show_rough,
                             rough_x=viz_rough_x,
                             rough_y=viz_rough_y,
@@ -5588,25 +6025,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                         # Filter to only configs that exist in current config_ids (handles stale session state)
                         valid_configs_viz = [c for c in selected_configs_viz if c in config_ids]
                         if len(valid_configs_viz) >= 2:
-                            st.markdown("**Pairwise Similarities:**")
-                            sim_data = []
-                            for i in range(len(valid_configs_viz)):
-                                for j in range(i+1, len(valid_configs_viz)):
-                                    config_i = valid_configs_viz[i]
-                                    config_j = valid_configs_viz[j]
-                                    idx_i = list(config_ids).index(config_i)
-                                    idx_j = list(config_ids).index(config_j)
-                                    pdp_dist = distance_matrix[idx_i, idx_j]
-                                    similarity = 100 - pdp_dist
-                                    sim_data.append({
-                                        'Config A': config_i,
-                                        'Config B': config_j,
-                                        'PDP Distance': f"{pdp_dist:.2f}",
-                                        'Similarity %': f"{similarity:.1f}%"
-                                    })
-                            
+                            st.markdown(f"**Pairwise Distances** (variant {clust_variant_name}):")
+                            sim_data = pdp_pair_rows(config_ids, clust_distance_matrix,
+                                                     pdp_max_distance(active_variant_clust), valid_configs_viz)
                             sim_df = pd.DataFrame(sim_data)
                             st.dataframe(sim_df, use_container_width=True, hide_index=True)
+                            st.caption(PDP_COMPLEMENT_NOTE)
                     else:
                         st.warning("Please select at least one configuration to visualize.")
                     
@@ -5627,15 +6051,23 @@ Each window captures a snapshot of spatial relationships at different points in 
                             key="pdp_exp_variant"
                         )
                         active_variant_exp = variant_map_reverse[exp_variant_name]
-                    
+                    st.caption(pdp_variant_caption(active_variant_exp))
+
                     # Get data for export
                     exp_distance_matrix = st.session_state.pdp_results_all[active_variant_exp]
                     
-                    # Compute clusters for export (using optimal N)
-                    exp_optimal_n = pdp_analysis.detect_optimal_clusters(exp_distance_matrix)
-                    exp_cluster_labels, _ = pdp_analysis.perform_hierarchical_clustering(
-                        exp_distance_matrix, exp_optimal_n
-                    )
+                    # Export the user's chosen partition (never the recommendation), computed for the export
+                    # variant from its own distance matrix
+                    exp_n_clusters = chosen_n_clusters
+                    exp_recommended_n = pdp_analysis.detect_optimal_clusters(exp_distance_matrix)
+                    exp_cluster_labels = pdp_partition(active_variant_exp, exp_n_clusters)
+                    if active_variant_exp == active_variant_clust:
+                        st.caption(f"Cluster labels: the partition shown above ({exp_n_clusters} clusters, "
+                                   f"variant {exp_variant_name}).")
+                    else:
+                        st.caption(f"Cluster labels for variant **{exp_variant_name}** with your chosen "
+                                   f"{exp_n_clusters} clusters. This differs from the variant shown above "
+                                   f"({clust_variant_name}), so memberships can differ.")
                     
                     col_exp1, col_exp2, col_exp3 = st.columns(3)
                     
@@ -5662,10 +6094,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.download_button(
                                 label="Download Cluster Labels",
                                 data=cluster_csv,
-                                file_name=f"pdp_clusters_{active_variant_exp}.csv",
+                                file_name=f"pdp_clusters_{active_variant_exp}_k{exp_n_clusters}.csv",
                                 mime="text/csv",
                                 use_container_width=True,
-                                help=f"Configuration cluster assignments (N={exp_optimal_n})"
+                                help=f"Configuration cluster assignments: your chosen {exp_n_clusters} clusters, "
+                                     f"variant {exp_variant_name} (recommended count: {exp_recommended_n})"
                             )
                         else:
                             st.button(
@@ -5677,28 +6110,37 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     with col_exp3:
                         # Export similarity rankings
+                        max_k_export = max(1, len(config_ids) - 1)
+                        if st.session_state.get('pdp_top_k_export', 1) > max_k_export:
+                            st.session_state.pdp_top_k_export = max_k_export   # fewer configurations selected
                         top_k_export = st.number_input(
-                            "Top K similar per config",
+                            "Top K per configuration (export only)",
                             min_value=1,
-                            max_value=len(config_ids)-1,
-                            value=min(10, len(config_ids)-1),
-                            help="Number of similar configs to export for each configuration"
+                            max_value=max_k_export,
+                            **widget_default("pdp_top_k_export", min(10, max_k_export)),
+                            key="pdp_top_k_export",
+                            help="Exports a ranking for EVERY configuration. Separate from the on-screen "
+                                 "'Find Similar Configurations' query, which ranks one target with its own K."
                         )
                         
                         rankings_csv = pdp_analysis.export_similarity_rankings_to_csv(
                             config_ids=config_ids,
                             distance_matrix=exp_distance_matrix,
-                            top_k=top_k_export
+                            top_k=top_k_export,
+                            max_possible_distance=pdp_max_distance(active_variant_exp)
                         )
-                        
+
                         st.download_button(
                             label="Download Rankings",
                             data=rankings_csv,
                             file_name=f"pdp_similarity_rankings_{active_variant_exp}.csv",
                             mime="text/csv",
                             use_container_width=True,
-                            help=f"Top {top_k_export} similar configs for each configuration"
+                            help=f"Top {top_k_export} similar configs for each configuration: raw PDP distance, "
+                                 f"normalised distance (%) and its complement (100 − %), variant {exp_variant_name}"
                         )
+                        if pdp_max_distance(active_variant_exp) is None:
+                            st.caption("Percentages omitted: the run context is incomplete. Compute again.")
                 # End of Clustering & Projection expander
                 
                 # ===============================================================
@@ -5706,13 +6148,17 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # ===============================================================
                 with st.expander("Parameter Impact Analysis (Compare PDP Variants)", expanded=False):
                     st.markdown("### Parameter Impact Analysis " + 
-                        '<span title="Compare how buffer and rough parameters affect PDP distances.&#10;&#10;This analysis computes distances using all four PDP variants and visualizes:&#10;• How distances change across variants&#10;• Which configuration pairs are most affected by parameters&#10;• Correlation between variants&#10;&#10;Use this to:&#10;• Understand parameter sensitivity in your dataset&#10;• Choose the best variant for your analysis&#10;• Identify configurations that behave differently with parameters&#10;&#10;Computes PDP distances for ALL four variants:&#10;• Fundamental (baseline - no parameters)&#10;• Buffer (adds tolerance zones)&#10;• Rough (approximate equality)&#10;• Buffer + Rough (combined)&#10;&#10;Note: This may take a moment as it computes 4 distance matrices." style="cursor: help; font-size: 0.8em;">❓</span>', 
+                        '<span title="Compare how buffer and rough parameters affect PDP distances.&#10;&#10;This analysis computes distances using all four PDP variants and visualizes:&#10;• How distances change across variants&#10;• Which configuration pairs are most affected by parameters&#10;• Correlation between variants&#10;&#10;Use this to:&#10;• Understand parameter sensitivity in your dataset&#10;• Choose the best variant for your analysis&#10;• Identify configurations that behave differently with parameters&#10;&#10;Computes PDP distances for ALL four variants:&#10;• Fundamental (baseline - no parameters)&#10;• Buffer (adds virtual points around each position)&#10;• Rough (treats positions within a tolerance as equal)&#10;• Buffer + Rough (combined)&#10;&#10;Note: This may take a moment as it computes 4 distance matrices." style="cursor: help; font-size: 0.8em;">❓</span>', 
                         unsafe_allow_html=True)
                     
                     # Parameter configuration for comparison
                     st.markdown("---")
                     st.markdown("#### Set Parameters for Comparison")
-                    st.caption("Define the buffer and rough values to use in the parametrized variants")
+                    comp_run = st.session_state.get('pdp_run_settings') or {}
+                    st.caption("Trial values for this comparison only: it recalculates all four variants with the "
+                               "Buffer and Rough values below, using the data, configurations, objects, time range, "
+                               "window and external points of the main completed run. The main results above and "
+                               "the Buffer and Rough fields at the top are not changed.")
                     
                     col_comp1, col_comp2 = st.columns(2)
                     
@@ -5778,33 +6224,73 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     st.markdown("---")
                     
+                    # Results belong to the main completed run and these trial values
+                    comp_key = (st.session_state.get('pdp_run_signature'),
+                                buffer_x_comp, buffer_y_comp, rough_x_comp, rough_y_comp)
+                    comp_external = pdp_run_external()
                     if st.button("Compare All PDP Variants", key="compare_variants", type="primary"):
-                        with st.spinner("Computing distances for all 4 variants..."):
-                            # Compare all variants with user-specified parameters
-                            variant_results = pdp_analysis.compare_pdp_variants(
-                                df=st.session_state.data,
-                                selected_configs=selected_configs,
-                                selected_objects=selected_objects,
-                                start_time=start_time,
-                                end_time=end_time,
-                                window_length=window_length,
-                                buffer_x=buffer_x_comp,
-                                buffer_y=buffer_y_comp,
-                                rough_x=rough_x_comp,
-                                rough_y=rough_y_comp
-                            )
-                            
-                            st.session_state['variant_comparison_results'] = variant_results
-                        
-                        st.success("Variant comparison complete!")
-                        st.rerun()
-                    
-                    # Show results if available
-                    if 'variant_comparison_results' in st.session_state and st.session_state['variant_comparison_results']:
-                        variant_results = st.session_state['variant_comparison_results']
-                        
+                        comp_variants = list(PDP_VARIANT_NAMES)
+                        n_comp_pairs = len(comp_run['configs']) * (len(comp_run['configs']) - 1) // 2
+                        with st.status(f"Comparing all 4 PDP variants: {n_comp_pairs:,} configuration pairs "
+                                       "per variant", expanded=True) as comp_status:
+                            comp_progress = PdpProgress(comp_variants)
+                            try:
+                                # Compare all variants with the trial parameters on the main run's inputs
+                                variant_results = pdp_analysis.compare_pdp_variants(
+                                    df=st.session_state.data,
+                                    selected_configs=tuple(comp_run['configs']),
+                                    selected_objects=tuple(comp_run['objects']),
+                                    start_time=comp_run['start'],
+                                    end_time=comp_run['end'],
+                                    window_length=comp_run['window'],
+                                    buffer_x=buffer_x_comp,
+                                    buffer_y=buffer_y_comp,
+                                    rough_x=rough_x_comp,
+                                    rough_y=rough_y_comp,
+                                    progress=comp_progress,
+                                    external_points=tuple(comp_external) or None
+                                )
+                                comp_progress.finish()
+                            except Exception:
+                                comp_status.update(label="Variant comparison failed", state="error")
+                                variant_results = None
+                                # Earlier comparison results used other settings: do not show them as this one
+                                st.session_state.pop('variant_comparison_results', None)
+                                failed_at = (PDP_VARIANT_NAMES.get(comp_progress.current, 'preparation')
+                                             if comp_progress.current else 'summary statistics')
+                                st.error(f"**Variant comparison failed during the {failed_at} step.** "
+                                         "The main PDP results above are not affected.\n\n"
+                                         f"**Settings:** {pdp_settings_text(len(comp_run['configs']), comp_run['objects'], comp_run['start'], comp_run['end'], comp_run['window'], comp_variants, (buffer_x_comp, buffer_y_comp), (rough_x_comp, rough_y_comp), len(comp_external))}\n\n"
+                                         "Try fewer configurations or a shorter time range, then click "
+                                         "**Compare All PDP Variants** again.")
+                                with st.expander("Technical details"):
+                                    st.code(traceback.format_exc())
+                            else:
+                                comp_status.update(label="Variant comparison ready", state="complete", expanded=False)
+
+                        if variant_results is not None:
+                            st.session_state['variant_comparison_results'] = {'key': comp_key,
+                                                                              'results': variant_results}
+                            st.rerun()
+
+                    # Show results only for the current main run and the current trial values
+                    stored_comparison = st.session_state.get('variant_comparison_results')
+                    if stored_comparison and stored_comparison.get('key') != comp_key:
+                        st.info("The previous comparison used another main run or other trial values. "
+                                "Click **Compare All PDP Variants** to compare with the current values.")
+                    elif stored_comparison:
+                        variant_results = stored_comparison['results']
+
                         st.markdown("---")
                         st.markdown("### Comparison Results")
+                        st.caption(
+                            f"Compared on the main run ({len(comp_run['configs'])} configurations, objects "
+                            f"{', '.join(map(str, comp_run['objects']))}, tst {comp_run['start']:g}–{comp_run['end']:g}, "
+                            f"window {comp_run['window']}, "
+                            + (f"{len(comp_external)} external point(s)" if comp_external else "external points off")
+                            + f"): Fundamental (no Buffer, no Rough); Buffer X/Y {buffer_x_comp:g}/{buffer_y_comp:g} m; "
+                            f"Rough X/Y {rough_x_comp:g}/{rough_y_comp:g} m; Buffer + Rough with both. "
+                            "Distances are raw PDP distances.")
                         
                         # Statistics table
                         st.markdown("#### Distance Statistics by Variant")
@@ -5845,9 +6331,14 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         col_interp1, col_interp2 = st.columns(2)
                         
+                        if fund_mean == 0:
+                            st.caption("All Fundamental distances are 0, so changes relative to Fundamental "
+                                       "cannot be expressed as percentages.")
                         with col_interp1:
-                            buffer_change = ((buffer_mean - fund_mean) / fund_mean * 100)
-                            if buffer_change > 0:
+                            buffer_change = ((buffer_mean - fund_mean) / fund_mean * 100) if fund_mean else float('nan')
+                            if fund_mean == 0:
+                                st.metric("Buffer Impact (mean raw distance)", f"{buffer_mean:.1f}")
+                            elif buffer_change > 0:
                                 st.metric("Buffer Impact", f"+{buffer_change:.1f}%", 
                                          delta="Increases distances", delta_color="normal")
                             else:
@@ -5855,8 +6346,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                          delta="Decreases distances", delta_color="inverse")
                         
                         with col_interp2:
-                            rough_change = ((rough_mean - fund_mean) / fund_mean * 100)
-                            if rough_change > 0:
+                            rough_change = ((rough_mean - fund_mean) / fund_mean * 100) if fund_mean else float('nan')
+                            if fund_mean == 0:
+                                st.metric("Rough Impact (mean raw distance)", f"{rough_mean:.1f}")
+                            elif rough_change > 0:
                                 st.metric("Rough Impact", f"+{rough_change:.1f}%",
                                          delta="Increases distances", delta_color="normal")
                             else:
@@ -5923,17 +6416,36 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                     # Check if distance matrix is available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
-                        distance_matrix = st.session_state.pdp_distance_matrix
-                        config_ids = st.session_state.get('pdp_config_ids', [])
-                        
+                        config_ids = list(st.session_state.get('pdp_config_ids', []))
+
                         if len(config_ids) < 2:
                             st.warning("Need at least 2 configurations for similarity analysis.")
                         else:
+                            sim_variant_name = st.selectbox("Variant for the Similarity Explorer", available_options,
+                                                            key="pdp_sim_variant")
+                            sim_variant = variant_map_reverse[sim_variant_name]
+                            st.caption(pdp_variant_caption(sim_variant) + ". Separate from the main "
+                                       "'Find Similar Configurations' query and K.")
+                            distance_matrix = st.session_state.pdp_results_all[sim_variant]
+                            sim_max_possible = pdp_max_distance(sim_variant)
+
+                            # Keep the stored query and K valid for the current configurations
+                            sim_max_k = min(20, len(config_ids) - 1)
+                            # (Streamlit may already have reset the widget, so the last target is kept separately)
+                            last_target = st.session_state.get('_similarity_last_target')
+                            if last_target is not None and last_target not in config_ids:
+                                st.info(f"Similarity Explorer target reset to {config_ids[0]}: {last_target} "
+                                        "is not in the current results.")
+                            if st.session_state.get('similarity_target_config') not in config_ids:
+                                st.session_state.similarity_target_config = config_ids[0]
+                            if st.session_state.get('similarity_k', 1) > sim_max_k:
+                                st.session_state.similarity_k = sim_max_k
+
                             # Configuration selection
                             st.markdown("### 🎯 Select Target Configuration")
-                            
+
                             col_target, col_k = st.columns([3, 1])
-                            
+
                             with col_target:
                                 target_config = st.selectbox(
                                     "Target Configuration",
@@ -5941,15 +6453,16 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     key="similarity_target_config",
                                     help="Configuration to analyze"
                                 )
-                            
+                                st.session_state._similarity_last_target = target_config
+
                             with col_k:
                                 k_neighbors = st.number_input(
                                     "Number of Neighbors",
                                     min_value=1,
-                                    max_value=min(20, len(config_ids) - 1),
-                                    value=min(5, len(config_ids) - 1),
+                                    max_value=sim_max_k,
+                                    **widget_default("similarity_k", min(5, sim_max_k)),
                                     key="similarity_k",
-                                    help="How many similar/dissimilar configs to show"
+                                    help="How many similar/dissimilar configs to show (the target itself is excluded)"
                                 )
                             
                             if target_config:
@@ -5972,10 +6485,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     
                                     similar_data = []
                                     for rank, (config, dist) in enumerate(similarity_results['similar'], 1):
+                                        normalised = pdp_analysis.normalised_pdp_percent(dist, sim_max_possible)
                                         similar_data.append({
                                             'Rank': f"#{rank}",
                                             'Config': config,
-                                            'Distance': f"{dist:.2f}"
+                                            'Raw PDP distance': f"{dist:g}",
+                                            'Normalised distance (%)': f"{normalised:.2f}%" if normalised is not None else "n/a"
                                         })
                                     
                                     if similar_data:
@@ -5990,10 +6505,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     
                                     dissimilar_data = []
                                     for rank, (config, dist) in enumerate(similarity_results['dissimilar'], 1):
+                                        normalised = pdp_analysis.normalised_pdp_percent(dist, sim_max_possible)
                                         dissimilar_data.append({
                                             'Rank': f"#{rank}",
                                             'Config': config,
-                                            'Distance': f"{dist:.2f}"
+                                            'Raw PDP distance': f"{dist:g}",
+                                            'Normalised distance (%)': f"{normalised:.2f}%" if normalised is not None else "n/a"
                                         })
                                     
                                     if dissimilar_data:
@@ -6009,17 +6526,19 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     unsafe_allow_html=True)
                                 st.caption(f"MDS projection showing {target_config}'s neighborhood. Lines connect to {k_neighbors} nearest neighbors.")
                                 
-                                # Check if cluster labels are available
-                                cluster_labels = st.session_state.get('cluster_labels', None)
-                                
-                                fig_neighborhood = pdp_analysis.create_neighborhood_visualization(
-                                    distance_matrix=distance_matrix,
-                                    config_ids=config_ids,
-                                    target_config=target_config,
-                                    cluster_labels=cluster_labels,
-                                    k=k_neighbors
-                                )
-                                render_interactive_chart(fig_neighborhood)
+                                # Colours: the user's chosen partition of this variant (not the trajectory
+                                # Clustering method's labels)
+                                st.caption(f"Colours show your chosen {chosen_n_clusters} clusters for the "
+                                           f"{sim_variant_name} result.")
+                                with pdp_view_guard("neighbourhood graph", "Choose another target or variant to retry."):
+                                    fig_neighborhood = pdp_analysis.create_neighborhood_visualization(
+                                        distance_matrix=distance_matrix,
+                                        config_ids=config_ids,
+                                        target_config=target_config,
+                                        cluster_labels=pdp_partition(sim_variant, chosen_n_clusters),
+                                        k=k_neighbors
+                                    )
+                                    render_interactive_chart(fig_neighborhood)
                                 
                                 # Interpretation guide
                                 with st.expander("Interpretation Guide"):
@@ -6071,63 +6590,91 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Check if distance matrix and clustering are available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
-                        distance_matrix = st.session_state.pdp_distance_matrix
-                        config_ids = st.session_state.get('pdp_config_ids', [])
-                        
+                        config_ids = list(st.session_state.get('pdp_config_ids', []))
+
                         n_configs = len(config_ids)
-                        
+
                         if n_configs < 3:
-                            st.warning("Need at least 3 configurations for cluster quality analysis (to test k=2 or more).")
+                            st.warning(f"Cluster quality needs at least 3 configurations (the current results have "
+                                       f"{n_configs}): every k from 2 to the number of configurations minus 1 is "
+                                       "tested. Select more configurations in the sidebar and compute again.")
                         else:
+                            quality_variant_name = st.selectbox("Variant for Cluster Quality", available_options,
+                                                                key="pdp_quality_variant")
+                            quality_variant = variant_map_reverse[quality_variant_name]
+                            st.caption(pdp_variant_caption(quality_variant) + ". Exploratory: evaluating k values "
+                                       "does not change your chosen number of clusters.")
+                            distance_matrix = st.session_state.pdp_results_all[quality_variant]
+
                             st.markdown("### Configuration")
-                            
+
                             col_minK, col_maxK, col_compute = st.columns([1, 1, 2])
-                            
-                            # Calculate valid range for k
+
+                            # Calculate valid range for k (keep stored values valid for these results)
                             max_possible_k = min(10, n_configs - 1)
-                            
+                            for k_key, k_default in (('cluster_quality_min_k', 2), ('cluster_quality_max_k', max_possible_k)):
+                                if k_key in st.session_state and not 2 <= st.session_state[k_key] <= max_possible_k:
+                                    st.session_state[k_key] = min(max(st.session_state[k_key], 2), max_possible_k)
+                            if st.session_state.get('cluster_quality_max_k', max_possible_k) < st.session_state.get('cluster_quality_min_k', 2):
+                                st.session_state.cluster_quality_max_k = st.session_state.cluster_quality_min_k
+
                             with col_minK:
                                 min_k = st.number_input(
                                     "Min k (clusters)",
                                     min_value=2,
                                     max_value=max_possible_k,
-                                    value=2,
+                                    **widget_default("cluster_quality_min_k", 2),
                                     key="cluster_quality_min_k",
                                     help="Minimum number of clusters to test"
                                 )
-                            
+
                             with col_maxK:
                                 max_k = st.number_input(
                                     "Max k (clusters)",
                                     min_value=min_k,
                                     max_value=max_possible_k,
-                                    value=min(5, max_possible_k),
+                                    **widget_default("cluster_quality_max_k", min(5, max_possible_k)),
                                     key="cluster_quality_max_k",
                                     help="Maximum number of clusters to test"
                                 )
-                            
+
+                            # Results belong to this run, variant and k range
+                            quality_key = (st.session_state.get('pdp_run_signature'), quality_variant, min_k, max_k)
                             with col_compute:
                                 st.write("")  # Spacing
                                 st.write("")
                                 if st.button("🧪 Evaluate Cluster Quality", type="primary", key="compute_cluster_quality"):
-                                    with st.spinner(f"Computing quality metrics for k={min_k} to k={max_k}..."):
-                                        metrics_results = pdp_analysis.compute_cluster_quality_metrics(
-                                            distance_matrix=distance_matrix,
-                                            min_k=min_k,
-                                            max_k=max_k
-                                        )
-                                        
-                                        st.session_state['cluster_quality_metrics'] = metrics_results
-                                    
-                                    st.success("Quality evaluation complete!")
-                                    st.rerun()
-                            
-                            # Show results if available
-                            if 'cluster_quality_metrics' in st.session_state and st.session_state['cluster_quality_metrics']:
-                                metrics_results = st.session_state['cluster_quality_metrics']
-                                
+                                    # Earlier metrics may use another k range: never show them as this request's
+                                    st.session_state.pop('cluster_quality_metrics', None)
+                                    metrics_results = None
+                                    with pdp_view_guard(f"cluster quality metrics for k={min_k} to k={max_k}",
+                                                        "Try a smaller k range, then click Evaluate Cluster Quality again."):
+                                        with st.spinner(f"Computing quality metrics for k={min_k} to k={max_k}..."):
+                                            metrics_results = pdp_analysis.compute_cluster_quality_metrics(
+                                                distance_matrix=distance_matrix,
+                                                min_k=min_k,
+                                                max_k=max_k
+                                            )
+                                    if metrics_results is not None:
+                                        st.session_state['cluster_quality_metrics'] = {'key': quality_key,
+                                                                                       'results': metrics_results}
+                                        st.rerun()
+
+                            # Show results only for the current run, variant and k range
+                            stored_quality = st.session_state.get('cluster_quality_metrics')
+                            if stored_quality and stored_quality.get('key') != quality_key:
+                                st.info("The previous evaluation used another run, variant or k range. Click "
+                                        "**Evaluate Cluster Quality** to evaluate the current choice.")
+                            elif stored_quality:
+                                metrics_results = stored_quality['results']
+
                                 st.markdown("---")
                                 st.markdown("### Quality Metrics Comparison")
+                                st.caption(f"{quality_variant_name} result, k = {min_k} to {max_k}. Silhouette and "
+                                           "inertia use the PDP distances directly. Davies–Bouldin and "
+                                           "Calinski–Harabasz need coordinates, so they are calculated on a 2D MDS "
+                                           "embedding of the PDP distances: approximate, not direct metrics of the "
+                                           "PDP distance space.")
                                 
                                 # Create and show the multi-panel plot
                                 fig_metrics = pdp_analysis.create_quality_metrics_plot(metrics_results)
@@ -6165,8 +6712,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                         optimal_k_data.append({
                                             'Metric': {
                                                 'silhouette': 'Silhouette Score',
-                                                'davies_bouldin': 'Davies-Bouldin Index',
-                                                'calinski_harabasz': 'Calinski-Harabasz Score',
+                                                'davies_bouldin': 'Davies-Bouldin Index (on 2D MDS)',
+                                                'calinski_harabasz': 'Calinski-Harabasz Score (on 2D MDS)',
                                                 'elbow': 'Elbow Method'
                                             }[metric_name],
                                             'Optimal k': k_val,
@@ -6176,13 +6723,16 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     optimal_df = pd.DataFrame(optimal_k_data)
                                     st.dataframe(optimal_df, use_container_width=True, hide_index=True)
                                 
-                                # Detailed silhouette analysis for current clustering
-                                if 'pdp_cluster_labels' in st.session_state and st.session_state['pdp_cluster_labels'] is not None:
+                                # Detailed silhouette analysis for the chosen partition of the selected variant
+                                if quality_variant in st.session_state.pdp_results_all:
                                     st.markdown("---")
                                     st.markdown("### Detailed Silhouette Analysis")
-                                    st.caption("Per-configuration silhouette scores for current clustering")
-                                    
-                                    cluster_labels = st.session_state['pdp_cluster_labels']
+                                    st.caption(f"Per-configuration silhouette scores for the chosen partition "
+                                               f"({chosen_n_clusters} clusters, variant {quality_variant})")
+
+                                    # Labels and distances of the same variant and run
+                                    distance_matrix = st.session_state.pdp_results_all[quality_variant]
+                                    cluster_labels = pdp_partition(quality_variant, chosen_n_clusters)
                                     
                                     fig_silhouette = pdp_analysis.create_silhouette_per_cluster_plot(
                                         distance_matrix=distance_matrix,
@@ -6213,14 +6763,14 @@ Each window captures a snapshot of spatial relationships at different points in 
                                        - 0.25-0.5: Weak structure, clusters overlap
                                        - < 0.25: No substantial structure
                                     
-                                    2. **Davies-Bouldin Index:**
+                                    2. **Davies-Bouldin Index** (calculated on a 2D MDS embedding):
                                        - Lower is better (minimum = 0)
                                        - Measures cluster separation
                                        - < 1.0: Good separation
                                        - 1.0-2.0: Moderate separation
                                        - > 2.0: Poor separation
                                     
-                                    3. **Calinski-Harabasz Score:**
+                                    3. **Calinski-Harabasz Score** (calculated on a 2D MDS embedding):
                                        - Higher is better
                                        - Ratio of between/within cluster dispersion
                                        - No absolute threshold, compare across k values
@@ -6256,7 +6806,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     else:
                         st.info("Compute a distance matrix first (above) to use Cluster Quality Metrics.")
-    
+            else:
+                st.caption(PDP_ADVANCED_SECTIONS_NOTE)
+
     elif analysis_method == "Outlier Detection":
         # Call the modular outlier detection function
         outlier_detection.render_outlier_detection_section(

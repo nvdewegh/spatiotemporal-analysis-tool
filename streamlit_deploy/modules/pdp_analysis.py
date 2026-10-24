@@ -18,13 +18,16 @@ The module provides:
 - Top-K similar configuration analysis
 """
 
+import threading
+from collections import OrderedDict
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 import plotly.figure_factory as ff
-from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.cluster.hierarchy import cut_tree, dendrogram, linkage
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
 from sklearn.cluster import AgglomerativeClustering
@@ -229,21 +232,11 @@ def compute_inequality_matrix(coords, dim_values, window_length, rough=0):
         - 1 = values are equal (within rough tolerance)
         - 2 = second value is less than first
     """
-    n_points = len(dim_values)
-    inequality_matrix = np.zeros((n_points, n_points), dtype=int)
-    
-    for i in range(n_points):
-        for j in range(n_points):
-            diff = dim_values[j] - dim_values[i]
-            
-            if abs(diff) <= rough:
-                inequality_matrix[i, j] = 1  # Equal (within rough tolerance)
-            elif diff > rough:
-                inequality_matrix[i, j] = 0  # j > i
-            else:
-                inequality_matrix[i, j] = 2  # j < i
-    
-    return inequality_matrix
+    values = np.asarray(dim_values)
+    differences = values[np.newaxis, :] - values[:, np.newaxis]
+    # Preserve the existing three-state encoding and boundary behaviour exactly.
+    return np.where(np.abs(differences) <= rough, 1,
+                    np.where(differences > rough, 0, 2))
 
 
 def _point_sort_key(column):
@@ -369,30 +362,83 @@ def _data_fingerprint(df):
     return int(pd.util.hash_pandas_object(df[cols], index=False).sum())
 
 
+BUFFER_VARIANTS = ('buffer', 'buffer_rough')
+ROUGH_VARIANTS = ('rough', 'buffer_rough')
+
+
+def pdp_variant_parameters(variant, buffer_x, buffer_y, rough_x, rough_y):
+    """Parameters a variant actually uses: Buffer only in Buffer variants, Rough only in Rough variants."""
+    uses_buffer, uses_rough = variant in BUFFER_VARIANTS, variant in ROUGH_VARIANTS
+    return dict(buffer_x=buffer_x if uses_buffer else 0, buffer_y=buffer_y if uses_buffer else 0,
+                rough_x=rough_x if uses_rough else 0, rough_y=rough_y if uses_rough else 0)
+
+
+def pdp_run_signature(df, configs, objects, start, end, window, buffer_x, buffer_y,
+                      rough_x, rough_y, variants, external_points):
+    """
+    Identify the inputs behind results, independently of display controls. Buffer and Rough values
+    count only when a selected variant uses them, so editing an unused field keeps results current.
+    """
+    if not any(v in BUFFER_VARIANTS for v in variants):
+        buffer_x = buffer_y = 0
+    if not any(v in ROUGH_VARIANTS for v in variants):
+        rough_x = rough_y = 0
+    return (_data_fingerprint(df), tuple(configs), tuple(objects), start, end, window,
+            buffer_x, buffer_y, rough_x, rough_y, tuple(variants),
+            tuple(tuple(point) for point in (external_points or ())))
+
+
 def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_time, end_time,
                                 window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                pdp_variant="fundamental", external_points=None):
+                                pdp_variant="fundamental", external_points=None, progress=None):
     """
     Compute PDP distance matrix for all selected configurations (cached).
 
     The DataFrame itself is excluded from the cache key, but a fingerprint of its
     content is included, so loading a different dataset never returns stale distances.
-    Arguments and result are as for _compute_pdp_distance_matrix_cached.
+    Arguments and result are as for _compute_pdp_distance_matrix_uncached.
+
+    progress: optional callable(completed_pairs, total_pairs), called after every configuration
+    pair that is actually calculated. It is never called when stored results are returned.
+
+    An explicit cache is used instead of st.cache_data, which records Streamlit calls made during
+    the calculation (such as progress updates) and fails replaying them on a cache hit.
     """
-    return _compute_pdp_distance_matrix_cached(
-        _df, _data_fingerprint(_df), selected_configs, selected_objects, start_time, end_time,
-        window_length, buffer_x, buffer_y, rough_x, rough_y, pdp_variant, external_points)
+    key = (_data_fingerprint(_df), tuple(selected_configs), tuple(selected_objects), start_time, end_time,
+           window_length, buffer_x, buffer_y, rough_x, rough_y, pdp_variant,
+           tuple(tuple(point) for point in external_points) if external_points else None)
+    with _PDP_RESULT_CACHE_LOCK:
+        stored = _PDP_RESULT_CACHE.get(key)
+        if stored is not None:
+            _PDP_RESULT_CACHE.move_to_end(key)
+    if stored is None:
+        stored = _compute_pdp_distance_matrix_uncached(
+            _df, selected_configs, selected_objects, start_time, end_time, window_length,
+            buffer_x, buffer_y, rough_x, rough_y, pdp_variant, external_points, progress)
+        with _PDP_RESULT_CACHE_LOCK:
+            _PDP_RESULT_CACHE[key] = stored
+            while len(_PDP_RESULT_CACHE) > _PDP_RESULT_CACHE_SIZE:
+                _PDP_RESULT_CACHE.popitem(last=False)
+    distance_matrix, config_ids = stored
+    return distance_matrix.copy(), config_ids
 
 
-@st.cache_data
-def _compute_pdp_distance_matrix_cached(_df, data_fingerprint, selected_configs, selected_objects, start_time, end_time,
-                                        window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                        pdp_variant="fundamental", external_points=None):
+# Distance matrices by (data fingerprint, run settings, variant), shared by sessions like st.cache_data
+_PDP_RESULT_CACHE = OrderedDict()
+_PDP_RESULT_CACHE_LOCK = threading.Lock()
+_PDP_RESULT_CACHE_SIZE = 64
+
+
+def clear_pdp_distance_cache():
+    with _PDP_RESULT_CACHE_LOCK:
+        _PDP_RESULT_CACHE.clear()
+
+
+def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_objects, start_time, end_time,
+                                          window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
+                                          pdp_variant="fundamental", external_points=None, _progress=None):
     """
     Compute PDP distance matrix for all selected configurations.
-
-    Note: _df has underscore prefix to exclude it from cache key (large DataFrames
-    can cause hashing issues); data_fingerprint identifies its content instead.
 
     Args:
         _df: DataFrame with trajectory data (excluded from cache key)
@@ -406,8 +452,9 @@ def _compute_pdp_distance_matrix_cached(_df, data_fingerprint, selected_configs,
         rough_x: Roughness tolerance for x dimension (for rough variant)
         rough_y: Roughness tolerance for y dimension (for rough variant)
         pdp_variant: One of "fundamental", "buffer", "rough", "buffer_rough"
-        external_points: Tuple of tuples ((name, x, y), ...) for static reference points (must be tuple for caching)
-    
+        external_points: Tuple of tuples ((name, x, y), ...) for static reference points
+        _progress: Optional callable(completed_pairs, total_pairs); the caller owns the progress display.
+
     Returns:
         (distance_matrix, config_ids)
     """
@@ -451,30 +498,27 @@ def _compute_pdp_distance_matrix_cached(_df, data_fingerprint, selected_configs,
     distance_matrix = np.zeros((n_configs, n_configs), dtype=float)
     
     # Compute pairwise distances
-    with st.spinner(f'Computing PDP distances ({pdp_variant})...'):
-        progress_bar = st.progress(0)
-        total_comparisons = n_configs * (n_configs - 1) // 2
-        completed = 0
-        
-        for i in range(n_configs):
-            config1_data = filtered_df[filtered_df['config_source'] == config_ids[i]]
-            
-            for j in range(i + 1, n_configs):
-                config2_data = filtered_df[filtered_df['config_source'] == config_ids[j]]
-                
-                dist = compute_pdp_distance_pair(
-                    config1_data, config2_data, 
-                    window_length, rough_x_val, rough_y_val
-                )
-                
-                distance_matrix[i, j] = dist
-                distance_matrix[j, i] = dist
-                
-                completed += 1
-                progress_bar.progress(completed / total_comparisons)
-        
-        progress_bar.empty()
-    
+    total_comparisons = n_configs * (n_configs - 1) // 2
+    completed = 0
+
+    for i in range(n_configs):
+        config1_data = filtered_df[filtered_df['config_source'] == config_ids[i]]
+
+        for j in range(i + 1, n_configs):
+            config2_data = filtered_df[filtered_df['config_source'] == config_ids[j]]
+
+            dist = compute_pdp_distance_pair(
+                config1_data, config2_data,
+                window_length, rough_x_val, rough_y_val
+            )
+
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist
+
+            completed += 1
+            if _progress is not None:
+                _progress(completed, total_comparisons)
+
     return distance_matrix, config_ids
 
 
@@ -669,7 +713,8 @@ def _relation_text(value, rough):
     return {0: '< (row smaller than column)', 1: '= (equal)', 2: '> (row greater than column)'}[int(value)]
 
 
-def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='ineq', compared=None):
+def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='ineq', compared=None,
+                             panel_name=None):
     """
     Add one PDP point matrix to a subplot in object-major order, first row at the top.
 
@@ -681,6 +726,8 @@ def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='i
         descriptor: 'x' or 'y' (for hover text)
         kind: 'ineq' (relation 0/1/2) or 'diff' (absolute difference 0/1/2)
         compared: For kind='diff': ((label1, ineq1), (label2, ineq2)) in computational order
+        panel_name: Name under which a dense matrix's index-to-point lookup is stored
+            in fig.layout.meta['point_lookup'] (see point_lookup_tables)
     """
     perm = display['perm']
     n = len(perm)
@@ -690,33 +737,54 @@ def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='i
         (name1, ineq1), (name2, ineq2) = compared
         ineq1 = np.asarray(ineq1)[np.ix_(perm, perm)]
         ineq2 = np.asarray(ineq2)[np.ix_(perm, perm)]
-    hover = []
-    for i in range(n):
-        hover_row = []
-        for j in range(n):
-            text = f"Row: {rows_txt[i]}<br>Column: {cols_txt[j]}<br>Descriptor: {descriptor}<br>"
-            if kind == 'ineq':
-                text += f"Relation (row vs column): {_relation_text(z[i, j], display['rough'])}"
-            else:
-                text += f"|Difference| = {int(z[i, j])}: {DIFF_MEANINGS[int(z[i, j])]}"
-                if compared is not None:
-                    text += (f"<br>{name1}: {INEQ_SYMBOLS[int(ineq1[i, j])]}"
-                             f" · {name2}: {INEQ_SYMBOLS[int(ineq2[i, j])]}")
-            hover_row.append(text)
-        hover.append(hover_row)
+    dense = n > 128
+    if dense:
+        # Rows/columns sit at numeric positions 0..n-1 (as in the ordinary path), never at their
+        # labels: labels can repeat (e.g. two external points with the same name) and linked
+        # category axes share categories, so label positions could merge distinct points.
+        # Hover shows the index; the index-to-point lookup is kept in the figure metadata.
+        # Only the numeric relation matrix is quadratic: no per-cell strings.
+        hover = None
+        meta = dict(fig.layout.meta or {})
+        lookups = dict(meta.get('point_lookup', {}))
+        lookups[panel_name or f'Panel {len(lookups) + 1}'] = list(rows_txt)
+        meta['point_lookup'] = lookups
+        fig.layout.meta = meta
+        hovertemplate = (f"Row: #%{{y}}<br>Column: #%{{x}}<br>Descriptor: {descriptor}<br>"
+                         + ("Relation code: %{z} (0 = <, 1 = equal, 2 = >)"
+                            if kind == 'ineq' else "Absolute relation difference: %{z}")
+                         + "<extra></extra>")
+    else:
+        hover = []
+        for i in range(n):
+            hover_row = []
+            for j in range(n):
+                text = f"Row: {rows_txt[i]}<br>Column: {cols_txt[j]}<br>Descriptor: {descriptor}<br>"
+                if kind == 'ineq':
+                    text += f"Relation (row vs column): {_relation_text(z[i, j], display['rough'])}"
+                else:
+                    text += f"|Difference| = {int(z[i, j])}: {DIFF_MEANINGS[int(z[i, j])]}"
+                    if compared is not None:
+                        text += (f"<br>{name1}: {INEQ_SYMBOLS[int(ineq1[i, j])]}"
+                                 f" · {name2}: {INEQ_SYMBOLS[int(ineq2[i, j])]}")
+                hover_row.append(text)
+            hover.append(hover_row)
+
+        hovertemplate = '%{customdata}<extra></extra>'
 
     fig.add_trace(go.Heatmap(
         z=z, x=list(range(n)), y=list(range(n)),
         colorscale=_discrete_colorscale(INEQ_COLORS if kind == 'ineq' else DIFF_COLORS),
         zmin=-0.5, zmax=2.5, showscale=False,
-        customdata=hover, hovertemplate='%{customdata}<extra></extra>',
-        xgap=1, ygap=1
+        customdata=hover, hovertemplate=hovertemplate,
+        xgap=0 if dense else 1, ygap=0 if dense else 1
     ), row=row, col=col)
 
     # Axis labels: columns above the matrix, rows on the left; sample labels for large matrices
     step = max(1, int(np.ceil(n / 30)))
-    tickvals = list(range(0, n, step))
-    ticktext = [display['tick_labels'][k] for k in tickvals]
+    tick_indices = list(range(0, n, step))
+    tickvals = tick_indices
+    ticktext = [(f"#{k} " if dense else "") + display['tick_labels'][k] for k in tick_indices]
     fig.update_xaxes(tickvals=tickvals, ticktext=ticktext, side='top', tickangle=-45,
                      range=[-0.5, n - 0.5], showgrid=False, zeroline=False, tickfont=dict(size=9),
                      row=row, col=col)
@@ -727,6 +795,7 @@ def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='i
     subplot = fig.get_subplot(row, col)
     xref = subplot.xaxis.plotly_name.replace('axis', '')
     yref = subplot.yaxis.plotly_name.replace('axis', '')
+    subplot.yaxis.update(scaleanchor=xref, scaleratio=1, constrain='domain')
     for start, end, heading in display['groups']:
         if start > 0:
             for coords in ({'x0': start - 0.5, 'x1': start - 0.5, 'y0': -0.5, 'y1': n - 0.5},
@@ -737,6 +806,19 @@ def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='i
                            yanchor='top', yshift=-4, font=dict(size=10))
         fig.add_annotation(x=n - 0.5, y=centre, xref=xref, yref=yref, text=heading, showarrow=False,
                            xanchor='left', xshift=4, textangle=90, font=dict(size=10))
+
+
+def point_lookup_tables(fig):
+    """
+    Index-to-point tables for dense matrices (whose hover shows only row/column indices).
+    Panels with identical point lists share one table. Returns {panel names: DataFrame}.
+    """
+    lookups = (fig.layout.meta or {}).get('point_lookup', {}) if fig is not None else {}
+    grouped = {}
+    for name, labels in lookups.items():
+        grouped.setdefault(tuple(labels), []).append(name)
+    return {', '.join(names): pd.DataFrame({'Index': range(len(labels)), 'Point': list(labels)})
+            for labels, names in grouped.items()}
 
 
 def add_matrix_legend(fig, rough=0, include_diff=False):
@@ -935,8 +1017,9 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
             meta = point_metadata(window_data, list(window_times))
             display_x = object_major_display(meta, rough=rough_x)
             display_y = object_major_display(meta, rough=rough_y)
-            add_point_matrix_heatmap(fig, ineq_x, display_x, current_row, 1, 'x')
-            add_point_matrix_heatmap(fig, ineq_y, display_y, current_row, 2, 'y')
+            panel = f"Config {config_id}, window {window_idx}"
+            add_point_matrix_heatmap(fig, ineq_x, display_x, current_row, 1, 'x', panel_name=panel)
+            add_point_matrix_heatmap(fig, ineq_y, display_y, current_row, 2, 'y', panel_name=panel)
 
             current_row += 1
 
@@ -961,7 +1044,12 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
 
     # Synchronise zooming across all matrices (all share the same point order and size)
     fig.update_xaxes(matches='x')
-    fig.update_yaxes(matches='y', autorange='reversed')
+    fig.update_yaxes(matches='y', autorange='reversed', scaleanchor=None)
+    # Constrain the master pair only. Matching and scale-anchoring the same
+    # follower axis is unsupported by Plotly and breaks linked zooming.
+    fig.layout.xaxis.matches = None
+    fig.layout.yaxis.update(matches=None, scaleanchor='x', scaleratio=1,
+                            constrain='domain')
 
     return fig
 
@@ -971,16 +1059,10 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
 # =============================================================================
 
 def perform_hierarchical_clustering(distance_matrix, n_clusters):
-    """Perform hierarchical clustering with Ward linkage on PDP distances."""
-    linkage_matrix = linkage(squareform(distance_matrix), method='ward')
-    
-    clustering = AgglomerativeClustering(
-        n_clusters=n_clusters,
-        metric='precomputed',
-        linkage='average'
-    )
-    cluster_labels = clustering.fit_predict(distance_matrix)
-    
+    """Use one average-linkage hierarchy for the dendrogram and assignments."""
+    linkage_matrix = linkage(squareform(distance_matrix), method='average')
+    cluster_labels = cut_tree(linkage_matrix, n_clusters=[n_clusters]).ravel()
+
     return cluster_labels, linkage_matrix
 
 
@@ -1107,6 +1189,14 @@ def create_interactive_dendrogram(linkage_matrix, labels, distance_matrix, n_clu
     
     # Create figure
     fig = go.Figure()
+
+    if (n_clusters is not None and 1 < n_clusters < len(linkage_matrix) + 1
+            and dist_above == dist_below):
+        fig.add_annotation(
+            x=0, y=1.08, xref='paper', yref='paper', showarrow=False,
+            xanchor='left',
+            text='Tied merge heights: use the assignment table for the selected cluster count.'
+        )
     
     # Add dendrogram lines
     for i in range(len(icoord)):
@@ -1504,7 +1594,8 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
                                selected_objects=None, cluster_labels=None, distance_matrix=None,
                                show_buffers=False, buffer_size=0.5, show_rough=False,
                                rough_x=0.3, rough_y=0.3, show_court=True,
-                               buffer_x=None, buffer_y=None, external_points=None):
+                               buffer_x=None, buffer_y=None, external_points=None,
+                               max_possible_distance=None):
     """
     Compare trajectories of selected configurations (on a tennis court if show_court).
     
@@ -1526,6 +1617,8 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
         buffer_x, buffer_y: Buffer distances per dimension, as in the PDP analysis
             (override buffer_size; a dimension with 0 gets no buffer points)
         external_points: List of (name, x, y) external reference points to draw
+        max_possible_distance: Analytical maximum for the run and variant behind distance_matrix
+            (see pdp_max_possible_distance); without it only the raw distance is shown
 
     Returns:
         plotly.graph_objects.Figure: Tennis court with trajectories
@@ -1677,19 +1770,19 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
             # Rough adds tolerance zones where comparisons are considered "equal"
             # Now uses RECTANGLES (axis-aligned) instead of circles
             if show_rough and (rough_x > 0 or rough_y > 0):
-                for idx, row in obj_data.iterrows():
-                    fig.add_shape(
-                        type="rect",
-                        xref="x", yref="y",
-                        x0=row['x'] - rough_x,
-                        y0=row['y'] - rough_y,
-                        x1=row['x'] + rough_x,
-                        y1=row['y'] + rough_y,
-                        line=dict(color=color, width=2, dash="dash"),
-                        fillcolor=color,
-                        opacity=0.08,
-                        layer="below"
-                    )
+                # All rectangles of this object as ONE trace (closed outlines separated by gaps).
+                # One layout shape per point made every rerun very slow for detailed data.
+                xs_r, ys_r = obj_data['x'].to_numpy(), obj_data['y'].to_numpy()
+                rect_x = np.column_stack([xs_r - rough_x, xs_r + rough_x, xs_r + rough_x, xs_r - rough_x,
+                                          xs_r - rough_x, np.full(len(xs_r), np.nan)]).ravel()
+                rect_y = np.column_stack([ys_r - rough_y, ys_r - rough_y, ys_r + rough_y, ys_r + rough_y,
+                                          ys_r - rough_y, np.full(len(ys_r), np.nan)]).ravel()
+                fig.add_trace(go.Scatter(
+                    x=rect_x, y=rect_y, mode='lines', fill='toself', fillcolor=color,
+                    line=dict(color=color, width=2, dash='dash'), opacity=0.08,
+                    hoverinfo='skip', showlegend=False, legendgroup=legend_group,
+                    name='Rough zones'
+                ))
             
             # Add trajectory line
             fig.add_trace(go.Scatter(
@@ -1741,16 +1834,15 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
             hovertemplate='<b>External point %{text}</b><br>X: %{x:.2f}m<br>Y: %{y:.2f}m<extra></extra>'
         ))
 
-    # Add similarity info if distance matrix provided
+    # Add distance info if distance matrix provided
     if distance_matrix is not None and len(selected_configs) == 2:
-        idx1 = config_ids.index(selected_configs[0])
-        idx2 = config_ids.index(selected_configs[1])
-        similarity = 100 - distance_matrix[idx1, idx2]
-        
+        idx1 = list(config_ids).index(selected_configs[0])
+        idx2 = list(config_ids).index(selected_configs[1])
+
         fig.update_layout(
             title=f"Trajectory Comparison<br>" +
                   f"<sub>Configs: {selected_configs[0]} vs {selected_configs[1]} | " +
-                  f"Similarity: {similarity:.1f}%</sub>",
+                  f"{format_pdp_distance(distance_matrix[idx1, idx2], max_possible_distance)}</sub>",
             uirevision=f"traj-{'-'.join(map(str, selected_configs))}-{'-'.join(map(str, selected_objects))}"
         )
     else:
@@ -1796,17 +1888,21 @@ def export_pdp_results_to_csv(distance_matrix, config_ids, cluster_labels=None):
     return dist_csv, cluster_csv
 
 
-def export_similarity_rankings_to_csv(config_ids, distance_matrix, top_k=10):
+def export_similarity_rankings_to_csv(config_ids, distance_matrix, top_k=10, max_possible_distance=None):
     """
     Export similarity rankings for all configurations to CSV.
-    
+
     Args:
         config_ids: List of configuration IDs
-        distance_matrix: PDP distance matrix
+        distance_matrix: PDP distance matrix (raw)
         top_k: Number of similar configs to export per configuration
-    
+        max_possible_distance: Analytical maximum for the run and variant behind distance_matrix
+            (see pdp_max_possible_distance). Without it the percentage columns are omitted.
+
     Returns:
-        str: CSV string with similarity rankings
+        str: CSV string with similarity rankings. Normalised_Distance_% is the raw distance as a
+        percentage of the analytical maximum; Similarity_Complement_% is 100 minus that value
+        (a rescaled distance, not a probability).
     """
     rankings_data = []
     
@@ -1824,18 +1920,73 @@ def export_similarity_rankings_to_csv(config_ids, distance_matrix, top_k=10):
         
         # Add top k to results
         for rank, (similar_config, pdp_dist) in enumerate(config_distances[:top_k], 1):
-            similarity_pct = 100 - pdp_dist
-            rankings_data.append({
+            row = {
                 'Target_Config': target_config,
                 'Rank': rank,
                 'Similar_Config': similar_config,
-                'PDP_Distance': f"{pdp_dist:.4f}",
-                'Similarity_%': f"{similarity_pct:.2f}"
-            })
-    
+                'Raw_PDP_Distance': f"{pdp_dist:.4f}",
+            }
+            normalised = normalised_pdp_percent(pdp_dist, max_possible_distance)
+            if normalised is not None:
+                row['Normalised_Distance_%'] = f"{normalised:.6f}"
+                row['Similarity_Complement_%'] = f"{100 - normalised:.6f}"
+            rankings_data.append(row)
+
     rankings_df = pd.DataFrame(rankings_data)
     return rankings_df.to_csv(index=False)
 
+
+# =============================================================================
+# DISTANCE NORMALISATION (single definition shared by all PDP views and exports)
+# =============================================================================
+
+def pdp_buffer_factor(variant, buffer_x=0, buffer_y=0):
+    """Points per original point in the variant as computed (see apply_buffer_to_trajectories)."""
+    if variant not in ('buffer', 'buffer_rough'):
+        return 1
+    return 1 + 2 * (buffer_x > 0) + 2 * (buffer_y > 0)
+
+
+def pdp_count_windows(df, selected_configs, selected_objects, start_time, end_time, window_length):
+    """Number of time windows in a run: timestamps of the selected data minus window_length - 1."""
+    mask = (df['config_source'].isin(selected_configs) & df['obj'].isin(selected_objects) &
+            (df['tst'] >= start_time) & (df['tst'] <= end_time))
+    return max(1, df.loc[mask, 'tst'].nunique() - window_length + 1)
+
+
+def pdp_max_possible_distance(n_objects, window_length, n_windows, buffer_factor=1, n_external_points=0):
+    """
+    Analytical maximum raw PDP distance for a run, or None when the run context is incomplete.
+
+    Each inequality-matrix cell can differ by at most 2 between two configurations, in X and
+    in Y. External points have the same coordinates in every configuration, so comparisons
+    between them never differ and are not counted. Buffering is applied after external points
+    are added, so it expands both moving and external points.
+    """
+    if not n_objects or not window_length or not n_windows:
+        return None
+    moving_per_window = n_objects * buffer_factor * window_length
+    static_per_window = n_external_points * buffer_factor * window_length
+    moving_vs_moving = moving_per_window * moving_per_window - moving_per_window  # exclude diagonal
+    moving_vs_static = 2 * moving_per_window * static_per_window  # both (i, j) and (j, i)
+    return 2 * 2 * (moving_vs_moving + moving_vs_static) * n_windows  # max diff 2, X and Y
+
+
+def normalised_pdp_percent(raw_distance, max_possible_distance):
+    """Raw distance as a percentage of the analytical maximum, or None if that is unknown."""
+    if not max_possible_distance:
+        return None
+    return raw_distance / max_possible_distance * 100
+
+
+def format_pdp_distance(raw_distance, max_possible_distance):
+    """One-line label used by titles: raw distance, and normalised distance with its complement."""
+    label = f"Raw PDP distance: {raw_distance:g}"
+    normalised = normalised_pdp_percent(raw_distance, max_possible_distance)
+    if normalised is not None:
+        label += (f" | Normalised distance: {normalised:.2f}% "
+                  f"(similarity complement 100 − distance: {100 - normalised:.2f}%)")
+    return label
 
 
 def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=None, window_length=None,
@@ -1854,60 +2005,19 @@ def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=N
     
     Returns:
         Dictionary containing:
-        - normalized_matrix: Distances scaled 0-100
-        - max_possible_distance: Theoretical maximum
+        - normalized_matrix: Distances as % of the analytical maximum (NaN if the run context is incomplete)
+        - max_possible_distance: Analytical maximum (None if the run context is incomplete)
         - stats: Dictionary with mean, median, std, quartiles
         - example_calculation: Step-by-step example for one pair
         - histogram_data: Data for distribution plotting
     """
-    n = len(config_ids)
-    
-    # Calculate maximum possible distance
-    # For PDP: each cell in inequality matrix can differ by at most 2 (0 vs 2 or 2 vs 0)
-    # The inequality matrix is points_per_window x points_per_window
-    # We have both X and Y dimensions
-    
-    if n_objects is not None and window_length is not None and n_windows is not None:
-        # Calculate theoretical maximum based on actual parameters
-        # Points per timestamp:
-        # - Moving objects: n_objects * buffer_factor (with buffer points)
-        # - External (static) points: n_external_points
-        n_moving_points = n_objects * buffer_factor
-        n_static_points = n_external_points
-        
-        # Points in one window
-        moving_per_window = n_moving_points * window_length
-        static_per_window = n_static_points * window_length
-        total_per_window = moving_per_window + static_per_window
-        
-        # IMPORTANT: External points have SAME coordinates across all configurations!
-        # Therefore, comparisons between external points will always be 0 (no difference).
-        # Only these comparisons can actually differ between configurations:
-        # 1. Moving vs Moving (both off-diagonal): moving^2 - moving (exclude diagonal)
-        # 2. Moving vs Static (both directions): 2 * moving * static
-        # 3. Static vs Static: ALWAYS 0 (same in all configs) - DO NOT COUNT
-        
-        # Comparisons that CAN differ:
-        moving_vs_moving = moving_per_window * moving_per_window - moving_per_window  # exclude diagonal
-        moving_vs_static = 2 * moving_per_window * static_per_window  # both directions (i,j) and (j,i)
-        
-        variable_comparisons = moving_vs_moving + moving_vs_static
-        
-        # Max diff per comparison: 2 (for 0 vs 2)
-        # We have both X and Y dimensions
-        max_diff_per_window = 2 * 2 * variable_comparisons  # factor of 2 for X and Y
-        
-        # Total max across all windows
-        max_possible = max_diff_per_window * n_windows
-    else:
-        # Fallback to empirical max when parameters not provided
-        max_possible = distance_matrix.max()
-    
-    # Normalize to 0-100 scale
-    if max_possible > 0:
+    # Analytical maximum only; never the largest observed distance
+    max_possible = pdp_max_possible_distance(n_objects, window_length, n_windows,
+                                             buffer_factor, n_external_points)
+    if max_possible:
         normalized_matrix = (distance_matrix / max_possible) * 100
     else:
-        normalized_matrix = distance_matrix.copy()
+        normalized_matrix = np.full(distance_matrix.shape, np.nan)
     
     # Get upper triangle (exclude diagonal) for statistics
     triu_indices = np.triu_indices_from(distance_matrix, k=1)
@@ -1947,7 +2057,8 @@ def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=N
         'raw_distance': example_raw,
         'max_possible': max_possible,
         'normalized_distance': example_normalized,
-        'formula': f"({example_raw:.1f} / {max_possible:.1f}) × 100 = {example_normalized:.2f}"
+        'formula': (f"({example_raw:.1f} / {max_possible:.1f}) × 100 = {example_normalized:.2f}"
+                    if max_possible else "unavailable: run context incomplete, compute again")
     }
     
     # Prepare histogram data
@@ -1965,25 +2076,27 @@ def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=N
     }
 
 
-def create_distance_distribution_plot(histogram_data, show_normalized=True):
+def create_distance_distribution_plot(histogram_data, show_normalized=True, variant_label=None):
     """
     Create histogram showing distribution of distances.
-    
+
     Args:
-        histogram_data: Dict with 'raw' and 'normalized' arrays
+        histogram_data: Dict with 'raw' and 'normalized' arrays (unique configuration pairs)
         show_normalized: If True, show normalized; else show raw
-    
+        variant_label: Optional variant name for the title
+
     Returns:
         Plotly figure
     """
     if show_normalized:
         data = histogram_data['normalized']
-        title = "Distribution of Normalized PDP Distances (0-100 scale)"
-        xaxis_title = "Normalized Distance"
+        title = "Distribution of Normalized PDP Distances (%)"
+        xaxis_title = "Normalised distance (% of analytical maximum)"
     else:
         data = histogram_data['raw']
         title = "Distribution of Raw PDP Distances"
-        xaxis_title = "Raw Distance"
+        xaxis_title = "Raw PDP distance"
+    title += (f" – {variant_label} result" if variant_label else "") + f", {len(data)} configuration pairs"
     
     fig = go.Figure()
     
@@ -2022,6 +2135,9 @@ def create_distance_distribution_plot(histogram_data, show_normalized=True):
         showlegend=False,
         height=400
     )
+    if show_normalized:
+        fig.update_xaxes(range=[0, 100])  # same 0-100 scale as the normalised matrix
+
     
     return fig
 
@@ -2051,10 +2167,11 @@ def initialize_pdp_session_state():
 # =============================================================================
 
 def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end_time,
-                        window_length=3, buffer_x=0.5, buffer_y=0.5, rough_x=0.3, rough_y=0.3):
+                        window_length=3, buffer_x=0.5, buffer_y=0.5, rough_x=0.3, rough_y=0.3,
+                        progress=None, external_points=None):
     """
     Compare distances across all four PDP variants.
-    
+
     Args:
         df: DataFrame with trajectory data
         selected_configs: List of configurations to analyze
@@ -2064,7 +2181,9 @@ def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end
         window_length: Window length for PDP
         buffer_x, buffer_y: Buffer parameters
         rough_x, rough_y: Rough parameters
-    
+        progress: Optional reporter with start(variant_name) and a (completed, total) pair callback
+        external_points: Optional tuple of (name, x, y) static reference points, as in the main run
+
     Returns:
         dict: Distance matrices for each variant with statistics
     """
@@ -2078,6 +2197,8 @@ def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end
     results = {}
     
     for variant_name, params in variants.items():
+        if progress is not None:
+            progress.start(variant_name)
         # Compute distance matrix for this variant
         distance_matrix, config_ids = compute_pdp_distance_matrix(
             df, selected_configs, selected_objects,
@@ -2087,7 +2208,9 @@ def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end
             buffer_y=params['buffer_y'],
             rough_x=params['rough_x'],
             rough_y=params['rough_y'],
-            pdp_variant=variant_name
+            pdp_variant=variant_name,
+            external_points=external_points,
+            progress=progress
         )
         
         # Get upper triangle (exclude diagonal) for statistics
@@ -2605,8 +2728,9 @@ def compute_cluster_quality_metrics(distance_matrix, min_k=2, max_k=10):
     
     n_samples = distance_matrix.shape[0]
     max_k = min(max_k, n_samples - 1)
-    
-    if min_k >= max_k:
+
+    # A single k (min_k == max_k) is a valid request; only an empty range falls back
+    if min_k > max_k:
         min_k = 2
         max_k = min(10, n_samples - 1)
     
@@ -2618,9 +2742,11 @@ def compute_cluster_quality_metrics(distance_matrix, min_k=2, max_k=10):
         'inertia': []
     }
     
-    # Convert distance matrix to condensed form for hierarchical clustering
-    condensed_dist = squareform(distance_matrix, checks=False)
-    
+    # Davies-Bouldin and Calinski-Harabasz need coordinates: one 2D MDS embedding of the PDP
+    # distances serves all k (approximate, not the PDP distance space itself)
+    mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42)
+    coords = mds.fit_transform(distance_matrix)
+
     for k in range(min_k, max_k + 1):
         # Perform hierarchical clustering
         clustering = AgglomerativeClustering(
@@ -2637,10 +2763,7 @@ def compute_cluster_quality_metrics(distance_matrix, min_k=2, max_k=10):
         sil_score = silhouette_score(distance_matrix, labels, metric='precomputed')
         results['silhouette'].append(sil_score)
         
-        # Davies-Bouldin Index (lower is better, minimum 0)
-        # Need actual feature matrix, so we use MDS to get coordinates
-        mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42)
-        coords = mds.fit_transform(distance_matrix)
+        # Davies-Bouldin Index (lower is better, minimum 0), on the MDS coordinates
         db_score = davies_bouldin_score(coords, labels)
         results['davies_bouldin'].append(db_score)
         
@@ -2680,8 +2803,8 @@ def create_quality_metrics_plot(metrics_results):
         rows=2, cols=2,
         subplot_titles=(
             'Silhouette Score (Higher = Better)',
-            'Davies-Bouldin Index (Lower = Better)',
-            'Calinski-Harabasz Score (Higher = Better)',
+            'Davies-Bouldin Index on 2D MDS (Lower = Better)',
+            'Calinski-Harabasz Score on 2D MDS (Higher = Better)',
             'Inertia / WCSS (Lower = Better, Elbow Method)'
         ),
         vertical_spacing=0.12,
@@ -3063,7 +3186,10 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
     return result
 
 
-def create_difference_visualization(df, config1_id, config2_id, selected_objects, 
+MAX_DRAWN_DIFFERENCE_LINES = 300   # display only; all differences are still counted
+
+
+def create_difference_visualization(df, config1_id, config2_id, selected_objects,
                                      start_time, end_time, window_length,
                                      buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                      external_points=None, show_court=True):
@@ -3302,8 +3428,11 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
     
     # Sort differences by magnitude (largest first) for consistent numbering
     sorted_diffs = sorted(position_differences.items(), key=lambda x: x[1]['diff'], reverse=True)
-    
-    for diff_idx, (key, diff_data) in enumerate(sorted_diffs):
+    # Display budget: draw only the strongest pairs (two traces each). Detailed data can have
+    # >10,000 differing pairs, i.e. tens of MB that freeze the browser. The summary still counts all.
+    diff_summary['drawn_position_differences'] = min(len(sorted_diffs), MAX_DRAWN_DIFFERENCE_LINES)
+
+    for diff_idx, (key, diff_data) in enumerate(sorted_diffs[:MAX_DRAWN_DIFFERENCE_LINES]):
         obj_i, tst_i, obj_j, tst_j = key
         diff_val = diff_data['diff']
         
@@ -3488,27 +3617,28 @@ def create_difference_matrices_figure(diff_result, config1_id, config2_id, windo
         display_x = object_major_display(meta1, rough=rough_x)
         display_y = object_major_display(meta1, rough=rough_y)
 
+        panel = f"Window {window_data['window_idx']}"
         # X matrices
-        add_point_matrix_heatmap(fig, window_data['ineq_x1'], display_x, row_idx, 1, 'x')
-        add_point_matrix_heatmap(fig, window_data['ineq_x2'], display_x, row_idx, 2, 'x')
+        add_point_matrix_heatmap(fig, window_data['ineq_x1'], display_x, row_idx, 1, 'x', panel_name=panel)
+        add_point_matrix_heatmap(fig, window_data['ineq_x2'], display_x, row_idx, 2, 'x', panel_name=panel)
         add_point_matrix_heatmap(fig, window_data['x_diff_matrix'], display_x, row_idx, 3, 'x', kind='diff',
                                  compared=((str(config1_id), window_data['ineq_x1']),
-                                           (str(config2_id), window_data['ineq_x2'])))
+                                           (str(config2_id), window_data['ineq_x2'])), panel_name=panel)
 
         # Y matrices
-        add_point_matrix_heatmap(fig, window_data['ineq_y1'], display_y, row_idx, 4, 'y')
-        add_point_matrix_heatmap(fig, window_data['ineq_y2'], display_y, row_idx, 5, 'y')
+        add_point_matrix_heatmap(fig, window_data['ineq_y1'], display_y, row_idx, 4, 'y', panel_name=panel)
+        add_point_matrix_heatmap(fig, window_data['ineq_y2'], display_y, row_idx, 5, 'y', panel_name=panel)
         add_point_matrix_heatmap(fig, window_data['y_diff_matrix'], display_y, row_idx, 6, 'y', kind='diff',
                                  compared=((str(config1_id), window_data['ineq_y1']),
-                                           (str(config2_id), window_data['ineq_y2'])))
+                                           (str(config2_id), window_data['ineq_y2'])), panel_name=panel)
 
-    # Square cells: each matrix's y axis is scaled to its own x axis
-    for row_idx in range(1, n_windows + 1):
-        for col_idx in range(1, 7):
-            subplot = fig.get_subplot(row_idx, col_idx)
-            fig.update_yaxes(scaleanchor=subplot.xaxis.plotly_name.replace('axis', ''), scaleratio=1,
-                             constrain='domain', row=row_idx, col=col_idx)
-            fig.update_xaxes(constrain='domain', row=row_idx, col=col_idx)
+    # Linked zooming with square cells. Every panel shows the same point order at the same numeric
+    # positions, so all follow one master pair (top-left panel). Only the master carries the
+    # square-aspect constraint: Plotly does not support matching AND scale-anchoring one axis.
+    fig.update_xaxes(matches='x', constrain='domain')
+    fig.update_yaxes(matches='y', scaleanchor=None, constrain='domain')
+    fig.layout.xaxis.matches = None
+    fig.layout.yaxis.update(matches=None, scaleanchor='x', scaleratio=1)
 
     title = f"Inequality Matrix Comparison: {config1_id} vs {config2_id} – row point compared with column point"
     if misaligned:
