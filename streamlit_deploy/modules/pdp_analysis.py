@@ -777,7 +777,7 @@ def add_point_matrix_heatmap(fig, matrix, display, row, col, descriptor, kind='i
         colorscale=_discrete_colorscale(INEQ_COLORS if kind == 'ineq' else DIFF_COLORS),
         zmin=-0.5, zmax=2.5, showscale=False,
         customdata=hover, hovertemplate=hovertemplate,
-        xgap=0 if dense else 1, ygap=0 if dense else 1
+        xgap=0, ygap=0      # no cell borders: neighbouring cells of one colour form one surface
     ), row=row, col=col)
 
     # Axis labels: columns above the matrix, rows on the left; sample labels for large matrices

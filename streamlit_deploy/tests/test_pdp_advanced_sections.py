@@ -68,12 +68,13 @@ def select(at, configs):
 
 def use_dataset(at, path, first, last, window):
     at.current['path'] = path
-    at.run()
+    at.run()                                       # opens with the baseline (Visual Exploration)
     select(at, B1_CONFIGS)
+    at.selectbox(key='analysis_method').set_value('PDP Analysis').run()
     data = at.session_state['data']
     times = sorted(data[data.config_source.isin(B1_CONFIGS) & data.obj.isin([0, 1])].tst.unique())
-    at.number_input(key='pdp_start').set_value(float(times[first])).run()   # start first: it resets End
-    at.number_input(key='pdp_end').set_value(float(times[last])).run()
+    at.number_input(key='pdp_end').set_value(float(times[last])).run()      # End first: Start keeps it
+    at.number_input(key='pdp_start').set_value(float(times[first])).run()
     at.slider(key='pdp_window').set_value(window).run()
 
 
@@ -221,9 +222,10 @@ def test_coarse_detailed_coarse(app):
     compute(app)
     assert sections(app) == list(SECTIONS)
     assert ranking(app, 'Fundamental', 1, 4) == (3208, 1.38)
-    # Earlier coarse results are not presented for the detailed run
-    assert any('previous comparison used another main run' in t for t in texts(app.info))
-    assert any('previous evaluation used another run' in t for t in texts(app.info))
+    # Earlier coarse results are not presented for the detailed run: opening it cleared them
+    assert 'variant_comparison_results' not in app.session_state
+    assert 'cluster_quality_metrics' not in app.session_state
+    assert not any(t.startswith('Compared on the main run') for t in texts(app.caption))
     # Minimal detailed requests in each section
     compare(app, 0.0, 0.0, 0.5, 0.5)                                    # Rough only: no extra points
     results = app.session_state['variant_comparison_results']['results']
@@ -238,4 +240,5 @@ def test_coarse_detailed_coarse(app):
     compute(app)
     assert sections(app) == list(SECTIONS)
     assert ranking(app, 'Fundamental', 1, 2) == (144, 27.27)
-    assert any('previous comparison used another main run' in t for t in texts(app.info))
+    assert 'variant_comparison_results' not in app.session_state             # detailed results not carried over
+    assert not any(t.startswith('Compared on the main run') for t in texts(app.caption))

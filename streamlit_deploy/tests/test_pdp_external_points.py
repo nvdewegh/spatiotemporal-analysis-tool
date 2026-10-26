@@ -181,7 +181,11 @@ def test_source_selection_valid_after_dataset_switch(app, tmp_path):
     small = tmp_path / 'A2_small.csv'
     raw[raw.iloc[:, 0].isin(sorted(raw.iloc[:, 0].unique())[:3])].to_csv(small, index=False)
     app.current['path'] = str(small)
-    app.run()
+    app.run()                                       # opens with the baseline: Visual Exploration, points off
+    assert not app.exception, [e.message for e in app.exception]
+    assert app.session_state['pdp_use_external'] is False
+    app.selectbox(key='analysis_method').set_value('PDP Analysis').run()
+    app.checkbox(key='pdp_use_external').check().run()
     assert not app.exception, [e.message for e in app.exception]
     options = app.selectbox(key='pdp_src_config').options
     assert 'Config_11' not in options and app.selectbox(key='pdp_src_config').value in options

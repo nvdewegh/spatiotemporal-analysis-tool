@@ -129,6 +129,11 @@ def apply_pending_settings(validators):
             st.session_state[key] = value
 
 
+def discard_pending_settings():
+    """Drop restored settings that were not applied yet (a newly opened dataset starts from its baseline)."""
+    _state()._bs_pending_settings = None
+
+
 def restore_from_snapshot(snapshot):
     """Turn the browser snapshot into session state; invalid parts are ignored."""
     s = _state()

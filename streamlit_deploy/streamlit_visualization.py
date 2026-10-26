@@ -85,6 +85,79 @@ def widget_default(key, value):
     return {} if key in st.session_state else {'value': value}
 
 
+# Start/End time inputs of the analysis sections (session-state keys)
+TIME_RANGE_KEYS = [('visual_start', 'visual_end'), ('2sa_start', '2sa_end'), ('seq_start', 'seq_end'),
+                   ('pdp_start', 'pdp_end'), ('clustering_start', 'clustering_end'), ('extra_start', 'extra_end')]
+# Results and selections that belong to one dataset (cleared when another dataset is opened)
+DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings', 'pdp_config_ids', 'pdp_failure',
+                       'pdp_last_run_report', 'variant_comparison_results', 'cluster_quality_metrics',
+                       'pdp_cluster_labels', 'pdp_linkage_matrix', 'pdp_viz_configs', '_pdp_viz_configs_choice',
+                       'pdp_manual_points', 'pdp_external_points', 'distance_matrix', 'trajectory_ids',
+                       'cluster_labels']
+
+
+# Choices kept while their widgets are not drawn (Streamlit otherwise returns hidden widgets to their
+# defaults, e.g. after switching analysis method)
+KEPT_CHOICES = [key for pair in TIME_RANGE_KEYS for key in pair] + ['pdp_window', 'pdp_variants', 'pdp_use_external']
+
+
+def keep_choices_across_views():
+    """At the start of a run, re-assign kept choices so Streamlit keeps them while their widget is hidden."""
+    s = st.session_state
+    for key in KEPT_CHOICES:
+        if key in s:
+            s[key] = s[key]
+
+
+def apply_opening_baseline(df):
+    """
+    The settings a dataset opens with; applied once when a dataset is opened or replaced (also when
+    restored from the browser) and by "Reset settings to defaults". Uses the data's own timestamps.
+    """
+    s = st.session_state
+    t_min, t_max = float(df['tst'].min()), float(df['tst'].max())
+    for start_key, end_key in TIME_RANGE_KEYS:
+        s[start_key], s[end_key] = t_min, t_max
+    config_sources = sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key)
+    objects = sorted(df['obj'].unique())
+    s.config_sources = config_sources
+    s.shared_selected_configs = s.sidebar_configs = list(config_sources)
+    s.shared_selected_objects = s.sidebar_objects = list(objects[:min(5, len(objects))])
+    s.widgets_synced = True
+    s.analysis_method = 'Visual Exploration'
+    s.visual_agg_type = 'none'
+    s.show_court_background = False
+    s.court_type = 'No selection'
+    s.pdp_variants = ['Fundamental']
+    s.pdp_use_external = False
+    s.pdp_window = min(3, int(df['tst'].nunique()))
+    for key in DATASET_RESULT_KEYS:
+        s.pop(key, None)
+    s.pdp_distance_matrix = None
+    browser_storage.discard_pending_settings()      # saved settings never override the opening baseline
+
+
+def init_time_range(start_key, end_key, min_time, max_time):
+    """
+    Give a Start/End pair its initial value (data minimum and maximum) only when it has none, before
+    the widgets are created, so the widgets never receive defaults that override a user's choice.
+    """
+    s = st.session_state
+    if not isinstance(s.get(start_key), (int, float)) or not min_time <= s[start_key] <= max_time:
+        s[start_key] = float(min_time)
+    if not isinstance(s.get(end_key), (int, float)) or not min_time <= s[end_key] <= max_time:
+        s[end_key] = float(max_time)
+
+
+def time_range_valid(start_time, end_time):
+    """Show a clear message when Start is after End (neither value is changed)."""
+    if start_time > end_time:
+        st.error(f"Start time ({start_time:g}) is after End time ({end_time:g}). Correct the time range "
+                 "before computing.")
+        return False
+    return True
+
+
 def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
@@ -2043,7 +2116,8 @@ def create_heatmap(df):
 # Main app
 def main():
     st.title("Spatiotemporal Analysis and Modeling")
-    
+    keep_choices_across_views()
+
     df = st.session_state.data
     uploaded_files = None
     
@@ -2075,14 +2149,12 @@ def main():
         if notice:
             st.info(notice)
         if st.button("Reset settings to defaults", key="btn_reset_settings",
-                     help="Clears the settings saved in this browser (the dataset is kept)"):
+                     help="Returns to the settings a dataset opens with and clears the settings saved in this "
+                          "browser (the dataset is kept)"):
             browser_storage.reset_settings(PERSISTED_SETTINGS)
             st.session_state.court_type = 'No selection'
             if st.session_state.data is not None:
-                data = st.session_state.data
-                default_objects = sorted(data['obj'].unique())
-                st.session_state.sidebar_configs = sorted(data['config_source'].drop_duplicates().tolist(), key=config_sort_key)
-                st.session_state.sidebar_objects = default_objects[:min(5, len(default_objects))]
+                apply_opening_baseline(st.session_state.data)
 
         # Copy settings out of the tool and paste them back in (to reproduce a view exactly)
         import_message = st.session_state.pop('settings_import_message', None)
@@ -2114,6 +2186,7 @@ def main():
             # User cleared the uploader
             if st.session_state.data is not None:
                 st.session_state.data = None
+                st.session_state.dataset_fingerprint = None
                 st.session_state.filename = None
                 st.session_state.max_time = 0
                 st.session_state.uploaded_filenames = []
@@ -2143,22 +2216,14 @@ def main():
                 st.session_state.max_time = df['tst'].max()
                 st.session_state.filename = ", ".join(uploaded_names)
                 
-                # Only initialize selections when NEW files are uploaded (not on every rerun)
-                if uploaded_names != st.session_state.uploaded_filenames:
+                # Apply the opening baseline only when another dataset is opened: identified by the
+                # contents of all files (a changed file with the same name counts), not on every rerun
+                fingerprint = browser_storage.files_hash([(f.name, f.getvalue()) for f in uploaded_files])
+                if fingerprint != st.session_state.get('dataset_fingerprint'):
                     st.success(f"Loaded {len(uploaded_names)} file(s): {', '.join(uploaded_names)}")
+                    st.session_state.dataset_fingerprint = fingerprint
                     st.session_state.uploaded_filenames = uploaded_names
-                    config_sources = sorted(df['config_source'].drop_duplicates().tolist(), key=config_sort_key)
-                    st.session_state.config_sources = config_sources
-
-                    # Initialize shared selections when new data is loaded
-                    objects = sorted(df['obj'].unique())
-                    st.session_state.shared_selected_configs = config_sources
-                    st.session_state.shared_selected_objects = objects[:min(5, len(objects))]
-                    # Also update widget keys directly to avoid flicker
-                    st.session_state.sidebar_configs = config_sources
-                    st.session_state.sidebar_objects = objects[:min(5, len(objects))]
-                    # Mark widgets as synced since we just set both shared and widget state
-                    st.session_state.widgets_synced = True
+                    apply_opening_baseline(df)
             else:
                 st.error("No valid data found in the uploaded file(s). Please verify the format.")
                 df = None
@@ -2586,13 +2651,18 @@ def main():
                 time_col1, time_col2 = st.columns([3, 1])
                 
                 with time_col1:
-                    current_time = st.slider(
-                        "Select time point",
-                        min_value=float(start_time),
-                        max_value=float(end_time),
-                        value=float((start_time + end_time) / 2),
-                        key="visual_current_time"
-                    )
+                    if float(start_time) < float(end_time):
+                        current_time = st.slider(
+                            "Select time point",
+                            min_value=float(start_time),
+                            max_value=float(end_time),
+                            value=float((start_time + end_time) / 2),
+                            key="visual_current_time"
+                        )
+                    else:
+                        # A slider needs two different ends: show the single time point instead
+                        current_time = float(start_time)
+                        st.caption(f"Only one time point in the selected range: {current_time:g}.")
                 
                 with time_col2:
                     use_interpolation_time = st.checkbox(
@@ -2715,6 +2785,7 @@ def main():
             # Update shared state after user changes selection
             st.session_state.shared_selected_objects = selected_objects
         
+        init_time_range("2sa_start", "2sa_end", min_time, max_time)
         col3, col4 = st.columns(2)
         
         with col3:
@@ -2722,7 +2793,6 @@ def main():
                 "Start time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(min_time),
                 step=0.01,
                 format="%.2f",
                 key="2sa_start"
@@ -2733,11 +2803,12 @@ def main():
                 "End time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(max_time),
                 step=0.01,
                 format="%.2f",
                 key="2sa_end"
             )
+        if not time_range_valid(start_time, end_time):
+            st.stop()
         
         # Aggregation settings
         col5, col6 = st.columns(2)
@@ -3066,6 +3137,7 @@ def main():
         
         st.markdown("---")
         
+        init_time_range("seq_start", "seq_end", min_time, max_time)
         col3, col4 = st.columns(2)
         
         with col3:
@@ -3073,7 +3145,6 @@ def main():
                 "Start time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(min_time),
                 step=0.01,
                 format="%.2f",
                 key="seq_start"
@@ -3084,11 +3155,12 @@ def main():
                 "End time",
                 min_value=float(min_time),
                 max_value=float(max_time),
-                value=float(max_time),
                 step=0.01,
                 format="%.2f",
                 key="seq_end"
             )
+        if not time_range_valid(start_time, end_time):
+            st.stop()
         
         if not selected_configs:
             st.warning("Please select at least one configuration.")
@@ -4218,24 +4290,25 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         
         with col1:
             st.write("**Time Range**")
+            # Both inputs use the data's fixed bounds, so changing one never resets the other
+            init_time_range("pdp_start", "pdp_end", min_time, max_time)
             start_time = st.number_input(
                 "Start time",
                 min_value=min_time,
                 max_value=max_time,
-                value=min_time,
                 step=0.01,
                 format="%.2f",
                 key="pdp_start"
             )
             end_time = st.number_input(
                 "End time",
-                min_value=start_time,
+                min_value=min_time,
                 max_value=max_time,
-                value=max_time,
                 step=0.01,
                 format="%.2f",
                 key="pdp_end"
             )
+            pdp_range_valid = time_range_valid(start_time, end_time)
         
         with col2:
             st.write("**Window Settings**")
@@ -4248,12 +4321,19 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 (df['config_source'].isin(selected_configs)) &
                 (df['obj'].isin(selected_objects))
             ]
-            max_window_length = len(filtered_df['tst'].unique()) if len(filtered_df) > 0 else 10
+            max_window_length = len(filtered_df['tst'].unique()) if len(filtered_df) > 0 else 1
             max_window_length = max(1, max_window_length)  # Ensure at least 1
-            
-            # Set default value, capped by max available
-            default_window = min(3, max_window_length)
-            
+
+            # Keep the chosen window while it fits; otherwise adjust it visibly
+            # (assigned again before the slider: a slider whose range changes is a new widget for Streamlit)
+            chosen_window = st.session_state.get('pdp_window')
+            if chosen_window is not None and chosen_window > max_window_length:
+                st.session_state.pdp_window = max_window_length
+                st.info(f"Window length adjusted from {chosen_window} to {max_window_length}: only "
+                        f"{max_window_length} time step(s) are available in the selected range and data.")
+            elif chosen_window is not None:
+                st.session_state.pdp_window = chosen_window
+
             # Handle edge case where max_window_length <= 1 (slider needs min < max)
             if max_window_length <= 1:
                 window_length = 1
@@ -4263,7 +4343,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     "Window length (timestamps)",
                     min_value=1,
                     max_value=max_window_length,
-                    value=default_window,
+                    **widget_default("pdp_window", min(3, max_window_length)),
                     help=f"Number of consecutive time steps to analyze together (max: {max_window_length} timestamps available)",
                     key="pdp_window"
                 )
@@ -4337,7 +4417,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         
         use_external_points = st.checkbox(
             "Enable External Reference Points",
-            value=False,
+            **widget_default("pdp_use_external", False),
             help="Add static reference points (e.g., fixed landmarks) that stay fixed during analysis. "
                  "This helps differentiate configurations with similar relative movements but different absolute positions. "
                  "In the Buffer variants, external points get buffer points as well, like the moving objects.",
@@ -4583,7 +4663,8 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                        "before interpreting results.")
 
             # Compute button
-            if st.button("Compute PDP Analysis", type="primary", key="compute_pdp"):
+            if st.button("Compute PDP Analysis", type="primary", key="compute_pdp", disabled=not pdp_range_valid,
+                         help=None if pdp_range_valid else "Start time is after End time: correct the time range first."):
                 if not selected_variant_keys:
                     st.error("Please select at least one variant to compute.")
                 else:
@@ -5712,9 +5793,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                             render_interactive_chart(fig_diff)
                             
                             # Show detailed matrices in an expander
-                            with st.expander("View Inequality Matrices " + 
-                                '<span title="Matrix Legend:&#10;&#10;Inequality Matrices:&#10;• Green (0): Row point is LEFT/BELOW column point&#10;• Yellow (1): Points are EQUAL (within tolerance)&#10;• Red (2): Row point is RIGHT/ABOVE column point&#10;&#10;Difference Matrices (|difference|):&#10;• Light blue (0): same relation in both configs&#10;• Light orange (1): adjacent relation difference&#10;• Dark orange (2): opposite relation difference&#10;&#10;Order: grouped per object, first row at the top; diagonal blocks = self-precedence, off-diagonal blocks = mutual precedence" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                                expanded=False):
+                            with st.expander("View Inequality Matrices", expanded=False):
+                                st.caption("**Inequality matrices:** green (0) = row point is left of/below the column point; "
+                                           "yellow (1) = equal within the tolerance; red (2) = row point is right of/above the column point.  \n"
+                                           "**Difference matrices (|difference|):** light blue (0) = same relation in both configurations; "
+                                           "light orange (1) = adjacent relation; dark orange (2) = opposite relation.  \n"
+                                           "Order: grouped per object, first row at the top; diagonal blocks = self-precedence, "
+                                           "off-diagonal blocks = mutual precedence.")
                                 # Allow selecting which windows to show
                                 n_windows = diff_summary.get('n_windows', 1)
                                 if n_windows > 1:
@@ -5775,22 +5860,42 @@ Each window captures a snapshot of spatial relationships at different points in 
                     col_traj1, col_traj2 = st.columns([1, 1])
                     
                     with col_traj1:
+                        # One shared selection (key pdp_viz_configs) for the field, chart and table. Quick
+                        # buttons and the slider change it in callbacks, i.e. before the field is drawn.
+                        # Keep it valid for the current results and remember it while the section is not
+                        # drawn (e.g. while results are outdated).
+                        stored_viz = st.session_state.get('pdp_viz_configs',
+                                                          st.session_state.get('_pdp_viz_configs_choice'))
+                        wanted_viz = (list(config_ids[:min(2, len(config_ids))]) if stored_viz is None
+                                      else [c for c in stored_viz if c in config_ids][:5])
+                        if st.session_state.get('pdp_viz_configs') != wanted_viz:
+                            st.session_state.pdp_viz_configs = wanted_viz
+
+                        def select_first_n():
+                            st.session_state.pdp_viz_configs = list(config_ids[:st.session_state.pdp_viz_n])
+
                         # Configuration selection
-                        num_configs_to_compare = st.slider(
+                        if st.session_state.get('pdp_viz_n', 2) > min(5, len(config_ids)):
+                            st.session_state.pdp_viz_n = min(5, len(config_ids))
+                        st.slider(
                             "Number of configurations to compare",
                             min_value=1,
                             max_value=min(5, len(config_ids)),
-                            value=min(2, len(config_ids)),
-                            help="Select how many configurations to overlay"
+                            **widget_default("pdp_viz_n", min(2, len(config_ids))),
+                            key="pdp_viz_n",
+                            on_change=select_first_n,
+                            help="Selects this many configurations from the start of the list"
                         )
-                        
+
                         selected_configs_viz = st.multiselect(
                             "Select configurations to visualize",
                             options=config_ids,
-                            default=config_ids[:num_configs_to_compare],
+                            key="pdp_viz_configs",
                             max_selections=5,
-                            help="Choose configurations to compare their trajectories"
+                            help="Choose configurations to compare their trajectories. The quick-selection "
+                                 "buttons below fill this field; you can then change it."
                         )
+                        st.session_state._pdp_viz_configs_choice = list(selected_configs_viz)
                     
                     with col_traj2:
                         # Object selection - respect global selection from data selection interface
@@ -5858,86 +5963,74 @@ Each window captures a snapshot of spatial relationships at different points in 
                                                   value=min(3, max_random), step=1, key="pdp_n_random",
                                                   help="Number of random configurations to select")
                     
+                    # Quick choices write the shared field selection in callbacks (they run before the next
+                    # rerun, so the field and the chart always show the same configurations). They use this
+                    # section's variant (clust_distance_matrix).
+                    def quick_pick_by_distance(n, most_similar):
+                        if len(config_ids) < n:
+                            return
+                        # Collect configs from the closest (or farthest) unique pairs
+                        distances_with_pairs = sorted(
+                            ((clust_distance_matrix[i, j], i, j) for i in range(len(config_ids))
+                             for j in range(i + 1, len(config_ids))), reverse=not most_similar)
+                        selected_indices = set()
+                        for dist, i, j in distances_with_pairs:
+                            selected_indices.add(i)
+                            selected_indices.add(j)
+                            if len(selected_indices) >= n:
+                                break
+                        selected_indices = sorted(selected_indices)[:n]
+                        st.session_state.pdp_viz_configs = [config_ids[idx] for idx in selected_indices]
+                        avg_dist = np.mean([clust_distance_matrix[i, j] for i in selected_indices
+                                            for j in selected_indices if i < j])
+                        st.session_state._pdp_viz_note = (f"Selected {len(selected_indices)} most "
+                                                          f"{'similar' if most_similar else 'dissimilar'} configs "
+                                                          f"(avg raw distance: {avg_dist:.2f})")
+
+                    def quick_pick_centroids():
+                        # One config per cluster: the one with the smallest mean distance to its cluster
+                        unique_clusters = sorted(set(section_cluster_labels))
+                        centroid_configs = []
+                        for cluster_id in unique_clusters[:min(n_centroids, len(unique_clusters))]:
+                            cluster_indices = [i for i, c in enumerate(section_cluster_labels) if c == cluster_id]
+                            cluster_distances = clust_distance_matrix[np.ix_(cluster_indices, cluster_indices)]
+                            centroid_configs.append(config_ids[cluster_indices[np.argmin(cluster_distances.mean(axis=1))]])
+                        st.session_state.pdp_viz_configs = centroid_configs
+                        st.session_state._pdp_viz_note = (f"Selected {len(centroid_configs)} cluster centroids from "
+                                                          f"{len(centroid_configs)} different clusters")
+
+                    def quick_pick_random():
+                        import random
+                        random_selection = random.sample(list(config_ids), min(n_random, len(config_ids)))
+                        st.session_state.pdp_viz_configs = random_selection
+                        st.session_state._pdp_viz_note = f"Randomly selected {len(random_selection)} configurations"
+
                     # Button row
                     col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-                    
+
                     with col_btn1:
-                        if st.button("Top Similar", use_container_width=True, 
-                                    help=f"Select the {n_top_similar} configurations with smallest PDP distances (most similar trajectories)"):
-                            if len(config_ids) >= n_top_similar:
-                                # Find N most similar configs by sorting all unique pairs
-                                distances_with_pairs = []
-                                for i in range(len(config_ids)):
-                                    for j in range(i+1, len(config_ids)):
-                                        distances_with_pairs.append((distance_matrix[i, j], i, j))
-                                distances_with_pairs.sort()  # Sort by distance (ascending)
-                                
-                                # Collect unique configs from top pairs
-                                selected_indices = set()
-                                for dist, i, j in distances_with_pairs:
-                                    selected_indices.add(i)
-                                    selected_indices.add(j)
-                                    if len(selected_indices) >= n_top_similar:
-                                        break
-                                
-                                selected_indices = sorted(list(selected_indices))[:n_top_similar]
-                                st.session_state['pdp_viz_selection'] = [config_ids[idx] for idx in selected_indices]
-                                avg_dist = np.mean([distance_matrix[i, j] for i in selected_indices for j in selected_indices if i < j])
-                                st.success(f"Selected {len(selected_indices)} most similar configs (avg distance: {avg_dist:.2f})")
-                    
+                        st.button("Top Similar", use_container_width=True,
+                                  on_click=quick_pick_by_distance, args=(n_top_similar, True),
+                                  help=f"Select the {n_top_similar} configurations with smallest PDP distances (most similar trajectories)")
+
                     with col_btn2:
-                        if st.button("Top Dissimilar", use_container_width=True,
-                                    help=f"Select the {n_top_dissimilar} configurations with largest PDP distances (most different trajectories)"):
-                            if len(config_ids) >= n_top_dissimilar:
-                                # Find N most dissimilar configs
-                                distances_with_pairs = []
-                                for i in range(len(config_ids)):
-                                    for j in range(i+1, len(config_ids)):
-                                        distances_with_pairs.append((distance_matrix[i, j], i, j))
-                                distances_with_pairs.sort(reverse=True)  # Sort by distance (descending)
-                                
-                                # Collect unique configs from top pairs
-                                selected_indices = set()
-                                for dist, i, j in distances_with_pairs:
-                                    selected_indices.add(i)
-                                    selected_indices.add(j)
-                                    if len(selected_indices) >= n_top_dissimilar:
-                                        break
-                                
-                                selected_indices = sorted(list(selected_indices))[:n_top_dissimilar]
-                                st.session_state['pdp_viz_selection'] = [config_ids[idx] for idx in selected_indices]
-                                avg_dist = np.mean([distance_matrix[i, j] for i in selected_indices for j in selected_indices if i < j])
-                                st.success(f"Selected {len(selected_indices)} most dissimilar configs (avg distance: {avg_dist:.2f})")
-                    
+                        st.button("Top Dissimilar", use_container_width=True,
+                                  on_click=quick_pick_by_distance, args=(n_top_dissimilar, False),
+                                  help=f"Select the {n_top_dissimilar} configurations with largest PDP distances (most different trajectories)")
+
                     with col_btn3:
-                        if section_cluster_labels is not None and st.button("Cluster Centroids", use_container_width=True,
-                                                                                         help=f"Select {n_centroids} representative configurations from different clusters"):
-                            # Select one config from each cluster (the one most central to its cluster)
-                            unique_clusters = sorted(set(section_cluster_labels))
-                            centroid_configs = []
-                            for cluster_id in unique_clusters[:min(n_centroids, len(unique_clusters))]:
-                                # Find config closest to cluster center (smallest avg distance to other cluster members)
-                                cluster_indices = [i for i, c in enumerate(section_cluster_labels) if c == cluster_id]
-                                cluster_distances = clust_distance_matrix[np.ix_(cluster_indices, cluster_indices)]
-                                avg_distances = cluster_distances.mean(axis=1)
-                                centroid_idx = cluster_indices[np.argmin(avg_distances)]
-                                centroid_configs.append(config_ids[centroid_idx])
-                            st.session_state['pdp_viz_selection'] = centroid_configs
-                            st.success(f"Selected {len(centroid_configs)} cluster centroids from {len(centroid_configs)} different clusters")
-                    
+                        if section_cluster_labels is not None:
+                            st.button("Cluster Centroids", use_container_width=True, on_click=quick_pick_centroids,
+                                      help=f"Select {n_centroids} representative configurations from different clusters")
+
                     with col_btn4:
-                        if st.button("Random Sample", use_container_width=True,
-                                    help=f"Randomly select {n_random} configurations for comparison"):
-                            import random
-                            n_sample = min(n_random, len(config_ids))
-                            random_selection = random.sample(config_ids, n_sample)
-                            st.session_state['pdp_viz_selection'] = random_selection
-                            st.success(f"Randomly selected {len(random_selection)} configurations")
-                    
-                    # Use button selection if available, otherwise use multiselect
-                    if 'pdp_viz_selection' in st.session_state and st.session_state['pdp_viz_selection']:
-                        selected_configs_viz = st.session_state['pdp_viz_selection']
-                    
+                        st.button("Random Sample", use_container_width=True, on_click=quick_pick_random,
+                                  help=f"Randomly select {n_random} configurations for comparison")
+
+                    quick_note = st.session_state.pop('_pdp_viz_note', None)
+                    if quick_note:
+                        st.success(quick_note + ". You can change the selection in the field above.")
+
                     # Visualization options for buffer and rough zones
                     st.markdown("---")
                     st.markdown("**Advanced Visualization Options:**")
@@ -6866,13 +6959,13 @@ Each window captures a snapshot of spatial relationships at different points in 
         min_time = float(df['tst'].min())
         max_time = float(df['tst'].max())
 
+        init_time_range("clustering_start", "clustering_end", min_time, max_time)
         col1, col2 = st.columns(2)
         with col1:
             start_time = st.number_input(
                 "Start time",
                 min_value=min_time,
                 max_value=max_time,
-                value=min_time,
                 step=0.01,
                 format="%.2f",
                 key="clustering_start"
@@ -6880,13 +6973,14 @@ Each window captures a snapshot of spatial relationships at different points in 
         with col2:
             end_time = st.number_input(
                 "End time",
-                min_value=start_time,
+                min_value=min_time,
                 max_value=max_time,
-                value=max_time,
                 step=0.01,
                 format="%.2f",
                 key="clustering_end"
             )
+        if not time_range_valid(start_time, end_time):
+            st.stop()
         
         # Check if method changed - reset state if so
         if st.session_state.clustering_method != clustering_method:
@@ -8604,13 +8698,13 @@ Each window captures a snapshot of spatial relationships at different points in 
         min_time = float(df['tst'].min())
         max_time = float(df['tst'].max())
 
+        init_time_range("extra_start", "extra_end", min_time, max_time)
         col1, col2 = st.columns(2)
         with col1:
             start_time = st.number_input(
                 "Start time",
                 min_value=min_time,
                 max_value=max_time,
-                value=min_time,
                 step=0.01,
                 format="%.2f",
                 key="extra_start"
@@ -8618,14 +8712,15 @@ Each window captures a snapshot of spatial relationships at different points in 
         with col2:
             end_time = st.number_input(
                 "End time",
-                min_value=start_time,
+                min_value=min_time,
                 max_value=max_time,
-                value=max_time,
                 step=0.01,
                 format="%.2f",
                 key="extra_end"
             )
 
+        if not time_range_valid(start_time, end_time):
+            st.stop()
         st.markdown('---')
 
         if selected_extra_method == "Heat map animations":
