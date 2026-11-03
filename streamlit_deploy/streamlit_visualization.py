@@ -5638,12 +5638,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Top-K Similar Configurations
                     st.markdown("---")
-                    st.markdown(
-                        "### Find Similar Configurations "
-                        + "<span title=\"Find configurations most similar to a selected one:\\n\\n• Select a target configuration\\n• View the K most similar configurations ranked by PDP distance\\n• Lower distance = more similar movement patterns\" "
-                        + "style=\"cursor:help; font-size:0.8em;\">❓</span>",
-                        unsafe_allow_html=True
-                    )
+                    st.markdown('### Find Similar Configurations',
+                                help='Find configurations most similar to a selected one:  \n  \n• Select a target configuration  \n• View the K most similar configurations ranked by PDP distance  \n• Lower distance = more similar movement patterns')
                     
                     col1, col2 = st.columns([2, 1])
                     
@@ -5712,9 +5708,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # FINE-GRAINED PINPOINT DIFFERENCES
                     # ===============================================================
                     st.markdown("---")
-                    st.markdown("### Fine-Grained Pinpoint Differences " + 
-                        '<span title="Compare exactly two configurations to see WHERE they differ:&#10;&#10;• Red lines connect object positions where inequality matrices differ&#10;• Thicker lines = larger differences&#10;• See the exact matrix cells that contribute to the PDP distance" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Fine-Grained Pinpoint Differences',
+                                help='Compare exactly two configurations to see WHERE they differ:  \n  \n• Red lines connect object positions where inequality matrices differ  \n• Thicker lines = larger differences  \n• See the exact matrix cells that contribute to the PDP distance')
                     
                     # Configuration selection - exactly 2
                     col_fg1, col_fg2 = st.columns(2)
@@ -5853,9 +5848,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # TRAJECTORY COMPARISON VISUALIZATION
                     # ===============================================================
                     st.markdown("---")
-                    st.markdown("### Trajectory Comparison " +
-                        '<span title="Visualize and compare actual trajectories:&#10;&#10;• Select configurations to overlay their movement patterns&#10;• Compare similar or dissimilar configurations side-by-side&#10;• Start points marked with circles ⭕, end points with squares ◼️" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Trajectory Comparison',
+                                help='Visualize and compare actual trajectories:  \n  \n• Select configurations to overlay their movement patterns  \n• Compare similar or dissimilar configurations side-by-side  \n• Start points marked with circles ⭕, end points with squares ◼️')
                     
                     col_traj1, col_traj2 = st.columns([1, 1])
                     
@@ -6131,9 +6125,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # EXPORT FUNCTIONALITY
                     # ===============================================================
                     st.markdown("---")
-                    st.markdown("### Export Results " + 
-                        '<span title="Download PDP analysis results:&#10;&#10;• Distance matrix (CSV format)&#10;• Cluster assignments&#10;• Similarity rankings for all configurations" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Export Results',
+                                help='Download PDP analysis results:  \n  \n• Distance matrix (CSV format)  \n• Cluster assignments  \n• Similarity rankings for all configurations')
                     
                     # Variant selector for Export
                     col_exp_var, _ = st.columns([1, 3])
@@ -6240,9 +6233,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 3: PARAMETER IMPACT ANALYSIS (FEATURE #2)
                 # ===============================================================
                 with st.expander("Parameter Impact Analysis (Compare PDP Variants)", expanded=False):
-                    st.markdown("### Parameter Impact Analysis " + 
-                        '<span title="Compare how buffer and rough parameters affect PDP distances.&#10;&#10;This analysis computes distances using all four PDP variants and visualizes:&#10;• How distances change across variants&#10;• Which configuration pairs are most affected by parameters&#10;• Correlation between variants&#10;&#10;Use this to:&#10;• Understand parameter sensitivity in your dataset&#10;• Choose the best variant for your analysis&#10;• Identify configurations that behave differently with parameters&#10;&#10;Computes PDP distances for ALL four variants:&#10;• Fundamental (baseline - no parameters)&#10;• Buffer (adds virtual points around each position)&#10;• Rough (treats positions within a tolerance as equal)&#10;• Buffer + Rough (combined)&#10;&#10;Note: This may take a moment as it computes 4 distance matrices." style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Parameter Impact Analysis',
+                                help='Compare how buffer and rough parameters affect PDP distances.  \n  \nThis analysis computes distances using all four PDP variants and visualizes:  \n• How distances change across variants  \n• Which configuration pairs are most affected by parameters  \n• Correlation between variants  \n  \nUse this to:  \n• Understand parameter sensitivity in your dataset  \n• Choose the best variant for your analysis  \n• Identify configurations that behave differently with parameters  \n  \nComputes PDP distances for ALL four variants:  \n• Fundamental (baseline - no parameters)  \n• Buffer (adds virtual points around each position)  \n• Rough (treats positions within a tolerance as equal)  \n• Buffer + Rough (combined)  \n  \nNote: This may take a moment as it computes 4 distance matrices.')
                     
                     # Parameter configuration for comparison
                     st.markdown("---")
@@ -6503,9 +6495,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 4: CONFIGURATION SIMILARITY EXPLORER (FEATURE #5)
                 # =================================================================
                 with st.expander("Configuration Similarity Explorer (Find Similar/Dissimilar Configs)", expanded=False):
-                    st.markdown("### Configuration Similarity Explorer " + 
-                        '<span title="Explore neighborhoods and find similar/dissimilar configurations.&#10;&#10;This tool helps you understand the similarity landscape of your configurations:&#10;&#10;Use Cases:&#10;• Find similar configs: Identify configurations with comparable trajectory behavior&#10;• Find dissimilar configs: Discover configurations that produce very different results&#10;• Explore neighborhoods: Visualize which configurations cluster together&#10;• Validate parameter choices: See if parameter changes create meaningful distinctions&#10;&#10;How it works:&#10;1. Select a target configuration to analyze&#10;2. The tool finds its k nearest and k farthest neighbors in distance space&#10;3. Visualizations show the configuration\'s position relative to others&#10;&#10;When to use:&#10;• After computing PDP distances to explore the configuration space&#10;• To understand if certain parameters create distinct behavior patterns&#10;• To select representative configurations for further analysis" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Configuration Similarity Explorer',
+                                help="Explore neighborhoods and find similar/dissimilar configurations.  \n  \nThis tool helps you understand the similarity landscape of your configurations:  \n  \nUse Cases:  \n• Find similar configs: Identify configurations with comparable trajectory behavior  \n• Find dissimilar configs: Discover configurations that produce very different results  \n• Explore neighborhoods: Visualize which configurations cluster together  \n• Validate parameter choices: See if parameter changes create meaningful distinctions  \n  \nHow it works:  \n1. Select a target configuration to analyze  \n2. The tool finds its k nearest and k farthest neighbors in distance space  \n3. Visualizations show the configuration's position relative to others  \n  \nWhen to use:  \n• After computing PDP distances to explore the configuration space  \n• To understand if certain parameters create distinct behavior patterns  \n• To select representative configurations for further analysis")
                 
                     # Check if distance matrix is available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
@@ -6614,9 +6605,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 
                                 # Neighborhood visualization
                                 st.markdown("---")
-                                st.markdown("### Neighborhood Graph " + 
-                                    '<span title="How to read this:&#10;&#10;• Red star: Your selected target configuration&#10;• Orange circles: Nearest neighbors&#10;• Orange lines: Connections to neighbors&#10;• Gray/colored dots: All other configurations&#10;• Closer in 2D space → More similar trajectories" style="cursor: help; font-size: 0.8em;">❓</span>', 
-                                    unsafe_allow_html=True)
+                                st.markdown('### Neighborhood Graph',
+                                            help='How to read this:  \n  \n• Red star: Your selected target configuration  \n• Orange circles: Nearest neighbors  \n• Orange lines: Connections to neighbors  \n• Gray/colored dots: All other configurations  \n• Closer in 2D space → More similar trajectories')
                                 st.caption(f"MDS projection showing {target_config}'s neighborhood. Lines connect to {k_neighbors} nearest neighbors.")
                                 
                                 # Colours: the user's chosen partition of this variant (not the trajectory
@@ -6677,9 +6667,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # SECTION 5: CLUSTER QUALITY METRICS (FEATURE #8)
                 # =================================================================
                 with st.expander("Cluster Quality Metrics (Evaluate Clustering Quality)", expanded=False):
-                    st.markdown("### Cluster Quality Metrics " + 
-                        '<span title="Evaluate clustering quality and find optimal number of clusters.&#10;&#10;• Silhouette Score (-1 to 1, higher is better): Measures cluster cohesion vs separation. >0.7=strong, 0.5-0.7=reasonable, <0.5=weak structure.&#10;• Davies-Bouldin Index (≥0, lower is better): Ratio of within-cluster to between-cluster distances.&#10;• Calinski-Harabasz Score (≥0, higher is better): Ratio of between-cluster to within-cluster dispersion.&#10;• Elbow Method (Inertia): Within-cluster sum of squares - look for elbow point.&#10;&#10;Use cases: Determine optimal k, validate results, compare approaches, identify natural clusters.&#10;&#10;Tests clustering quality for k=2 to k=max_k and identifies optimal k for each metric." style="cursor: help; font-size: 0.8em;">❓</span>', 
-                        unsafe_allow_html=True)
+                    st.markdown('### Cluster Quality Metrics',
+                                help='Evaluate clustering quality and find optimal number of clusters.  \n  \n• Silhouette Score (-1 to 1, higher is better): Measures cluster cohesion vs separation. >0.7=strong, 0.5-0.7=reasonable, <0.5=weak structure.  \n• Davies-Bouldin Index (≥0, lower is better): Ratio of within-cluster to between-cluster distances.  \n• Calinski-Harabasz Score (≥0, higher is better): Ratio of between-cluster to within-cluster dispersion.  \n• Elbow Method (Inertia): Within-cluster sum of squares - look for elbow point.  \n  \nUse cases: Determine optimal k, validate results, compare approaches, identify natural clusters.  \n  \nTests clustering quality for k=2 to k=max_k and identifies optimal k for each metric.')
                     
                     # Check if distance matrix and clustering are available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
