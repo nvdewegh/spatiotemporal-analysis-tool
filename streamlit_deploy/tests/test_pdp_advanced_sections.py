@@ -199,6 +199,10 @@ def test_cluster_quality_small_range_and_insufficient_configurations(app):
     stored = app.session_state['cluster_quality_metrics']
     assert stored['results']['k_values'] == [2, 3] and stored['key'][1:] == ('fundamental', 2, 3)
     assert any('2D MDS embedding' in t for t in texts(app.caption))
+    exported = pd.read_csv(io.StringIO(app.captured['Download Metrics as CSV']))
+    assert list(exported.k) == [2, 3]
+    np.testing.assert_allclose(exported.Silhouette_Score, stored['results']['silhouette'])
+    assert any('Silhouette Score' in str(c.proto.spec) for c in app.get('plotly_chart'))   # chart still drawn
     assert app.slider(key='pdp_n_clusters').value == chosen_k
 
     app.number_input(key='cluster_quality_max_k').set_value(2).run()   # single k is a valid request

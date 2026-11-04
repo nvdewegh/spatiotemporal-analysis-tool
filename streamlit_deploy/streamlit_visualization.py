@@ -6761,7 +6761,23 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 # Create and show the multi-panel plot
                                 fig_metrics = pdp_analysis.create_quality_metrics_plot(metrics_results)
                                 render_interactive_chart(fig_metrics)
-                                
+
+                                metrics_df = pd.DataFrame({
+                                    'k': metrics_results['k_values'],
+                                    'Silhouette_Score': metrics_results['silhouette'],
+                                    'Davies_Bouldin_Index_2D_MDS': metrics_results['davies_bouldin'],
+                                    'Calinski_Harabasz_Score_2D_MDS': metrics_results['calinski_harabasz'],
+                                    'Inertia': metrics_results['inertia'],
+                                })
+                                st.download_button(
+                                    label="Download Metrics as CSV",
+                                    data=metrics_df.to_csv(index=False),
+                                    file_name=f"pdp_cluster_quality_{quality_variant}_k{min_k}-{max_k}.csv",
+                                    mime="text/csv",
+                                    key="download_cluster_quality",
+                                    help=f"Exact scores for each k shown in the chart above, variant {quality_variant_name}"
+                                )
+
                                 st.markdown("""
                                 **How to read this:**
                                 - **Red stars**: Optimal k for each metric
