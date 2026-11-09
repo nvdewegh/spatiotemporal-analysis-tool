@@ -263,33 +263,59 @@ def sort_points(df, cols):
     return df.sort_values(cols, key=_point_sort_key, kind='mergesort')
 
 
-def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x=0, rough_y=0):
+def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x=0, rough_y=0,
+                              descriptors=None, roughs=None, details=False):
     """
     Compute PDP distance between two configurations.
-    
+
     This follows the original N_PDP.py algorithm:
     1. For each time window, build inequality matrices for X and Y dimensions
     2. Sum absolute differences across all windows for each dimension
     3. Return raw sum of X + Y distances (normalization happens separately)
-    
+
     Args:
         config1_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for first config
         config2_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for second config
         window_length: Window length for temporal analysis (av.window_length_tst in original)
         rough_x: Roughness tolerance for x dimension
         rough_y: Roughness tolerance for y dimension
-    
+        descriptors: Ordered descriptor columns (default ('x', 'y'): the legacy G2 calculation). Other
+            reference systems pass their derived columns ('d:<id>'); x/y themselves are never changed.
+        roughs: Rough tolerance per descriptor (default (rough_x, rough_y)).
+        details: Also return {'per_descriptor': {col: raw}, 'self': {col: raw}, 'mutual': {col: raw},
+            'n_windows_used': int}. Self = cells comparing two indexed points of the same object (any times,
+            including the diagonal); mutual = both cross-object blocks. Self + mutual = per-descriptor total.
+
     Returns:
-        Raw PDP distance (sum of X and Y absolute differences in inequality matrices)
+        Raw PDP distance (sum over descriptors of absolute differences in inequality matrices),
+        or (distance, details) when details=True.
     """
+    if descriptors is None:
+        descriptors = ('x', 'y')
+        roughs = (rough_x, rough_y)
+    elif roughs is None:
+        roughs = (0,) * len(descriptors)
+    if len(roughs) != len(descriptors):
+        raise ValueError("One Rough tolerance per descriptor is required.")
+    per_descriptor = {d: 0 for d in descriptors}
+    self_part = {d: 0 for d in descriptors}
+    mutual_part = {d: 0 for d in descriptors}
+    windows_used = 0
+
+    def result(total):
+        if not details:
+            return total
+        return total, {'per_descriptor': per_descriptor, 'self': self_part, 'mutual': mutual_part,
+                       'n_windows_used': windows_used}
+
     # Get unique timestamps and objects
     timestamps1 = sorted(config1_data['tst'].unique())
     timestamps2 = sorted(config2_data['tst'].unique())
-    
+
     # Determine number of time windows (same as original: av.tst-(av.window_length_tst-1))
     n_windows = min(len(timestamps1), len(timestamps2)) - window_length + 1
     if n_windows <= 0:
-        return 0  # Not enough data
+        return result(0)  # Not enough data
     
     # Calculate points per timestamp based on actual data structure
     first_timestamp = timestamps1[0]
@@ -299,13 +325,10 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
     
     # Both configs must have the same structure for meaningful comparison
     if points_per_timestamp1 != points_per_timestamp2:
-        return 0
-    
+        return result(0)
+
     # Points per window = poi * window_length_tst (as in original)
     points_per_window = points_per_timestamp1 * window_length
-    
-    abs_distance_x = 0
-    abs_distance_y = 0
     
     # Loop over time windows (same as original: for tst_id in range(av.tst-(av.window_length_tst-1)))
     for t_idx in range(n_windows):
@@ -330,35 +353,36 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
 
         if len(window_data1) != points_per_window or len(window_data2) != points_per_window:
             continue
-        
-        # Compute inequality matrices for x dimension
-        x_vals1 = window_data1['x'].values
-        x_vals2 = window_data2['x'].values
-        
-        ineq_x1 = compute_inequality_matrix(x_vals1, x_vals1, window_length, rough_x)
-        ineq_x2 = compute_inequality_matrix(x_vals2, x_vals2, window_length, rough_x)
-        
-        # Compute inequality matrices for y dimension
-        y_vals1 = window_data1['y'].values
-        y_vals2 = window_data2['y'].values
-        
-        ineq_y1 = compute_inequality_matrix(y_vals1, y_vals1, window_length, rough_y)
-        ineq_y2 = compute_inequality_matrix(y_vals2, y_vals2, window_length, rough_y)
-        
-        # Accumulate absolute differences (same as original nested loops)
-        abs_distance_x += np.sum(np.abs(ineq_x1 - ineq_x2))
-        abs_distance_y += np.sum(np.abs(ineq_y1 - ineq_y2))
-    
-    # Return raw sum of X and Y distances
-    # The original algorithm returns X + Y (then normalizes separately or averages normalized values)
-    total_distance = abs_distance_x + abs_distance_y
-    
-    return total_distance
+        windows_used += 1
+        if details:
+            objs = window_data1['obj'].astype(str).to_numpy()
+            same_object = objs[:, None] == objs[None, :]
+
+        # Inequality matrices per descriptor; accumulate absolute differences (same as original nested loops)
+        for column, rough in zip(descriptors, roughs):
+            vals1 = window_data1[column].values
+            vals2 = window_data2[column].values
+            ineq1 = compute_inequality_matrix(vals1, vals1, window_length, rough)
+            ineq2 = compute_inequality_matrix(vals2, vals2, window_length, rough)
+            diff = np.abs(ineq1 - ineq2)
+            per_descriptor[column] += np.sum(diff)
+            if details:
+                self_part[column] += int(diff[same_object].sum())
+                mutual_part[column] += int(diff[~same_object].sum())
+
+    # Return raw sum over descriptors (G2: X + Y, as in the original algorithm)
+    abs_distance_x, abs_distance_y = per_descriptor.get('x', 0), per_descriptor.get('y', 0)
+    total_distance = (abs_distance_x + abs_distance_y if tuple(descriptors) == ('x', 'y')
+                      else sum(per_descriptor.values()))
+
+    return result(total_distance)
 
 
 def _data_fingerprint(df):
     """Cheap content hash of the columns PDP uses, so the cache notices a different dataset."""
     cols = [c for c in ('config_source', 'tst', 'obj', 'x', 'y') if c in df.columns]
+    # Derived descriptor columns of R/C reference systems count too (absent for G2, so G2 is unchanged)
+    cols += sorted(c for c in df.columns if str(c).startswith('d:'))
     return int(pd.util.hash_pandas_object(df[cols], index=False).sum())
 
 
@@ -374,23 +398,28 @@ def pdp_variant_parameters(variant, buffer_x, buffer_y, rough_x, rough_y):
 
 
 def pdp_run_signature(df, configs, objects, start, end, window, buffer_x, buffer_y,
-                      rough_x, rough_y, variants, external_points):
+                      rough_x, rough_y, variants, external_points, reference_key=None):
     """
     Identify the inputs behind results, independently of display controls. Buffer and Rough values
     count only when a selected variant uses them, so editing an unused field keeps results current.
+    reference_key: identity of the reference system (system, estimator, descriptor order, geometry hash);
+    None for the legacy G2 calculation, so G2 signatures are unchanged.
     """
     if not any(v in BUFFER_VARIANTS for v in variants):
         buffer_x = buffer_y = 0
     if not any(v in ROUGH_VARIANTS for v in variants):
         rough_x = rough_y = 0
-    return (_data_fingerprint(df), tuple(configs), tuple(objects), start, end, window,
-            buffer_x, buffer_y, rough_x, rough_y, tuple(variants),
-            tuple(tuple(point) for point in (external_points or ())))
+    signature = (_data_fingerprint(df), tuple(configs), tuple(objects), start, end, window,
+                 buffer_x, buffer_y, rough_x, rough_y, tuple(variants),
+                 tuple(tuple(point) for point in (external_points or ())))
+    return signature if reference_key is None else signature + (reference_key,)
 
 
 def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_time, end_time,
                                 window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                pdp_variant="fundamental", external_points=None, progress=None):
+                                pdp_variant="fundamental", external_points=None, progress=None,
+                                descriptors=None, reference_key=None, return_components=False,
+                                descriptor_buffers=None, descriptor_roughs=None, external_descriptors=None):
     """
     Compute PDP distance matrix for all selected configurations (cached).
 
@@ -401,12 +430,43 @@ def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_t
     progress: optional callable(completed_pairs, total_pairs), called after every configuration
     pair that is actually calculated. It is never called when stored results are returned.
 
+    descriptors: ordered descriptor columns of an R/C reference system (None: legacy x/y).
+    reference_key identifies the reference definition in the cache key.
+    descriptor_buffers / descriptor_roughs: one Buffer / Rough value per descriptor (in descriptor units, m),
+    the descriptor-space counterparts of buffer_x/buffer_y and rough_x/rough_y; used only by the matching
+    variants, exactly as X/Y are for G2.
+    external_descriptors: for R/C systems with external points, the descriptor values of each external point
+    (one tuple per point, in descriptor order), obtained with the same projection as the trajectories.
+    return_components: also return {descriptor column: raw distance matrix}; the matrices sum to the total.
+
     An explicit cache is used instead of st.cache_data, which records Streamlit calls made during
     the calculation (such as progress updates) and fails replaying them on a cache hit.
     """
+    if descriptors is not None and tuple(descriptors) == ('x', 'y'):
+        descriptors = None
+    if descriptors is not None:
+        n = len(descriptors)
+        descriptor_buffers = tuple(float(b) for b in (descriptor_buffers or (0,) * n))
+        descriptor_roughs = tuple(float(r) for r in (descriptor_roughs or (0,) * n))
+        if len(descriptor_buffers) != n or len(descriptor_roughs) != n:
+            raise ValueError("One Buffer and one Rough value per descriptor are required.")
+        if pdp_variant not in BUFFER_VARIANTS:
+            descriptor_buffers = (0.0,) * n
+        if pdp_variant not in ROUGH_VARIANTS:
+            descriptor_roughs = (0.0,) * n
+        if external_points:
+            if external_descriptors is None or len(external_descriptors) != len(external_points) or \
+                    any(len(v) != n for v in external_descriptors):
+                raise ValueError("External points with an R/C reference system need their descriptor values "
+                                 "(one value per descriptor for every point).")
+            external_descriptors = tuple(tuple(float(x) for x in v) for v in external_descriptors)
+        else:
+            external_descriptors = None
     key = (_data_fingerprint(_df), tuple(selected_configs), tuple(selected_objects), start_time, end_time,
            window_length, buffer_x, buffer_y, rough_x, rough_y, pdp_variant,
            tuple(tuple(point) for point in external_points) if external_points else None)
+    if descriptors is not None:
+        key += (tuple(descriptors), reference_key, descriptor_buffers, descriptor_roughs, external_descriptors)
     with _PDP_RESULT_CACHE_LOCK:
         stored = _PDP_RESULT_CACHE.get(key)
         if stored is not None:
@@ -414,12 +474,15 @@ def compute_pdp_distance_matrix(_df, selected_configs, selected_objects, start_t
     if stored is None:
         stored = _compute_pdp_distance_matrix_uncached(
             _df, selected_configs, selected_objects, start_time, end_time, window_length,
-            buffer_x, buffer_y, rough_x, rough_y, pdp_variant, external_points, progress)
+            buffer_x, buffer_y, rough_x, rough_y, pdp_variant, external_points, progress, descriptors,
+            descriptor_buffers, descriptor_roughs, external_descriptors)
         with _PDP_RESULT_CACHE_LOCK:
             _PDP_RESULT_CACHE[key] = stored
             while len(_PDP_RESULT_CACHE) > _PDP_RESULT_CACHE_SIZE:
                 _PDP_RESULT_CACHE.popitem(last=False)
-    distance_matrix, config_ids = stored
+    distance_matrix, config_ids, components = stored
+    if return_components:
+        return distance_matrix.copy(), config_ids, {k: v.copy() for k, v in components.items()}
     return distance_matrix.copy(), config_ids
 
 
@@ -436,7 +499,9 @@ def clear_pdp_distance_cache():
 
 def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_objects, start_time, end_time,
                                           window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
-                                          pdp_variant="fundamental", external_points=None, _progress=None):
+                                          pdp_variant="fundamental", external_points=None, _progress=None,
+                                          descriptors=None, descriptor_buffers=None, descriptor_roughs=None,
+                                          external_descriptors=None):
     """
     Compute PDP distance matrix for all selected configurations.
 
@@ -454,10 +519,13 @@ def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_object
         pdp_variant: One of "fundamental", "buffer", "rough", "buffer_rough"
         external_points: Tuple of tuples ((name, x, y), ...) for static reference points
         _progress: Optional callable(completed_pairs, total_pairs); the caller owns the progress display.
+        descriptors: Ordered descriptor columns (None: legacy x/y).
+        descriptor_buffers, descriptor_roughs, external_descriptors: see compute_pdp_distance_matrix.
 
     Returns:
-        (distance_matrix, config_ids)
+        (distance_matrix, config_ids, {descriptor column: raw component matrix})
     """
+    descriptor_cols = tuple(descriptors) if descriptors is not None else ('x', 'y')
     # Convert external_points tuple back to list for processing
     external_points_list = list(external_points) if external_points else None
     
@@ -483,12 +551,22 @@ def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_object
             config_data = filtered_df[filtered_df['config_source'] == config_id].copy()
             config_timestamps = sorted(config_data['tst'].unique())
             config_data_with_ext = add_external_points_to_data(config_data, external_points_list, config_timestamps)
+            if descriptors is not None:
+                ext_mask = config_data_with_ext['is_external'].astype(bool).to_numpy()
+                # External point k has obj 'EXT_k' (names may repeat, so use the index)
+                ext_index = config_data_with_ext.loc[ext_mask, 'obj'].astype(str).str[4:].astype(int)
+                values = np.asarray(external_descriptors, dtype=float)[ext_index.to_numpy()]
+                for d, column in enumerate(descriptor_cols):
+                    config_data_with_ext.loc[ext_mask, column] = values[:, d]
             config_dfs.append(config_data_with_ext)
         filtered_df = pd.concat(config_dfs, ignore_index=True)
     
     # Apply buffer if needed
     if pdp_variant in ["buffer", "buffer_rough"]:
-        filtered_df = apply_buffer_to_trajectories(filtered_df, buffer_x, buffer_y)
+        if descriptors is None:
+            filtered_df = apply_buffer_to_trajectories(filtered_df, buffer_x, buffer_y)
+        else:
+            filtered_df = apply_descriptor_buffer(filtered_df, descriptor_cols, descriptor_buffers)
     
     # Set roughness based on variant
     rough_x_val = rough_x if pdp_variant in ["rough", "buffer_rough"] else 0
@@ -496,7 +574,8 @@ def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_object
     
     # Initialize distance matrix (use float for raw distances)
     distance_matrix = np.zeros((n_configs, n_configs), dtype=float)
-    
+    components = {c: np.zeros((n_configs, n_configs), dtype=float) for c in descriptor_cols}
+
     # Compute pairwise distances
     total_comparisons = n_configs * (n_configs - 1) // 2
     completed = 0
@@ -507,19 +586,62 @@ def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_object
         for j in range(i + 1, n_configs):
             config2_data = filtered_df[filtered_df['config_source'] == config_ids[j]]
 
-            dist = compute_pdp_distance_pair(
-                config1_data, config2_data,
-                window_length, rough_x_val, rough_y_val
-            )
+            if descriptors is None:
+                dist, info = compute_pdp_distance_pair(
+                    config1_data, config2_data,
+                    window_length, rough_x_val, rough_y_val, details=True
+                )
+            else:
+                dist, info = compute_pdp_distance_pair(
+                    config1_data, config2_data, window_length,
+                    descriptors=descriptor_cols, details=True,
+                    roughs=descriptor_roughs if descriptor_roughs is not None else (0,) * len(descriptor_cols))
 
             distance_matrix[i, j] = dist
             distance_matrix[j, i] = dist
+            for column, value in info['per_descriptor'].items():
+                components[column][i, j] = components[column][j, i] = value
 
             completed += 1
             if _progress is not None:
                 _progress(completed, total_comparisons)
 
-    return distance_matrix, config_ids
+    return distance_matrix, config_ids, components
+
+
+def apply_descriptor_buffer(df, descriptors, buffers):
+    """
+    Buffer in descriptor space: the R/C counterpart of apply_buffer_to_trajectories, which it reproduces for
+    descriptors ('x', 'y'). For every descriptor with a buffer b > 0, each point gets two extra points with
+    that descriptor at value - b and value + b and all other descriptors unchanged. Order per point: the pair
+    of the first descriptor, the original point, then the pairs of the remaining descriptors (G2: left, right,
+    orig, bottom, top). Positions (x, y) are not changed; only descriptor values are offset.
+    """
+    df = df.copy()
+    parts, order = [], 0
+    pairs = [(column, float(b)) for column, b in zip(descriptors, buffers)]
+
+    def emit(frame, sub_type):
+        nonlocal order
+        frame = frame.copy()
+        frame['sub_type'], frame['sub_order'] = sub_type, order
+        frame['_row'] = np.arange(len(frame))
+        parts.append(frame)
+        order += 1
+
+    for k, (column, b) in enumerate(pairs):
+        if b > 0:
+            for sign, name in ((-1, 'minus'), (1, 'plus')):
+                frame = df.copy()
+                frame[column] = frame[column] + sign * b
+                emit(frame, f'{name}:{column}')
+        if k == 0:
+            emit(df, 'orig')
+    if not pairs:
+        emit(df, 'orig')
+    out = pd.concat(parts, ignore_index=True)
+    out = out.sort_values(['_row', 'sub_order'], kind='mergesort').drop(columns='_row').reset_index(drop=True)
+    return out
 
 
 def apply_buffer_to_trajectories(df, buffer_x, buffer_y):
@@ -1940,11 +2062,12 @@ def export_similarity_rankings_to_csv(config_ids, distance_matrix, top_k=10, max
 # DISTANCE NORMALISATION (single definition shared by all PDP views and exports)
 # =============================================================================
 
-def pdp_buffer_factor(variant, buffer_x=0, buffer_y=0):
-    """Points per original point in the variant as computed (see apply_buffer_to_trajectories)."""
+def pdp_buffer_factor(variant, *buffers):
+    """Points per original point in the variant as computed: 1 + 2 per buffered axis or descriptor
+    (see apply_buffer_to_trajectories and apply_descriptor_buffer)."""
     if variant not in ('buffer', 'buffer_rough'):
         return 1
-    return 1 + 2 * (buffer_x > 0) + 2 * (buffer_y > 0)
+    return 1 + 2 * sum(1 for b in buffers if b and b > 0)
 
 
 def pdp_count_windows(df, selected_configs, selected_objects, start_time, end_time, window_length):
@@ -1954,22 +2077,27 @@ def pdp_count_windows(df, selected_configs, selected_objects, start_time, end_ti
     return max(1, df.loc[mask, 'tst'].nunique() - window_length + 1)
 
 
-def pdp_max_possible_distance(n_objects, window_length, n_windows, buffer_factor=1, n_external_points=0):
+def pdp_max_possible_distance(n_objects, window_length, n_windows, buffer_factor=1, n_external_points=0,
+                              n_descriptors=2):
     """
     Analytical maximum raw PDP distance for a run, or None when the run context is incomplete.
 
-    Each inequality-matrix cell can differ by at most 2 between two configurations, in X and
-    in Y. External points have the same coordinates in every configuration, so comparisons
-    between them never differ and are not counted. Buffering is applied after external points
+    Each inequality-matrix cell can differ by at most 2 between two configurations, in every
+    descriptor (G2: X and Y). External points have the same coordinates in every configuration, so
+    comparisons between them never differ and are not counted. Buffering is applied after external points
     are added, so it expands both moving and external points.
+
+    This is an analytical upper bound (2 × descriptors × comparable cells × windows). With dependent
+    descriptors (e.g. R2 projections of the same positions, or along/left of one path) the jointly
+    attainable maximum can be lower, so 100% may be unreachable.
     """
-    if not n_objects or not window_length or not n_windows:
+    if not n_objects or not window_length or not n_windows or not n_descriptors:
         return None
     moving_per_window = n_objects * buffer_factor * window_length
     static_per_window = n_external_points * buffer_factor * window_length
     moving_vs_moving = moving_per_window * moving_per_window - moving_per_window  # exclude diagonal
     moving_vs_static = 2 * moving_per_window * static_per_window  # both (i, j) and (j, i)
-    return 2 * 2 * (moving_vs_moving + moving_vs_static) * n_windows  # max diff 2, X and Y
+    return 2 * n_descriptors * (moving_vs_moving + moving_vs_static) * n_windows  # max diff 2 per descriptor
 
 
 def normalised_pdp_percent(raw_distance, max_possible_distance):
@@ -1990,7 +2118,7 @@ def format_pdp_distance(raw_distance, max_possible_distance):
 
 
 def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=None, window_length=None,
-                                        buffer_factor=1, n_external_points=0, n_windows=None):
+                                        buffer_factor=1, n_external_points=0, n_windows=None, n_descriptors=2):
     """
     Compute normalized distances and statistics for educational purposes.
     
@@ -2013,7 +2141,7 @@ def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=N
     """
     # Analytical maximum only; never the largest observed distance
     max_possible = pdp_max_possible_distance(n_objects, window_length, n_windows,
-                                             buffer_factor, n_external_points)
+                                             buffer_factor, n_external_points, n_descriptors)
     if max_possible:
         normalized_matrix = (distance_matrix / max_possible) * 100
     else:

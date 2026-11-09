@@ -67,12 +67,15 @@ from sklearn.metrics import silhouette_score
 # Import analysis modules
 from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
 from modules import browser_storage
+from modules import pdp_reference_systems
+import pdp_reference_ui
 
 # Settings saved in the browser and restored on the next visit (session-state keys)
 # These are also the settings that "Copy / import settings" exchanges.
 PERSISTED_SETTINGS = ['court_type', 'show_court_background', 'sidebar_configs', 'sidebar_objects',
                       'analysis_method', 'visual_start', 'visual_end', 'visual_agg_type', 'visual_temp_res',
-                      'anim_speed', 'anim_smooth', 'anim_interp_steps']
+                      'anim_speed', 'anim_smooth', 'anim_interp_steps',
+                      'pdp_reference_system', 'pdp_c4_estimator']
 COURT_OPTIONS = ["No selection", "Football", "Tennis"]
 ANALYSIS_METHODS = ["Visual Exploration", "Clustering", "Association Rules", "Sequence Analysis",
                     "PDP Analysis", "Outlier Detection", "Heat Maps", "Extra"]
@@ -93,12 +96,17 @@ DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings
                        'pdp_last_run_report', 'variant_comparison_results', 'cluster_quality_metrics',
                        'pdp_cluster_labels', 'pdp_linkage_matrix', 'pdp_viz_configs', '_pdp_viz_configs_choice',
                        'pdp_manual_points', 'pdp_external_points', 'distance_matrix', 'trajectory_ids',
-                       'cluster_labels']
+                       'cluster_labels', '_pdp_ref_channels', '_pdp_ref_dataset', 'pdp_reference_override',
+                       'pdp_reference_ack']
 
 
 # Choices kept while their widgets are not drawn (Streamlit otherwise returns hidden widgets to their
 # defaults, e.g. after switching analysis method)
-KEPT_CHOICES = [key for pair in TIME_RANGE_KEYS for key in pair] + ['pdp_window', 'pdp_variants', 'pdp_use_external']
+KEPT_CHOICES = [key for pair in TIME_RANGE_KEYS for key in pair] + ['pdp_window', 'pdp_variants', 'pdp_use_external',
+                                                                    'pdp_reference_system', 'pdp_c4_estimator']
+# Buffer/Rough per descriptor of the R/C reference systems (kept while another system is selected)
+KEPT_CHOICES += [f'pdp_ref_{kind}_{d}' for kind in ('buffer', 'rough')
+                 for d in sorted({d for ids in pdp_reference_systems.DESCRIPTOR_ORDER.values() for d in ids})]
 
 
 def keep_choices_across_views():
@@ -130,6 +138,8 @@ def apply_opening_baseline(df):
     s.court_type = 'No selection'
     s.pdp_variants = ['Fundamental']
     s.pdp_use_external = False
+    s.pdp_reference_system = pdp_reference_systems.DEFAULT_SYSTEM      # G2: the existing Cartesian baseline
+    s.pdp_c4_estimator = pdp_reference_systems.DEFAULT_ESTIMATOR        # mean flow paths; median is the comparison
     s.pdp_window = min(3, int(df['tst'].nunique()))
     for key in DATASET_RESULT_KEYS:
         s.pop(key, None)
@@ -185,6 +195,8 @@ def persisted_setting_validators(config_sources, objects, time_range=None):
         'anim_speed': lambda v: int(v) if _is_number(v) and v == int(v) and 50 <= v <= 1000 and v % 50 == 0 else None,
         'anim_smooth': lambda v: v if isinstance(v, bool) else None,
         'anim_interp_steps': lambda v: int(v) if _is_number(v) and v == int(v) and 2 <= v <= 20 else None,
+        'pdp_reference_system': choice(list(pdp_reference_systems.SYSTEMS)),
+        'pdp_c4_estimator': choice(list(pdp_reference_systems.ESTIMATORS)),
     }
 
 
@@ -338,9 +350,10 @@ def pdp_norm_kwargs(variant_key):
     return dict(n_objects=s.get('pdp_norm_n_objects'),
                 window_length=s.get('pdp_norm_window_length'),
                 n_windows=s.get('pdp_norm_n_windows'),
-                buffer_factor=pdp_analysis.pdp_buffer_factor(variant_key, s.get('pdp_norm_buffer_x', 0),
-                                                             s.get('pdp_norm_buffer_y', 0)),
-                n_external_points=s.get('pdp_norm_n_external_points', 0))
+                buffer_factor=pdp_analysis.pdp_buffer_factor(
+                    variant_key, *s.get('pdp_norm_buffers', (s.get('pdp_norm_buffer_x', 0), s.get('pdp_norm_buffer_y', 0)))),
+                n_external_points=s.get('pdp_norm_n_external_points', 0),
+                n_descriptors=s.get('pdp_norm_n_descriptors', 2))
 
 
 def pdp_max_distance(variant_key):
@@ -440,6 +453,9 @@ def pdp_settings_record(df, configs, objects, start, end, window, variant_keys,
     used = all_times[(all_times >= start) & (all_times <= end)]
     uses_buffer = any(k in pdp_analysis.BUFFER_VARIANTS for k in variant_keys)
     uses_rough = any(k in pdp_analysis.ROUGH_VARIANTS for k in variant_keys)
+    reference = pdp_reference_ui.current_reference_record()
+    if reference.get('system', 'G2') != 'G2':      # R/C: Buffer and Rough per descriptor, not X/Y
+        buffer_xy, rough_xy = reference.get('descriptor_buffer'), reference.get('descriptor_rough')
     return {
         'filename': st.session_state.get('filename') or 'unknown file',
         'configs': list(configs), 'objects': list(objects),
@@ -449,18 +465,26 @@ def pdp_settings_record(df, configs, objects, start, end, window, variant_keys,
         'last_index': int(np.searchsorted(all_times, used[-1])) if len(used) else None,
         'window': window, 'n_windows': max(0, len(used) - window + 1),
         'variants': list(variant_keys),
-        'buffer': tuple(buffer_xy) if uses_buffer else None,
-        'rough': tuple(rough_xy) if uses_rough else None,
+        'buffer': (dict(buffer_xy) if isinstance(buffer_xy, dict) else tuple(buffer_xy)) if uses_buffer else None,
+        'rough': (dict(rough_xy) if isinstance(rough_xy, dict) else tuple(rough_xy)) if uses_rough else None,
         'external': [tuple(p) for p in external_points or ()],
         'external_switch': bool(st.session_state.get('pdp_use_external', False)),
+        'reference': reference,
     }
 
 
 def pdp_run_params(variant_key):
     """Buffer/Rough values the completed result of one variant actually used."""
     run = st.session_state.get('pdp_run_settings') or {}
-    return pdp_analysis.pdp_variant_parameters(variant_key, *(run.get('buffer') or (0, 0)),
-                                               *(run.get('rough') or (0, 0)))
+    xy = lambda v: tuple(v) if isinstance(v, (tuple, list)) else (0, 0)   # R/C runs store per-descriptor dicts
+    return pdp_analysis.pdp_variant_parameters(variant_key, *xy(run.get('buffer')), *xy(run.get('rough')))
+
+
+def _parameter_text(values, name):
+    """'Buffer X/Y 1/1 m' (G2) or 'Buffer per descriptor: cyclist_road_along 1, ... m' (R/C)."""
+    if isinstance(values, dict):
+        return f"{name} per descriptor: " + ", ".join(f"{d} {v:g}" for d, v in values.items()) + " m"
+    return f"{name} X/Y {values[0]:g}/{values[1]:g} m"
 
 
 def pdp_run_external():
@@ -473,13 +497,13 @@ def pdp_variant_caption(variant_key):
     run = st.session_state.get('pdp_run_settings')
     if not run:
         return f"{PDP_VARIANT_NAMES.get(variant_key, variant_key)} result"
-    prm = pdp_run_params(variant_key)
-    buffer = (f"Buffer X/Y {prm['buffer_x']:g}/{prm['buffer_y']:g} m" if variant_key in pdp_analysis.BUFFER_VARIANTS
+    buffer = (_parameter_text(run.get('buffer') or (0, 0), "Buffer") if variant_key in pdp_analysis.BUFFER_VARIANTS
               else "no Buffer")
-    rough = (f"Rough X/Y {prm['rough_x']:g}/{prm['rough_y']:g} m" if variant_key in pdp_analysis.ROUGH_VARIANTS
+    rough = (_parameter_text(run.get('rough') or (0, 0), "Rough") if variant_key in pdp_analysis.ROUGH_VARIANTS
              else "no Rough")
     external = f"{len(run['external'])} external point(s)" if run['external'] else "external points off"
-    return (f"**{PDP_VARIANT_NAMES.get(variant_key, variant_key)} result** · {buffer} · {rough} · "
+    return (f"**{PDP_VARIANT_NAMES.get(variant_key, variant_key)} result** · "
+            f"reference system {(run.get('reference') or {}).get('label', 'G2')} · {buffer} · {rough} · "
             f"window {run['window']} ({run['n_windows']} window{'s' if run['n_windows'] != 1 else ''}) · {external}")
 
 
@@ -492,6 +516,8 @@ def show_pdp_settings(run, entered_buffer=None, entered_rough=None):
                   (run['first_index'], run['last_index']) != (run['start'], run['end']) else "")
 
     def used(values, variant_names, entered):
+        if isinstance(values, dict):
+            return (", ".join(f"{d} {v:g}" for d, v in values.items()) + f" m (per descriptor; used by {variant_names})")
         if values is not None:
             return f"X/Y {values[0]:g}/{values[1]:g} m (used by {variant_names})"
         if entered is not None and any(entered):
@@ -506,6 +532,7 @@ def show_pdp_settings(run, entered_buffer=None, entered_rough=None):
         "tst is the time index in the file; its unit depends on the dataset.",
         f"**Window:** {run['window']} observations → {run['n_windows']} analysed "
         f"window{'s' if run['n_windows'] != 1 else ''}",
+        f"**Reference system:** {pdp_reference_ui.reference_record_text(run.get('reference'))}",
         f"**Variants:** {', '.join(PDP_VARIANT_NAMES.get(k, k) for k in run['variants']) or 'none selected'}",
         f"**Buffer:** {used(run['buffer'], 'Buffer or Buffer + Rough', entered_buffer)}",
         f"**Rough:** {used(run['rough'], 'Rough or Buffer + Rough', entered_rough)}",
@@ -4404,6 +4431,10 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                 key="pdp_rough_y"
             )
         
+        # Reference system (G2/R2/R4/C4): separate from the Buffer/Rough variants and from external points
+        st.markdown("---")
+        pdp_reference = pdp_reference_ui.reference_controls(df)
+
         # External Points Section
         st.markdown("---")
         st.subheader("External Reference Points")
@@ -4650,21 +4681,29 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                                 if st.session_state.get('pdp_use_external', False) else [])
             current_run_signature = pdp_analysis.pdp_run_signature(
                 df, selected_configs, selected_objects, start_time, end_time, window_length,
-                buffer_x, buffer_y, rough_x, rough_y, selected_variant_keys, external_for_run)
+                buffer_x, buffer_y, rough_x, rough_y, selected_variant_keys, external_for_run,
+                reference_key=pdp_reference.run_key(selected_variant_keys))
+            reference_blockers = pdp_reference.blockers(selected_variant_keys, external_for_run)
+            for blocker in reference_blockers:
+                st.error(blocker)
+            pdp_can_compute = pdp_range_valid and not reference_blockers
             pending_settings = pdp_settings_record(
                 df, selected_configs, selected_objects, start_time, end_time, window_length,
                 selected_variant_keys, (buffer_x, buffer_y), (rough_x, rough_y), external_for_run)
             with st.container(border=True):
                 st.markdown("**Next computation** (settings as entered now)")
-                show_pdp_settings(pending_settings, (buffer_x, buffer_y), (rough_x, rough_y))
+                show_pdp_settings(pending_settings, *(((buffer_x, buffer_y), (rough_x, rough_y)) if pdp_reference.is_g2
+                                                      else (None, None)))
             st.caption("PDP Analysis compares whole configurations, including all selected objects: its clustering, "
                        "MDS and rankings group configurations. To group individual object trajectories, use the "
                        "separate **Clustering** method in the sidebar. After changing inputs, compute again "
                        "before interpreting results.")
 
             # Compute button
-            if st.button("Compute PDP Analysis", type="primary", key="compute_pdp", disabled=not pdp_range_valid,
-                         help=None if pdp_range_valid else "Start time is after End time: correct the time range first."):
+            if st.button("Compute PDP Analysis", type="primary", key="compute_pdp", disabled=not pdp_can_compute,
+                         help=None if pdp_can_compute else
+                         ("Start time is after End time: correct the time range first." if not pdp_range_valid
+                          else "This reference system cannot be computed now: see the message above.")):
                 if not selected_variant_keys:
                     st.error("Please select at least one variant to compute.")
                 else:
@@ -4673,8 +4712,13 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     external_points = tuple(external_points_list) if external_points_list else None
                     
                     # Parameters per variant (Fundamental uses none)
-                    variant_params = {k: pdp_analysis.pdp_variant_parameters(k, buffer_x, buffer_y, rough_x, rough_y)
-                                      for k in PDP_VARIANT_NAMES}
+                    if pdp_reference.is_g2:
+                        variant_params = {k: pdp_analysis.pdp_variant_parameters(k, buffer_x, buffer_y, rough_x, rough_y)
+                                          for k in PDP_VARIANT_NAMES}
+                    else:   # Buffer/Rough per descriptor; external points projected like the trajectories
+                        variant_params = {k: dict(pdp_reference.variant_parameters(k),
+                                                  external_descriptors=pdp_reference.external_values(external_points))
+                                          for k in PDP_VARIANT_NAMES}
                     n_pairs = len(selected_configs) * (len(selected_configs) - 1) // 2
                     run_settings = pdp_settings_text(
                         len(selected_configs), selected_objects, start_time, end_time, window_length,
@@ -4688,16 +4732,22 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                                    f"{n_pairs:,} configuration pairs per variant", expanded=True) as status:
                         progress = PdpProgress(selected_variant_keys)
                         try:
+                            # Descriptor channels: each point transformed once per reference definition
+                            # (G2 uses x/y unchanged)
+                            stage = "reference-system descriptors"
+                            run_df = pdp_reference.channels(df)
                             for variant_key in [k for k in variant_params if k in selected_variant_keys]:
                                 stage = f"distance calculation ({PDP_VARIANT_NAMES[variant_key]} variant)"
                                 progress.start(variant_key)
                                 results_all[variant_key], c_ids = pdp_analysis.compute_pdp_distance_matrix(
-                                    df, tuple(selected_configs), tuple(selected_objects),
+                                    run_df, tuple(selected_configs), tuple(selected_objects),
                                     start_time, end_time,
                                     window_length=window_length,
                                     pdp_variant=variant_key,
                                     external_points=external_points,
                                     progress=progress,
+                                    descriptors=pdp_reference.descriptors,
+                                    reference_key=pdp_reference.key,
                                     **variant_params[variant_key]
                                 )
                                 if config_ids is None: config_ids = c_ids
@@ -4734,8 +4784,12 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                         st.session_state.pdp_norm_n_objects = len(selected_objects)
                         st.session_state.pdp_norm_window_length = window_length
                         st.session_state.pdp_norm_n_external_points = len(external_points) if external_points else 0
+                        st.session_state.pdp_norm_n_descriptors = len(pdp_reference.descriptor_ids)
                         st.session_state.pdp_norm_buffer_x = buffer_x
                         st.session_state.pdp_norm_buffer_y = buffer_y
+                        # Buffered axes (G2) or descriptors (R/C): sets the points per original point
+                        st.session_state.pdp_norm_buffers = ((buffer_x, buffer_y) if pdp_reference.is_g2
+                                                             else pdp_reference.buffers())
                         st.session_state.pdp_norm_n_windows = pdp_analysis.pdp_count_windows(
                             df, selected_configs, selected_objects, start_time, end_time, window_length)
                         
@@ -4854,7 +4908,7 @@ The PDP distance between two configurations is the **sum of differences** across
                             if len(configs_to_compare) > 5:
                                 st.warning("Many configs selected - visualization may be large")
                     
-                    if len(configs_to_compare) > 0:
+                    if len(configs_to_compare) > 0 and pdp_reference_ui.xy_view_available("Inequality Matrices"):
                         # Get window information first
                         from modules.pdp_analysis import visualize_inequality_matrices
                         
@@ -5741,7 +5795,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                         "Compute fine-grained differences", value=False,
                         help="Optional detailed diagnostic. Leave off while comparing distances or rankings.",
                         key="pdp_show_fine_grained")
-                    if show_fine_grained and fg_config1 and fg_config2 and fg_config1 != fg_config2:
+                    if (show_fine_grained and fg_config1 and fg_config2 and fg_config1 != fg_config2 and
+                            pdp_reference_ui.xy_view_available("fine-grained difference view")):
                         # Parameters the completed result of this variant used
                         fg_params = pdp_run_params(active_variant_clust)
                         fg_buffer_x, fg_buffer_y = fg_params['buffer_x'], fg_params['buffer_y']
@@ -6313,7 +6368,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     comp_key = (st.session_state.get('pdp_run_signature'),
                                 buffer_x_comp, buffer_y_comp, rough_x_comp, rough_y_comp)
                     comp_external = pdp_run_external()
-                    if st.button("Compare All PDP Variants", key="compare_variants", type="primary"):
+                    if (pdp_reference_ui.xy_view_available("variant comparison (its Buffer/Rough fields are X/Y)") and
+                            st.button("Compare All PDP Variants", key="compare_variants", type="primary")):
                         comp_variants = list(PDP_VARIANT_NAMES)
                         n_comp_pairs = len(comp_run['configs']) * (len(comp_run['configs']) - 1) // 2
                         with st.status(f"Comparing all 4 PDP variants: {n_comp_pairs:,} configuration pairs "
@@ -6904,6 +6960,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     else:
                         st.info("Compute a distance matrix first (above) to use Cluster Quality Metrics.")
+
+                # ========================================
+                # SECTION 6: REFERENCE SYSTEMS (G2, R2, R4, C4)
+                # ========================================
+                pdp_reference_ui.render_reference_explorer(df, pdp_reference)
             else:
                 st.caption(PDP_ADVANCED_SECTIONS_NOTE)
 
