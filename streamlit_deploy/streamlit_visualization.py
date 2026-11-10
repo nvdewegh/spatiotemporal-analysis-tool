@@ -88,6 +88,36 @@ def widget_default(key, value):
     return {} if key in st.session_state else {'value': value}
 
 
+CLUSTERING_RESULT_KEYS = ('distance_matrix', 'trajectory_ids', 'features_df', 'trajectories', 'linkage_matrix',
+                          'cluster_labels', 'n_clusters')
+
+
+def clear_clustering_results():
+    """Remove clustering results so nothing from an earlier computation stays visible or downloadable."""
+    s = st.session_state
+    for key in CLUSTERING_RESULT_KEYS:
+        s[key] = None
+    s.pop('clustering_run', None)
+
+
+def store_clustering_run(df, signature, method, configs, objects, start, end, features,
+                         distance_matrix, trajectory_ids, trajectories, features_df=None):
+    """Keep the results of a successful computation together with the inputs that produced them."""
+    s = st.session_state
+    clear_clustering_results()
+    s.distance_matrix, s.trajectory_ids = distance_matrix, trajectory_ids
+    s.trajectories, s.features_df = trajectories, features_df
+    s.clustering_run = {
+        'signature': signature, 'run_id': clustering.run_id(signature), 'method': method,
+        'features': list(features or ()), 'configs': list(configs), 'objects': list(objects),
+        'start': float(start), 'end': float(end), 'fingerprint': signature[0],
+        'filename': s.get('filename') or 'unknown file',
+        'computed_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'trajectory_ids': list(trajectory_ids),
+        'trajectory_lengths': [int(len(t)) for t in trajectories],
+    }
+
+
 # Start/End time inputs of the analysis sections (session-state keys)
 TIME_RANGE_KEYS = [('visual_start', 'visual_end'), ('2sa_start', '2sa_end'), ('seq_start', 'seq_end'),
                    ('pdp_start', 'pdp_end'), ('clustering_start', 'clustering_end'), ('extra_start', 'extra_end')]
@@ -97,7 +127,8 @@ DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings
                        'pdp_cluster_labels', 'pdp_linkage_matrix', 'pdp_viz_configs', '_pdp_viz_configs_choice',
                        'pdp_manual_points', 'pdp_external_points', 'distance_matrix', 'trajectory_ids',
                        'cluster_labels', '_pdp_ref_channels', '_pdp_ref_dataset', 'pdp_reference_override',
-                       'pdp_reference_ack']
+                       'pdp_reference_ack', 'clustering_run', 'clustering_method', 'features_df', 'trajectories',
+                       'linkage_matrix', 'n_clusters']
 
 
 # Choices kept while their widgets are not drawn (Streamlit otherwise returns hidden widgets to their
@@ -7059,6 +7090,12 @@ Each window captures a snapshot of spatial relationships at different points in 
             st.session_state.cluster_labels = None
             st.session_state.features_df = None
             st.session_state.trajectories = None
+            st.session_state.pop('clustering_run', None)
+
+        # Inputs of the next computation; results are shown only when they match the computed run
+        clustering_fingerprint = clustering.data_fingerprint(df)
+        clustering_signature = clustering.run_signature(
+            clustering_fingerprint, clustering_method, selected_configs, selected_objects, start_time, end_time)
         
         st.markdown('---')
         
@@ -7103,6 +7140,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 key="selected_features"
             )
             
+            clustering_signature = clustering.run_signature(
+                clustering_fingerprint, clustering_method, selected_configs, selected_objects, start_time, end_time,
+                selected_features)
             if not selected_features:
                 st.warning("⚠️ Please select at least one feature to proceed.")
             else:
@@ -7116,22 +7156,34 @@ Each window captures a snapshot of spatial relationships at different points in 
                             df, selected_configs, selected_objects, start_time, end_time, selected_features
                         )
                         
-                        if distance_matrix is None:
+                        if distance_matrix is None or len(trajectory_ids) == 0:
+                            clear_clustering_results()
                             st.error("❌ No valid trajectories found with the current filters.")
                         else:
-                            st.session_state.distance_matrix = distance_matrix
-                            st.session_state.trajectory_ids = trajectory_ids
-                            st.session_state.features_df = features_df
-                            st.session_state.trajectories = trajectories
+                            store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
+                                                 selected_objects, start_time, end_time, selected_features,
+                                                 distance_matrix, trajectory_ids, trajectories, features_df)
                             st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories using {len(selected_features)} features!")
                     except Exception as e:
+                        clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
             
-            # Show features if computed
-            if st.session_state.features_df is not None:
+            # Show features if computed (only for the current inputs)
+            clustering_run = st.session_state.get('clustering_run')
+            if (st.session_state.get('features_df') is not None and clustering_run
+                    and clustering_run['signature'] == clustering_signature):
                 with st.expander("Extracted Features"):
-                    formatted_df = clustering.format_features_dataframe(st.session_state.features_df)
-                    st.dataframe(formatted_df)
+                    features_now = st.session_state.features_df
+                    formatted_df = clustering.format_features_dataframe(features_now)
+                    st.dataframe(formatted_df, column_config=clustering.feature_column_config(features_now))
+                    st.caption("Display rounded (sinuosity to six decimals); the values and the download keep full "
+                               "precision. Start/End are tst observation indices of the dataset.")
+                    st.download_button(
+                        "📥 Download Feature Values (CSV, full precision)",
+                        clustering.features_csv(features_now),
+                        file_name=f"feature_values_features-{'+'.join(clustering_run['features'])}"
+                                  f"_run{clustering_run['run_id']}.csv",
+                        mime="text/csv", key="download_feature_values")
         
         elif clustering_method == "Spatial (Chamfer)":
             st.subheader("📍 Spatial Clustering (Chamfer Distance)")
@@ -7145,14 +7197,16 @@ Each window captures a snapshot of spatial relationships at different points in 
                             df, selected_configs, selected_objects, start_time, end_time
                         )
                         
-                        if distance_matrix is None:
+                        if distance_matrix is None or len(trajectory_ids) == 0:
+                            clear_clustering_results()
                             st.error("❌ No valid trajectories found with the current filters.")
                         else:
-                            st.session_state.distance_matrix = distance_matrix
-                            st.session_state.trajectory_ids = trajectory_ids
-                            st.session_state.trajectories = trajectories
+                            store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
+                                                 selected_objects, start_time, end_time, None,
+                                                 distance_matrix, trajectory_ids, trajectories)
                             st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories!")
                     except Exception as e:
+                        clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
         
         elif clustering_method == "Spatiotemporal (DTW)":
@@ -7167,18 +7221,39 @@ Each window captures a snapshot of spatial relationships at different points in 
                             df, selected_configs, selected_objects, start_time, end_time
                         )
                         
-                        if distance_matrix is None:
+                        if distance_matrix is None or len(trajectory_ids) == 0:
+                            clear_clustering_results()
                             st.error("❌ No valid trajectories found with the current filters.")
                         else:
-                            st.session_state.distance_matrix = distance_matrix
-                            st.session_state.trajectory_ids = trajectory_ids
-                            st.session_state.trajectories = trajectories
+                            store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
+                                                 selected_objects, start_time, end_time, None,
+                                                 distance_matrix, trajectory_ids, trajectories)
                             st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories!")
                     except Exception as e:
+                        clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
         
-        # Show distance matrix visualization if available
-        if st.session_state.distance_matrix is not None:
+        # Results only for the inputs they were computed from (never outdated matrices, clusters or downloads)
+        clustering_run = st.session_state.get('clustering_run')
+        clustering_current = (clustering_run is not None and st.session_state.get('distance_matrix') is not None
+                              and clustering_run['signature'] == clustering_signature)
+        if clustering_run is not None and not clustering_current:
+            sig_old, sig_new = clustering_run['signature'], clustering_signature
+            changed = [name for name, i in (('dataset content', 0), ('method', 1), ('features', 2),
+                                            ('configurations', 3), ('objects', 4), ('start', 5), ('end', 6))
+                       if sig_old[i] != sig_new[i]]
+            st.warning("**Inputs changed. Recompute to update results.** Changed since the last computation: "
+                       + ", ".join(changed) + ". Matrices, dendrogram, memberships and downloads of the earlier "
+                       "computation are hidden until you compute again.")
+        if clustering_current:
+            st.caption(f"**Computed run {clustering_run['run_id']}** ({clustering_run['computed_at']}): "
+                       f"{clustering_run['method']}"
+                       + (f" · features {', '.join(clustering_run['features'])}"
+                          if clustering_run['method'] == 'Features (Euclidean)' else "")
+                       + f" · {len(clustering_run['configs'])} configurations · objects "
+                       f"{', '.join(map(str, clustering_run['objects']))} · tst {clustering_run['start']:g}–"
+                       f"{clustering_run['end']:g} (observation indices) · {len(clustering_run['trajectory_ids'])} "
+                       f"trajectories · Ward linkage")
             st.markdown('---')
             st.subheader("Distance Matrix Heatmap")
             
@@ -8375,7 +8450,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.download_button(
                         label="📥 Download Cluster Assignments (CSV)",
                         data=csv_clusters,
-                        file_name=f"cluster_assignments_{n_clusters}clusters.csv",
+                        file_name=f"cluster_assignments_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv",
                         help="Download complete cluster assignments"
                     )
@@ -8395,11 +8470,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.dataframe(distance_df.iloc[:5, :5], use_container_width=True)
                     
                     # Download button
-                    csv_distances = distance_df.to_csv()
+                    csv_distances = distance_df.to_csv(float_format='%.17g')
                     st.download_button(
                         label="� Download Distance Matrix (CSV)",
                         data=csv_distances,
-                        file_name="distance_matrix.csv",
+                        file_name=f"distance_matrix_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv",
                         help="Download full pairwise distance matrix"
                     )
@@ -8440,20 +8515,14 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.download_button(
                         label="📥 Download Cluster Statistics (CSV)",
                         data=csv_stats,
-                        file_name=f"cluster_statistics_{n_clusters}clusters.csv",
+                        file_name=f"cluster_statistics_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv"
                     )
                 
                 with col4:
                     # Export configuration/methodology
-                    config_data = {
-                        'Analysis_Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'Clustering_Method': clustering_method,
-                        'Number_of_Clusters': n_clusters,
-                        'Number_of_Trajectories': len(st.session_state.trajectory_ids),
-                        'Linkage_Method': 'Ward',
-                        'Distance_Metric': 'Euclidean' if clustering_method == 'Features' else 'Chamfer' if clustering_method == 'Spatial (Chamfer)' else 'DTW'
-                    }
+                    # From the computed run and the current cut of its hierarchy (not live widget values)
+                    config_data = clustering.run_configuration(clustering_run, n_clusters, cluster_labels)
                     
                     config_df = pd.DataFrame([config_data]).T
                     config_df.columns = ['Value']
@@ -8465,7 +8534,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.download_button(
                         label="📥 Download Configuration (CSV)",
                         data=csv_config,
-                        file_name="analysis_configuration.csv",
+                        file_name=f"analysis_configuration_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv"
                     )
             
@@ -8574,8 +8643,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 st.markdown(f"""
                 **Clustering Approach:**
-                - **Method**: {clustering_method}
-                - **Distance Metric**: {'Euclidean (feature-based)' if clustering_method == 'Features' else 'Chamfer (spatial)' if clustering_method == 'Spatial (Chamfer)' else 'Dynamic Time Warping'}
+                - **Method**: {clustering_run['method']}
+                - **Distance Metric**: {clustering.DISTANCE_METRICS[clustering_run['method']]}
                 - **Linkage**: Ward (minimizes within-cluster variance)
                 - **Algorithm**: Hierarchical Agglomerative Clustering
                 

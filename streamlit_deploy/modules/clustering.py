@@ -24,26 +24,111 @@ from .common import render_interactive_chart
 # TRAJECTORY FEATURE EXTRACTION
 # =============================================================================
 
+FEATURE_COLUMN_LABELS = {
+    'total_distance': 'Total Distance (m)',
+    'duration': 'Duration (s)',
+    'avg_speed': 'Avg Speed (m/s)',
+    'net_displacement': 'Net Displacement (m)',
+    'sinuosity': 'Sinuosity (ratio)',
+    'bbox_area': 'Bbox Area (m²)',
+    'avg_direction': 'Avg Direction (rad)',
+    'max_speed': 'Max Speed (m/s)'
+}
+# Displayed decimals per feature (display only: values stay numeric at full precision)
+FEATURE_DISPLAY_DECIMALS = {'sinuosity': 6}
+DEFAULT_DISPLAY_DECIMALS = 2
+
+
 def format_features_dataframe(features_df):
-    """Format features dataframe with units in column names and 2 decimal places."""
-    column_units = {
-        'total_distance': 'Total Distance (m)',
-        'duration': 'Duration (s)',
-        'avg_speed': 'Avg Speed (m/s)',
-        'net_displacement': 'Net Displacement (m)',
-        'sinuosity': 'Sinuosity (ratio)',
-        'bbox_area': 'Bbox Area (m²)',
-        'avg_direction': 'Avg Direction (rad)',
-        'max_speed': 'Max Speed (m/s)'
-    }
-    
-    formatted_df = features_df.copy()
-    formatted_df = formatted_df.rename(columns=column_units)
-    
-    for col in formatted_df.columns:
-        formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}")
-    
-    return formatted_df
+    """
+    Features with units in the column names. Values stay numeric at full precision; rounding for display
+    is done by feature_column_config (sinuosity six decimals, other features two).
+    """
+    return features_df.rename(columns=FEATURE_COLUMN_LABELS)
+
+
+def feature_display_format(feature):
+    return f"%.{FEATURE_DISPLAY_DECIMALS.get(feature, DEFAULT_DISPLAY_DECIMALS)}f"
+
+
+def feature_column_config(features_df):
+    """st.dataframe column_config for the formatted features table (display formatting only)."""
+    return {FEATURE_COLUMN_LABELS.get(f, f): st.column_config.NumberColumn(
+                FEATURE_COLUMN_LABELS.get(f, f), format=feature_display_format(f))
+            for f in features_df.columns}
+
+
+def features_csv(features_df):
+    """Raw numeric feature values (full precision), one row per trajectory ID."""
+    return features_df.rename_axis('Trajectory_ID').to_csv(float_format='%.17g')
+
+
+# =============================================================================
+# COMPUTED-RUN IDENTITY (results and exports belong to the inputs they were computed from)
+# =============================================================================
+
+STANDARDISATION = {'Features (Euclidean)': 'StandardScaler (z-score per feature)'}
+DISTANCE_METRICS = {'Features (Euclidean)': 'Euclidean', 'Spatial (Chamfer)': 'Chamfer',
+                    'Spatiotemporal (DTW)': 'DTW'}
+LINKAGE_METHOD = 'Ward'
+
+
+def data_fingerprint(df):
+    """Content identity of the columns clustering uses (not the filename): SHA-256 over their values."""
+    import hashlib
+    cols = [c for c in ('config_source', 'obj', 'tst', 'x', 'y', 'X', 'Y') if c in df.columns]
+    hashes = pd.util.hash_pandas_object(df[cols], index=False).to_numpy()
+    return hashlib.sha256(hashes.tobytes() + ','.join(cols).encode()).hexdigest()
+
+
+def run_signature(fingerprint, method, configs, objects, start, end, features=None):
+    """Everything that determines a clustering result (cluster count excluded: it only cuts the hierarchy)."""
+    return (fingerprint, method,
+            tuple(features or ()) if method == 'Features (Euclidean)' else (),
+            tuple(sorted(map(str, configs))), tuple(sorted(map(str, objects))),
+            float(start), float(end),
+            STANDARDISATION.get(method, 'none'), LINKAGE_METHOD)
+
+
+def run_id(signature):
+    import hashlib
+    return hashlib.sha256(repr(signature).encode()).hexdigest()[:10]
+
+
+def run_file_tag(run, n_clusters):
+    """Distinct, informative filename part: method/feature, cluster count and run identifier."""
+    if run['method'] == 'Features (Euclidean)':
+        what = 'features-' + '+'.join(run['features'])
+    else:
+        what = DISTANCE_METRICS[run['method']].lower()
+    return f"{what}_{n_clusters}clusters_run{run['run_id']}"
+
+
+def run_configuration(run, n_requested, labels):
+    """Configuration export of a computed run and its current cluster cut (not live widget values)."""
+    lengths = run['trajectory_lengths']
+    return {key: str(value) for key, value in {
+        'Run_ID': run['run_id'],
+        'Computed_At': run['computed_at'],
+        'Dataset_File': run['filename'],
+        'Dataset_Content_SHA256': run['fingerprint'],
+        'Clustering_Method': run['method'],
+        'Distance_Metric': DISTANCE_METRICS[run['method']],
+        'Selected_Features': ', '.join(run['features']) if run['method'] == 'Features (Euclidean)' else 'not applicable',
+        'Standardisation': STANDARDISATION.get(run['method'], 'none'),
+        'Linkage_Method': LINKAGE_METHOD,
+        'Requested_Number_of_Clusters': int(n_requested),
+        'Actual_Number_of_Clusters': int(len(np.unique(labels))),
+        'Configuration_IDs': ', '.join(map(str, run['configs'])),
+        'Object_IDs': ', '.join(map(str, run['objects'])),
+        'Start_Observation_tst': f"{run['start']:g}",
+        'End_Observation_tst': f"{run['end']:g}",
+        'Time_Unit': 'tst observation index of the dataset (not seconds)',
+        'Number_of_Trajectories': len(run['trajectory_ids']),
+        'Positions_per_Trajectory': (f"{min(lengths)}" if min(lengths) == max(lengths)
+                                     else f"{min(lengths)}–{max(lengths)}"),
+        'Total_Positions': int(sum(lengths)),
+    }.items()}
 
 
 def extract_trajectory_features(traj_df):
