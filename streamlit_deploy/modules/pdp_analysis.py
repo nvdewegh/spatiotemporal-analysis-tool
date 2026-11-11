@@ -13,8 +13,8 @@ Four PDP variants are supported:
 
 The module provides:
 - PDP distance matrix computation
-- Interactive dendrogram visualization
-- MDS embedding visualization
+- Interactive dendrogram visualisation
+- MDS embedding visualisation
 - Top-K similar configuration analysis
 """
 
@@ -69,7 +69,7 @@ TENNIS_COURT_REFERENCE_POINTS = {
     "Top-Right Doubles": (COURT_WIDTH + DOUBLES_ALLEY_WIDTH, COURT_LENGTH, "Top-right corner of doubles court"),
     
     # Net positions
-    "Net Center": (CENTER_X, NET_POSITION, "Center of the net"),
+    "Net Center": (CENTER_X, NET_POSITION, "Centre of the net"),
     "Net Left (Singles)": (0, NET_POSITION, "Left side of net at singles line"),
     "Net Right (Singles)": (COURT_WIDTH, NET_POSITION, "Right side of net at singles line"),
     "Net Left (Doubles)": (-DOUBLES_ALLEY_WIDTH, NET_POSITION, "Left side of net at doubles line"),
@@ -78,19 +78,19 @@ TENNIS_COURT_REFERENCE_POINTS = {
     # Service box corners (bottom court - near baseline y=0)
     "Service Box BL-Bottom": (0, SERVICE_LINE_BOTTOM, "Service box bottom-left corner (bottom court)"),
     "Service Box BR-Bottom": (COURT_WIDTH, SERVICE_LINE_BOTTOM, "Service box bottom-right corner (bottom court)"),
-    "Service Box Center-Bottom": (CENTER_X, SERVICE_LINE_BOTTOM, "Service box center line (bottom court)"),
+    "Service Box Center-Bottom": (CENTER_X, SERVICE_LINE_BOTTOM, "Service box centre line (bottom court)"),
     
     # Service box corners (top court - near baseline y=court_length)
     "Service Box TL-Top": (0, SERVICE_LINE_TOP, "Service box top-left corner (top court)"),
     "Service Box TR-Top": (COURT_WIDTH, SERVICE_LINE_TOP, "Service box top-right corner (top court)"),
-    "Service Box Center-Top": (CENTER_X, SERVICE_LINE_TOP, "Service box center line (top court)"),
+    "Service Box Center-Top": (CENTER_X, SERVICE_LINE_TOP, "Service box centre line (top court)"),
     
     # Baseline center marks
-    "Center Mark Bottom": (CENTER_X, 0, "Center mark on bottom baseline"),
-    "Center Mark Top": (CENTER_X, COURT_LENGTH, "Center mark on top baseline"),
+    "Centre Mark Bottom": (CENTER_X, 0, "Centre mark on bottom baseline"),
+    "Centre Mark Top": (CENTER_X, COURT_LENGTH, "Centre mark on top baseline"),
     
     # Court center
-    "Court Center": (CENTER_X, NET_POSITION, "Center of the court (same as net center)"),
+    "Court Center": (CENTER_X, NET_POSITION, "Centre of the court (same as net centre)"),
 }
 
 
@@ -271,7 +271,7 @@ def compute_pdp_distance_pair(config1_data, config2_data, window_length, rough_x
     This follows the original N_PDP.py algorithm:
     1. For each time window, build inequality matrices for X and Y dimensions
     2. Sum absolute differences across all windows for each dimension
-    3. Return raw sum of X + Y distances (normalization happens separately)
+    3. Return raw sum of X + Y distances (normalisation happens separately)
 
     Args:
         config1_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for first config
@@ -507,8 +507,8 @@ def _compute_pdp_distance_matrix_uncached(_df, selected_configs, selected_object
 
     Args:
         _df: DataFrame with trajectory data (excluded from cache key)
-        selected_configs: List of configuration IDs to analyze (tuple for reliable hashing)
-        selected_objects: List of object IDs to analyze (tuple for reliable hashing)
+        selected_configs: List of configuration IDs to analyse (tuple for reliable hashing)
+        selected_objects: List of object IDs to analyse (tuple for reliable hashing)
         start_time: Start timestamp
         end_time: End timestamp
         window_length: Temporal window length for PDP analysis
@@ -961,14 +961,14 @@ def visualize_inequality_matrices(df, config_ids, selected_objects, start_time, 
                                    window_length=3, buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                    window_indices=None, external_points=None):
     """
-    Visualize inequality matrices for multiple configurations.
+    Visualise inequality matrices for multiple configurations.
     
     Shows the fundamental PDP representation: how configurations encode
     spatial relationships as inequality matrices (0=smaller, 1=equal, 2=bigger).
     
     Args:
         df: DataFrame with trajectory data
-        config_ids: List of configuration IDs to visualize
+        config_ids: List of configuration IDs to visualise
         selected_objects: List of object IDs
         start_time, end_time: Time range
         window_length: Window size
@@ -1400,12 +1400,12 @@ def create_interactive_dendrogram(linkage_matrix, labels, distance_matrix, n_clu
 
 def create_mds_visualization(distance_matrix, labels, cluster_labels=None):
     """
-    Create 2D MDS (Multidimensional Scaling) visualization of configurations.
+    Create 2D MDS (Multidimensional Scaling) visualisation of configurations.
     
     Args:
         distance_matrix: Pairwise distance matrix
         labels: Configuration labels
-        cluster_labels: Optional cluster assignments for coloring
+        cluster_labels: Optional cluster assignments for colouring
     
     Returns:
         Tuple of (Plotly figure, stress value)
@@ -1484,12 +1484,12 @@ def create_mds_visualization(distance_matrix, labels, cluster_labels=None):
 
 def create_mds_visualization_3d(distance_matrix, labels, cluster_labels=None):
     """
-    Create 3D MDS (Multidimensional Scaling) visualization of configurations.
+    Create 3D MDS (Multidimensional Scaling) visualisation of configurations.
     
     Args:
         distance_matrix: Pairwise distance matrix
         labels: Configuration labels
-        cluster_labels: Optional cluster assignments for coloring
+        cluster_labels: Optional cluster assignments for colouring
     
     Returns:
         Plotly figure with 3D scatter plot
@@ -1724,11 +1724,11 @@ def plot_trajectory_comparison(df, config_ids, selected_configs, start_time, end
     Args:
         df: DataFrame with trajectory data
         config_ids: List of all configuration IDs
-        selected_configs: List of configs to visualize
+        selected_configs: List of configs to visualise
         start_time: Start time for trajectory window
         end_time: End time for trajectory window
         selected_objects: List of object IDs to show (None = all)
-        cluster_labels: Optional cluster labels for color coding
+        cluster_labels: Optional cluster labels for colour coding
         distance_matrix: Optional distance matrix for showing similarities
         show_buffers: Whether to show buffer zones around points
         buffer_size: Radius of buffer zones (in meters)
@@ -2120,7 +2120,7 @@ def format_pdp_distance(raw_distance, max_possible_distance):
 def compute_distance_normalization_info(distance_matrix, config_ids, n_objects=None, window_length=None,
                                         buffer_factor=1, n_external_points=0, n_windows=None, n_descriptors=2):
     """
-    Compute normalized distances and statistics for educational purposes.
+    Compute normalised distances and statistics for educational purposes.
     
     Args:
         distance_matrix: Raw PDP distance matrix (n x n)
@@ -2209,8 +2209,8 @@ def create_distance_distribution_plot(histogram_data, show_normalized=True, vari
     Create histogram showing distribution of distances.
 
     Args:
-        histogram_data: Dict with 'raw' and 'normalized' arrays (unique configuration pairs)
-        show_normalized: If True, show normalized; else show raw
+        histogram_data: Dict with 'raw' and 'normalised' arrays (unique configuration pairs)
+        show_normalized: If True, show normalised; else show raw
         variant_label: Optional variant name for the title
 
     Returns:
@@ -2218,7 +2218,7 @@ def create_distance_distribution_plot(histogram_data, show_normalized=True, vari
     """
     if show_normalized:
         data = histogram_data['normalized']
-        title = "Distribution of Normalized PDP Distances (%)"
+        title = "Distribution of Normalised PDP Distances (%)"
         xaxis_title = "Normalised distance (% of analytical maximum)"
     else:
         data = histogram_data['raw']
@@ -2271,7 +2271,7 @@ def create_distance_distribution_plot(histogram_data, show_normalized=True, vari
 
 
 def initialize_pdp_session_state():
-    """Initialize session state variables for PDP analysis."""
+    """Initialise session state variables for PDP analysis."""
     if 'pdp_distance_matrix' not in st.session_state:
         st.session_state.pdp_distance_matrix = None
     if 'pdp_linkage_matrix' not in st.session_state:
@@ -2302,7 +2302,7 @@ def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end
 
     Args:
         df: DataFrame with trajectory data
-        selected_configs: List of configurations to analyze
+        selected_configs: List of configurations to analyse
         selected_objects: List of objects to include
         start_time: Start time for analysis
         end_time: End time for analysis
@@ -2361,7 +2361,7 @@ def compare_pdp_variants(df, selected_configs, selected_objects, start_time, end
 
 def create_parameter_comparison_plot(variant_results):
     """
-    Create visualization comparing distances across PDP variants.
+    Create visualisation comparing distances across PDP variants.
     
     Args:
         variant_results: Dict from compare_pdp_variants()
@@ -2654,7 +2654,7 @@ def find_similar_and_dissimilar_configs(distance_matrix, config_ids, target_conf
 def create_neighborhood_visualization(distance_matrix, config_ids, target_config, 
                                       cluster_labels=None, k=10):
     """
-    Create interactive visualization showing neighborhood of a configuration.
+    Create interactive visualisation showing neighborhood of a configuration.
     
     Args:
         distance_matrix: Pairwise distance matrix
@@ -3192,7 +3192,7 @@ def compute_pairwise_inequality_differences(config1_data, config2_data, window_l
     Compute detailed inequality matrix differences between two configurations.
     
     Returns the raw differences per time window and per object pair, so we can
-    visualize exactly where the differences occur.
+    visualise exactly where the differences occur.
     
     Args:
         config1_data: DataFrame with columns ['tst', 'obj', 'x', 'y'] for first config
@@ -3322,7 +3322,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
                                      buffer_x=0, buffer_y=0, rough_x=0, rough_y=0,
                                      external_points=None, show_court=True):
     """
-    Create side-by-side visualization (on tennis courts if show_court) showing where two configurations differ.
+    Create side-by-side visualisation (on tennis courts if show_court) showing where two configurations differ.
     
     Draws difference lines between objects at time points where the inequality matrices differ.
     Line thickness indicates the magnitude of difference.
@@ -3331,7 +3331,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
         df: DataFrame with trajectory data
         config1_id: First configuration ID
         config2_id: Second configuration ID
-        selected_objects: List of object IDs to analyze
+        selected_objects: List of object IDs to analyse
         start_time, end_time: Time range
         window_length: PDP window length
         buffer_x, buffer_y: Buffer parameters
@@ -3579,7 +3579,7 @@ def create_difference_visualization(df, config1_id, config2_id, selected_objects
         
         # Build comprehensive hover text showing BOTH configurations + ID for matching
         hover_lines = [
-            f"<b>🔗 Difference #{diff_id}</b>",
+            f"<b>Difference #{diff_id}</b>",
             f"<b>Value: {diff_val}</b>",
             f"Objects: O{obj_i} (t={tst_i:.2f}s) ↔ O{obj_j} (t={tst_j:.2f}s)",
             "",

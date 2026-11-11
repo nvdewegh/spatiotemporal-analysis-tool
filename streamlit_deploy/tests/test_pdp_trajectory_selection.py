@@ -16,7 +16,7 @@ from test_pdp_advanced_sections import app, compute, select  # noqa: F401  (fixt
 CSV = os.environ.get('PDP_1HZ_CSV')
 pytestmark = pytest.mark.skipif(not CSV or not os.path.exists(CSV), reason='set PDP_1HZ_CSV to A2_1Hz_dataset.csv')
 
-FIELD = 'Select configurations to visualize'
+FIELD = 'Select configurations to visualise'
 
 
 def field(at):

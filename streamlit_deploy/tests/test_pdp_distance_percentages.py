@@ -193,6 +193,6 @@ def test_app_views_and_exports_agree(app):
     hover = [h for row in heatmap['data'][0]['hovertext'] for h in row]
     assert any('From: Config_1<br>To: Config_2<br>Normalised distance: 27.27%<br>Raw PDP distance: 144' == h
                for h in hover)
-    norm_csv = pd.read_csv(io.StringIO(app.captured['📥 Download Normalized Distances (CSV)']))
+    norm_csv = pd.read_csv(io.StringIO(app.captured['Download Normalised Distances (CSV)']))
     row = norm_csv[(norm_csv['Config_A'] == 'Config_1') & (norm_csv['Config_B'] == 'Config_2')].iloc[0]
     assert row['Raw_Distance'] == 144 and row['Normalized_Distance'] == pytest.approx(27.2727, abs=1e-4)

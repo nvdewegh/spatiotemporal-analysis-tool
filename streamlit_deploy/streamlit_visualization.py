@@ -98,6 +98,7 @@ def clear_clustering_results():
     for key in CLUSTERING_RESULT_KEYS:
         s[key] = None
     s.pop('clustering_run', None)
+    s.pop('fig_3d_cluster', None)
 
 
 def store_clustering_run(df, signature, method, configs, objects, start, end, features,
@@ -105,10 +106,14 @@ def store_clustering_run(df, signature, method, configs, objects, start, end, fe
     """Keep the results of a successful computation together with the inputs that produced them."""
     s = st.session_state
     clear_clustering_results()
+    # One hierarchy per run: dendrogram, memberships, cluster-count evaluation and exports all cut this one
+    linkage_matrix = clustering.build_linkage(distance_matrix, method, trajectory_ids)
     s.distance_matrix, s.trajectory_ids = distance_matrix, trajectory_ids
     s.trajectories, s.features_df = trajectories, features_df
+    s.linkage_matrix = linkage_matrix
     s.clustering_run = {
         'signature': signature, 'run_id': clustering.run_id(signature), 'method': method,
+        'linkage': clustering.linkage_for(method), 'linkage_matrix': linkage_matrix,
         'features': list(features or ()), 'configs': list(configs), 'objects': list(objects),
         'start': float(start), 'end': float(end), 'fingerprint': signature[0],
         'filename': s.get('filename') or 'unknown file',
@@ -693,7 +698,7 @@ def render_interactive_chart(fig, caption=None, key=None, use_container_width=Tr
 
 # Page configuration
 st.set_page_config(
-    page_title="Spatiotemporal Analysis and Modeling",
+    page_title="Spatiotemporal Analysis and Modelling",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -722,7 +727,7 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         # First run, show input for password.
-        st.title("Spatiotemporal Analysis and Modeling")
+        st.title("Spatiotemporal Analysis and Modelling")
         st.text_input(
             "Password", type="password", on_change=password_entered, key="password"
         )
@@ -730,7 +735,7 @@ def check_password():
         return False
     elif not st.session_state["password_correct"]:
         # Password not correct, show input + error.
-        st.title("Spatiotemporal Analysis and Modeling")
+        st.title("Spatiotemporal Analysis and Modelling")
         st.text_input(
             "Password", type="password", on_change=password_entered, key="password"
         )
@@ -1162,10 +1167,10 @@ def interpolate_points(points, interpolation_steps=5):
 # Visualize static trajectories
 def visualize_static(df, selected_configs, selected_objects, start_time, end_time, 
                      aggregation_type, temporal_resolution, translate_to_center=False, court_type='Football'):
-    """Create static trajectory visualization
+    """Create static trajectory visualisation
     
-    Option A: Color by Configuration, Style by Object
-    - Color (hue) = Configuration/Rally - same rally = same color
+    Option A: Colour by Configuration, Style by Object
+    - Colour (hue) = Configuration/Rally - same rally = same colour
     - Line Style = Object (solid, dash, dot, dashdot)
     - Marker Shape = Object (circle, square, diamond, triangle-up)
     
@@ -1534,7 +1539,10 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
                     mode='lines',
                     name=f'{config} - Obj {obj_id}',
                     legendgroup=legend_group,
-                    line=dict(color=color, width=2, dash=line_style),
+                    # simplify=False: Plotly otherwise drops the padded duplicate points, so the drawn
+                    # point count changes between frames, the path cannot be tweened and the line
+                    # jumps to its new end while the head is still moving (line ahead of the object)
+                    line=dict(color=color, width=2, dash=line_style, simplify=False),
                     showlegend=(frame_idx == 0), # Show legend only on first frame (initial state)
                     hoverinfo='skip'
                 ))
@@ -1664,9 +1672,9 @@ def visualize_animated(df, selected_configs, selected_objects, start_time, end_t
 def visualize_at_time(df, selected_configs, selected_objects, current_time, 
                       start_time, aggregation_type, temporal_resolution, court_type='Football',
                       use_interpolation=False, interpolation_steps=5):
-    """Create visualization at specific time point
+    """Create visualisation at specific time point
     
-    Option A: Color by Configuration, Style by Object
+    Option A: Colour by Configuration, Style by Object
     """
     fig = create_pitch_figure(court_type)
     
@@ -1769,9 +1777,9 @@ def visualize_at_time(df, selected_configs, selected_objects, current_time,
 
 # Calculate average position
 def visualize_average_position(df, selected_configs, selected_objects, start_time, end_time, court_type='Football'):
-    """Calculate and visualize average positions
+    """Calculate and visualise average positions
     
-    Option A: Color by Configuration, Style by Object
+    Option A: Colour by Configuration, Style by Object
     """
     fig = create_pitch_figure(court_type)
     
@@ -2013,7 +2021,7 @@ def get_trajectory_coords(df, obj_id, config, start_time, end_time):
 
 def find_moving_flocks(df, selected_configs, selected_objects, start_time, end_time, 
                        distance_threshold, min_duration):
-    """Find groups of objects moving together (flocking behavior)"""
+    """Find groups of objects moving together (flocking behaviour)"""
     time_steps = sorted(df[(df['tst'] >= start_time) & (df['tst'] <= end_time)]['tst'].unique())
     
     flocks = []
@@ -2173,7 +2181,7 @@ def create_heatmap(df):
 
 # Main app
 def main():
-    st.title("Spatiotemporal Analysis and Modeling")
+    st.title("Spatiotemporal Analysis and Modelling")
     keep_choices_across_views()
 
     df = st.session_state.data
@@ -2372,7 +2380,7 @@ def main():
             # Note: Don't use both 'default' and 'key' together - it causes warnings.
             # The key binds to session_state, so we just ensure session_state is initialized.
             selected_configs = st.multiselect(
-                "Select configurations to analyze",
+                "Select configurations to analyse",
                 config_sources,
                 key="sidebar_configs",
                 help="These configurations will be used across all analysis methods"
@@ -2419,7 +2427,7 @@ def main():
                 
             # Note: Don't use both 'default' and 'key' together - it causes warnings.
             selected_objects = st.multiselect(
-                "Select objects to analyze",
+                "Select objects to analyse",
                 objects,
                 key="sidebar_objects",
                 help="These objects will be used across all analysis methods"
@@ -2532,9 +2540,9 @@ def main():
         - **Static Trajectories:** View complete trajectory paths
         - **Animated Trajectories:** Watch movement over time
         - **Time Point View:** Examine trajectories at specific moments
-        - **Average Positions:** Calculate and visualize mean positions
+        - **Average Positions:** Calculate and visualise mean positions
         
-        **Tip:** Use the sidebar to select which configurations and objects to analyze.
+        **Tip:** Use the sidebar to select which configurations and objects to analyse.
         """)
         
         # Use selections from sidebar
@@ -2596,7 +2604,7 @@ def main():
             st.warning("Please select at least one configuration and one object.")
         else:
             st.markdown("---")
-            st.subheader("Visualization Types")
+            st.subheader("Visualisation Types")
             
             # Create tabs for different visualization types
             viz_tabs = st.tabs(["Static Trajectories", "Animated Trajectories", "Time Point View", "Average Positions"])
@@ -2624,7 +2632,7 @@ def main():
                     chart_key = f"static_traj_{config_str}_{obj_str}"
                     render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating static visualization: {str(e)}")
+                    st.error(f"Error creating static visualisation: {str(e)}")
             
             with viz_tabs[1]:
                 st.markdown("### Animated Trajectory View")
@@ -2757,11 +2765,11 @@ def main():
                     chart_key = f"time_point_{config_str}_{obj_str}"
                     render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating time point visualization: {str(e)}")
+                    st.error(f"Error creating time point visualisation: {str(e)}")
             
             with viz_tabs[3]:
                 st.markdown("### Average Position View")
-                st.info("Calculate and visualize the mean position for each object across the selected time range.")
+                st.info("Calculate and visualise the mean position for each object across the selected time range.")
                 
                 try:
                     fig = visualize_average_position(
@@ -2775,7 +2783,7 @@ def main():
                     chart_key = f"avg_pos_{config_str}_{obj_str}"
                     render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating average position visualization: {str(e)}")
+                    st.error(f"Error creating average position visualisation: {str(e)}")
     
     elif analysis_method == "2SA Method":
         st.header("2SA Method - Two-Step Spatial Alignment")
@@ -2786,13 +2794,13 @@ def main():
         This method aligns trajectories to a common reference point, allowing you to compare 
         movement patterns independently of their absolute spatial location.
         
-        **Key Feature:** Trajectories are translated so they all start at the center of the court,
+        **Key Feature:** Trajectories are translated so they all start at the centre of the court,
         making it easier to identify similar movement patterns.
         
         **Use Cases:**
         - Compare player movements from different starting positions
         - Identify common tactical patterns
-        - Analyze relative movement independent of field position
+        - Analyse relative movement independent of field position
         """)
         
         # Get available configurations and objects
@@ -2902,7 +2910,7 @@ def main():
             
             with alignment_tabs[0]:
                 st.markdown("### Center-Aligned Trajectories")
-                st.info("All trajectories translated to start at the court center. This view highlights movement patterns.")
+                st.info("All trajectories translated to start at the court centre. This view highlights movement patterns.")
                 
                 try:
                     fig = visualize_static(
@@ -2917,7 +2925,7 @@ def main():
                     chart_key = f"2sa_aligned_{config_str}_{obj_str}"
                     render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating aligned visualization: {str(e)}")
+                    st.error(f"Error creating aligned visualisation: {str(e)}")
             
             with alignment_tabs[1]:
                 st.markdown("### Original Trajectories")
@@ -2936,7 +2944,7 @@ def main():
                     chart_key = f"2sa_original_{config_str}_{obj_str}"
                     render_interactive_chart(fig, key=chart_key, use_container_width=use_container_width)
                 except Exception as e:
-                    st.error(f"Error creating original visualization: {str(e)}")
+                    st.error(f"Error creating original visualisation: {str(e)}")
             
             with alignment_tabs[2]:
                 st.markdown("### Side-by-Side Comparison")
@@ -3053,11 +3061,11 @@ def main():
         
         # Spatial Grid Visualization - show immediately so users can see the effect of their grid choices
         st.markdown("---")
-        st.subheader("Spatial Grid Visualization")
+        st.subheader("Spatial Grid Visualisation")
         
         st.info("""
         **Understanding the Grid:**
-        - The **tennis field in the broad sense** (light gray zones) extends beyond the court boundaries to capture out-of-bounds positions
+        - The **tennis field in the broad sense** (light grey zones) extends beyond the court boundaries to capture out-of-bounds positions
         - All zones are labeled **A, B, C,** etc. (row by row from bottom to top, filling each row left to right)
         - Each trajectory position is mapped to the zone it falls in
         - Adjust the grid resolution sliders above to see how it affects the zone layout
@@ -3186,7 +3194,7 @@ def main():
                   - Player 1 in zone B2, Player 2 in zone D4 → Token: `B2;D4`
                 - Use for: teamwork analysis, position combinations, joint patterns
                 
-                **💡 Tip**: Start with Per-entity for individual analyses, use Multi-entity to discover interactions.
+                **Tip**: Start with Per-entity for individual analyses, use Multi-entity to discover interactions.
                 """)
         
         # Use selections from sidebar
@@ -3294,12 +3302,12 @@ def main():
                 
                 # Trajectory Visualization on Tennis Court
                 st.markdown("---")
-                st.subheader("Trajectory Visualization on Tennis Court")
+                st.subheader("Trajectory Visualisation on Tennis Court")
                 st.markdown("See the actual movement patterns of the trajectories used to generate sequences")
                 
                 # Let user select which trajectories to visualize
                 viz_mode = st.radio(
-                    "Visualization mode:",
+                    "Visualisation mode:",
                     ["Show All", "Select Specific"],
                     horizontal=True,
                     key="seq_viz_mode"
@@ -3352,7 +3360,7 @@ def main():
                     
                     if len(selectable_seqs) > 0:
                         selected_ids = st.multiselect(
-                            "Select sequences to visualize:",
+                            "Select sequences to visualise:",
                             selectable_seqs['ID'].tolist(),
                             default=selectable_seqs['ID'].tolist()[:min(5, len(selectable_seqs))],
                             key="seq_selected_ids"
@@ -3381,7 +3389,7 @@ def main():
                                 colors_list.append(color_palette[idx % len(color_palette)])
                                 labels_list.append(f"{row['ID']} ({row['Sequence'][:30]}...)")
                     else:
-                        st.info("No per-entity sequences available for visualization (only multi-entity sequences)")
+                        st.info("No per-entity sequences available for visualisation (only multi-entity sequences)")
                 
                 # Plot trajectories on tennis court
                 if trajectories_to_plot:
@@ -3436,12 +3444,12 @@ def main():
                     render_interactive_chart(fig_court, "Trajectories used to generate sequences", use_container_width=use_container_width)
                     
                     st.caption("""
-                    **Legend**: Each color represents a different trajectory | 
+                    **Legend**: Each colour represents a different trajectory | 
                     ● Circle = Start | ■ Square = End | 
                     Hover over points to see details
                     """)
                 else:
-                    st.info("No trajectories selected for visualization")
+                    st.info("No trajectories selected for visualisation")
                 
                 # Create tabs for analysis
                 st.markdown("---")
@@ -3457,7 +3465,7 @@ def main():
                     st.write("**Distance Metric**")
                     dist_method = st.radio(
                         "Select metric",
-                        ["Levenshtein (edit distance)", "Normalized Levenshtein"],
+                        ["Levenshtein (edit distance)", "Normalised Levenshtein"],
                         key="seq_dist_method"
                     )
                     
@@ -3496,7 +3504,7 @@ def main():
                         st.subheader("Hierarchical Clustering - Dendrogram & Cluster Assignment")
                         
                         st.info("""
-                        **Dendrogram Visualization**: Shows the hierarchical structure of sequence clustering.
+                        **Dendrogram Visualisation**: Shows the hierarchical structure of sequence clustering.
                         - Each leaf represents a sequence
                         - Height indicates dissimilarity between merged clusters
                         - Use the slider to cut the dendrogram at different heights (select number of clusters)
@@ -3605,17 +3613,17 @@ def main():
                                         fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
                                         
                                         fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["inertias"], mode="lines+markers",
-                                            name="Inertia", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
+                                            name="Within-cluster dissimilarity", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
                                         
                                         fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["silhouette_scores"],
                                             mode="lines+markers", name="Silhouette Score", line=dict(color="green", width=2),
                                             marker=dict(size=8)), secondary_y=True)
                                         
                                         fig.add_vline(x=optimal_k, line=dict(color="red", width=2, dash="dash"),
-                                            annotation_text=f"Optimal k={optimal_k}", annotation_position="top")
+                                            annotation_text=f"Suggested k={optimal_k}", annotation_position="top")
                                         
                                         fig.update_xaxes(title_text="Number of Clusters (k)")
-                                        fig.update_yaxes(title_text="Inertia", secondary_y=False)
+                                        fig.update_yaxes(title_text="Within-cluster dissimilarity", secondary_y=False)
                                         fig.update_yaxes(title_text="Silhouette Score", secondary_y=True)
                                         fig.update_layout(title="Elbow Plot", hovermode="x unified", height=400)
                                         
@@ -3670,10 +3678,10 @@ def main():
                         # TRAJECTORY VISUALIZATION BY CLUSTER
                         # ===========================
                         st.markdown("---")
-                        st.markdown("### Trajectories Colored by Cluster")
+                        st.markdown("### Trajectories Coloured by Cluster")
                         
                         st.info("""
-                        **Cluster Visualization**: View trajectories on the court, colored by their cluster assignment.
+                        **Cluster Visualisation**: View trajectories on the court, coloured by their cluster assignment.
                         This helps you understand which trajectories are grouped together spatially.
                         """)
                         
@@ -3762,10 +3770,10 @@ def main():
                         
                         # Determine if we should use container width based on court type
                         use_container_width = (st.session_state.court_type == 'Football')
-                        render_interactive_chart(fig_clusters, "Trajectories colored by cluster assignment", use_container_width=use_container_width)
+                        render_interactive_chart(fig_clusters, "Trajectories coloured by cluster assignment", use_container_width=use_container_width)
                         
                         st.caption("""
-                        **Legend**: Each color represents a different cluster | 
+                        **Legend**: Each colour represents a different cluster | 
                         ● Circle = Start | ■ Square = End | 
                         Click legend items to show/hide clusters | 
                         Hover over trajectories to see cluster and sequence ID
@@ -3780,14 +3788,14 @@ def main():
                         
                         st.info("""
                         **Advanced Analysis**: Explore cluster quality and sequence relationships
-                        - **MDS Visualization**: Project high-dimensional data to 2D/3D space
+                        - **MDS Visualisation**: Project high-dimensional data to 2D/3D space
                         - **Similarity Search**: Find most similar sequences to a reference
                         - **Silhouette Analysis**: Evaluate cluster quality metrics
                         """)
                         
                         # Create tabs for different analysis tools
                         analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
-                            "MDS Visualization", 
+                            "MDS Visualisation", 
                             "Similarity Search", 
                             "Silhouette Analysis"
                         ])
@@ -3797,7 +3805,7 @@ def main():
                         # ===========================
                         with analysis_tab1:
                             st.markdown("#### Multidimensional Scaling (MDS)")
-                            st.markdown("Visualize sequence clusters in 2D or 3D space based on their pairwise distances.")
+                            st.markdown("Visualise sequence clusters in 2D or 3D space based on their pairwise distances.")
                             
                             # MDS dimension selection
                             col1, col2 = st.columns([1, 3])
@@ -3806,12 +3814,12 @@ def main():
                                     "Dimensions",
                                     options=[2, 3],
                                     index=0,
-                                    help="Choose 2D or 3D visualization",
+                                    help="Choose 2D or 3D visualisation",
                                     key="seq_mds_dims"
                                 )
                             
                             with col2:
-                                if st.button("🎨 Generate MDS Plot", help="Click to compute and visualize MDS projection", key="seq_mds_button"):
+                                if st.button("Generate MDS Plot", help="Click to compute and visualise MDS projection", key="seq_mds_button"):
                                     with st.spinner(f"Computing {mds_dims}D MDS projection..."):
                                         from sklearn.manifold import MDS
                                         
@@ -3900,7 +3908,7 @@ def main():
                                         
                                         st.plotly_chart(fig_mds, use_container_width=True)
                                         st.success(f"{mds_dims}D MDS projection computed successfully!")
-                                        st.info(f"**Normalized Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
+                                        st.info(f"**Normalised Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
                         
                         # ===========================
                         # TAB 2: SIMILARITY SEARCH
@@ -4200,7 +4208,7 @@ def main():
                             else:
                                 color = 'orange'
                             # Add delimiter after each token
-                            alignment_html += f"<span style='color: {color};'>{c1}</span>-"
+                            alignment_html += f"<span style='color: {colour};'>{c1}</span>-"
                         
                         # Remove trailing delimiter
                         alignment_html = alignment_html.rstrip('-')
@@ -4214,7 +4222,7 @@ def main():
                             else:
                                 color = 'orange'
                             # Add delimiter after each token
-                            alignment_html += f"<span style='color: {color};'>{c2}</span>-"
+                            alignment_html += f"<span style='color: {colour};'>{c2}</span>-"
                         
                         # Remove trailing delimiter
                         alignment_html = alignment_html.rstrip('-')
@@ -4402,7 +4410,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                     min_value=1,
                     max_value=max_window_length,
                     **widget_default("pdp_window", min(3, max_window_length)),
-                    help=f"Number of consecutive time steps to analyze together (max: {max_window_length} timestamps available)",
+                    help=f"Number of consecutive time steps to analyse together (max: {max_window_length} timestamps available)",
                     key="pdp_window"
                 )
         
@@ -4577,7 +4585,7 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
                             st.caption(f"• #{i + 1} {name}: ({x:.10g}, {y:.10g})"
                                        + (" (name shared with another point)" if manual_names.count(name) > 1 else ""))
                         with col_del:
-                            if st.button("🗑️", key=f"pdp_del_manual_{i}"):
+                            if st.button("", key=f"pdp_del_manual_{i}"):
                                 st.session_state.pdp_manual_points.pop(i)
                                 st.rerun()
                     
@@ -4908,7 +4916,7 @@ Each row shows inequality matrices for one configuration at one time window:
 - **2 (Red)**: row point > column point (RIGHT/ABOVE)
 
 **Distance calculation:**
-The PDP distance between two configurations is the **sum of differences** across ALL {max(1, max_window_length - window_length + 1)} windows. This visualization shows one of those windows.
+The PDP distance between two configurations is the **sum of differences** across ALL {max(1, max_window_length - window_length + 1)} windows. This visualisation shows one of those windows.
 """)
                     
                     # Configuration selector for inequality matrices
@@ -4919,7 +4927,7 @@ The PDP distance between two configurations is the **sum of differences** across
                             "Variant",
                             available_options,
                             key="pdp_ineq_variant",
-                            help="Select which PDP variant to visualize"
+                            help="Select which PDP variant to visualise"
                         )
                         active_variant_ineq = variant_map_reverse[ineq_variant_name]
 
@@ -4937,7 +4945,7 @@ The PDP distance between two configurations is the **sum of differences** across
                         if len(configs_to_compare) > 0:
                             st.metric("Configs selected", len(configs_to_compare))
                             if len(configs_to_compare) > 5:
-                                st.warning("Many configs selected - visualization may be large")
+                                st.warning("Many configs selected - visualisation may be large")
                     
                     if len(configs_to_compare) > 0 and pdp_reference_ui.xy_view_available("Inequality Matrices"):
                         # Get window information first
@@ -4984,7 +4992,7 @@ Each window captures a snapshot of spatial relationships at different points in 
 - **Window 1**: Timestamps starting from the 2nd position
 - ... and so on (each window slides by 1 timestamp)
 
-**Tip**: By default, only the first window is shown to avoid overwhelming visualizations. The final PDP distance accumulates differences across **all** windows.
+**Tip**: By default, only the first window is shown to avoid overwhelming visualisations. The final PDP distance accumulates differences across **all** windows.
 """)
                             
                             col_win1, col_win2 = st.columns([3, 1])
@@ -4997,7 +5005,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     # For small number of windows, allow full selection
                                     default_windows = [0]  # Default to first window
                                     selected_windows = st.multiselect(
-                                        "Choose which time windows to visualize",
+                                        "Choose which time windows to visualise",
                                         options=available_windows,
                                         default=default_windows,
                                         format_func=lambda x: f"Window {x}",
@@ -5024,11 +5032,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     total_matrices = len(configs_to_compare) * len(selected_windows) * 2
                                     st.caption(f"{total_matrices} matrices total")
                                     if total_matrices > 20:
-                                        st.warning("Large visualization!")
+                                        st.warning("Large visualisation!")
                             
                             matrix_count = len(configs_to_compare) * len(selected_windows) * 2
                             if not selected_windows:
-                                st.warning("Please select at least one window to visualize.")
+                                st.warning("Please select at least one window to visualise.")
                             elif matrix_count > 24:
                                 st.warning("Select fewer configurations or time windows to display at most "
                                            "24 inequality matrices at once. Distances still include every window.")
@@ -5126,7 +5134,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     color_zmax = None
                 
                 # Provide visualization options for large matrices
-                st.markdown("**Visualization Options:**")
+                st.markdown("**Visualisation Options:**")
                 col_viz_opt1, col_viz_opt2, col_viz_opt3 = st.columns([2, 1, 2])
                 
                 with col_viz_opt1:
@@ -5135,7 +5143,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             "Show numeric values in heatmap", 
                             value=False, 
                             key="pdp_show_text",
-                            help="⚠️ Warning: With many configurations, text may be very small or overlap. Use hover for exact values."
+                            help="Warning: With many configurations, text may be very small or overlap. Use hover for exact values."
                         )
                     else:
                         show_text = st.checkbox(
@@ -5172,7 +5180,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 heatmap_colorbar = dict(title=colorbar_title)
                 
                 # DEBUG: Show what values are being passed to the heatmap
-                with st.expander("🔍 DEBUG: Heatmap Data Info", expanded=False):
+                with st.expander("DEBUG: Heatmap Data Info", expanded=False):
                     st.write("**Matrix Statistics:**")
                     st.write(f"- Shape: {display_matrix.shape}")
                     st.write(f"- dtype: {display_matrix.dtype}")
@@ -5306,7 +5314,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     yaxis_config = dict(title="Configuration")
                 
                 # Create title indicating distance type
-                distance_type = "Normalized (%)" if show_normalized else "Raw"
+                distance_type = "Normalised (%)" if show_normalized else "Raw"
                 
                 fig_heatmap.update_layout(
                     title=f"PDP Distance Matrix - {distance_type} ({active_variant_dm}) - {n_configs} configurations",
@@ -5325,8 +5333,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                     st.caption(pdp_variant_caption(active_variant_dm) + " (the variant chosen for the matrix above).")
 
                     # Display formula
-                    st.markdown("### Normalization Formula")
-                    st.latex(r"\text{Normalized Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
+                    st.markdown("### Normalisation Formula")
+                    st.latex(r"\text{Normalised Distance} = \frac{\text{Raw Distance}}{\text{Max Possible Distance}} \times 100")
                     
                     # Compute normalization info with the completed run's parameters for this variant
                     norm_info = pdp_analysis.compute_distance_normalization_info(
@@ -5354,7 +5362,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     - Calculation: `{example['formula']}`
                     - **Result: {format_number(example['normalized_distance'], 2)}%** difference
                     
-                    💡 *Interpretation: These configurations differ by {format_number(example['normalized_distance'], 1)}% of the maximum possible difference.*
+                    *Interpretation: These configurations differ by {format_number(example['normalized_distance'], 1)}% of the maximum possible difference.*
                     """)
                     
                     # Statistics comparison
@@ -5379,7 +5387,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         }, hide_index=True, use_container_width=True)
                     
                     with col_stats2:
-                        st.markdown("**Normalized Distances (0-100):**")
+                        st.markdown("**Normalised Distances (0-100):**")
                         norm_stats = norm_info['stats']['normalized']
                         st.dataframe({
                             'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q25', 'Q75'],
@@ -5399,21 +5407,21 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     show_normalized_hist = st.radio(
                         "Show distances as:",
-                        options=["Normalized (0-100)", "Raw"],
+                        options=["Normalised (0-100)", "Raw"],
                         horizontal=True,
                         key="pdp_hist_type"
                     )
                     
                     fig_hist = pdp_analysis.create_distance_distribution_plot(
                         norm_info['histogram_data'],
-                        show_normalized=(show_normalized_hist == "Normalized (0-100)"),
+                        show_normalized=(show_normalized_hist == "Normalised (0-100)"),
                         variant_label=dm_variant_name
                     )
                     
                     render_interactive_chart(fig_hist)
                     
                     st.caption("""
-                    💡 **Tip**: The distribution shape reveals dataset characteristics:
+                    **Tip**: The distribution shape reveals dataset characteristics:
                     - **Uniform spread**: Configurations vary gradually
                     - **Bimodal (two peaks)**: Two distinct groups of configurations
                     - **Skewed right**: Most configs similar, few outliers very different
@@ -5439,7 +5447,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     csv_export = export_df.to_csv(index=False)
                     
                     st.download_button(
-                        label="📥 Download Normalized Distances (CSV)",
+                        label="Download Normalised Distances (CSV)",
                         data=csv_export,
                         file_name=f"pdp_normalized_distances_{active_variant_dm}.csv",
                         mime="text/csv",
@@ -5453,7 +5461,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     key_prefix="pdp_matrix_inspect",
                     default_configs=[],
                     max_selections=5,
-                    label="Select configurations to visualize",
+                    label="Select configurations to visualise",
                     help_text="Choose configurations from the distance matrix to see their actual trajectories",
                     show_metrics=True
                 )
@@ -5474,7 +5482,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.caption(PDP_COMPLEMENT_NOTE)
                     
                     # Plot trajectories
-                    st.markdown("**Trajectory Visualization:**")
+                    st.markdown("**Trajectory Visualisation:**")
                     
                     # Get objects from global selection if available
                     if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
@@ -5510,10 +5518,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                            key=chart_key)
                     
                     # Interpretation help
-                    with st.expander("💡 How to interpret this visualization"):
+                    with st.expander("How to interpret this visualisation"):
                         st.markdown("""
                         **What you're seeing:**
-                        - Each color represents a different configuration
+                        - Each colour represents a different configuration
                         - Trajectories show the movement paths of all selected objects
                         - Start points: ⭕ (circles), End points: ◼️ (squares)
                         
@@ -5576,7 +5584,7 @@ Each window captures a snapshot of spatial relationships at different points in 
 
                     # Dendrogram
                     st.caption("Average linkage: the dendrogram and cluster assignments use the same hierarchy.")
-                    st.markdown("### Hierarchical Clustering Dendrogram", help="**How to read the dendrogram:**\n\n• Height of branches indicates the distance between clusters (higher = more different)\n\n• Different colors represent different clusters automatically identified by the algorithm\n\n• Configurations connected at lower heights are more similar\n\n• The x-axis shows each configuration label")
+                    st.markdown("### Hierarchical Clustering Dendrogram", help="**How to read the dendrogram:**\n\n• Height of branches indicates the distance between clusters (higher = more different)\n\n• Different colours represent different clusters automatically identified by the algorithm\n\n• Configurations connected at lower heights are more similar\n\n• The x-axis shows each configuration label")
                     
                     if linkage_matrix_clust is not None:
                         # Colour/cut the dendrogram at the user's chosen count (not the recommendation)
@@ -5624,7 +5632,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.caption(f"Partition for variant **{clust_variant_name}** with {n_clusters} clusters.")
                         
                         with col2:
-                            st.metric("Optimal Clusters", optimal_n_clust, help="Recommended number of clusters detected using the Elbow Method. This analyzes within-cluster distances for k=2 to k=10, finds the 'elbow point' where adding more clusters yields diminishing returns, and validates with silhouette scores. Use this as a starting point - you can adjust manually based on your domain knowledge.")
+                            st.metric("Optimal Clusters", optimal_n_clust, help="Recommended number of clusters detected using the Elbow Method. This analyses within-cluster distances for k=2 to k=10, finds the 'elbow point' where adding more clusters yields diminishing returns, and validates with silhouette scores. Use this as a starting point - you can adjust manually based on your domain knowledge.")
                         
                         # Show cluster assignments
                         if cluster_labels_clust is not None:
@@ -5649,11 +5657,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # MDS Visualization
                     st.markdown("---")
-                    st.markdown("### MDS Projection", help="""Multidimensional Scaling (MDS) visualization:
-                    • Reduces high-dimensional distance matrix to 2D or 3D for easy visualization
+                    st.markdown("### MDS Projection", help="""Multidimensional Scaling (MDS) visualisation:
+                    • Reduces high-dimensional distance matrix to 2D or 3D for easy visualisation
                     • Closer points = more similar configurations
                     • Further apart = more different configurations
-                    • Colors represent cluster assignments
+                    • Colours represent cluster assignments
                     • Stress metric: measures how well the low-dimensional representation preserves distances (lower is better)""")
                     # Dimension selector
                     mds_dims = st.radio(
@@ -5661,7 +5669,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         options=[2, 3],
                         index=0,
                         horizontal=True,
-                        help="Choose between 2D (easier to read) or 3D (more detail) visualization"
+                        help="Choose between 2D (easier to read) or 3D (more detail) visualisation"
                     )
                     
                     if cluster_labels_clust is not None:
@@ -5689,7 +5697,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     - **0.10 - 0.20**: Fair representation
                                     - **> 0.20**: Poor representation (consider using 3D or more clusters)
 
-                                    Lower stress means the 2D visualization more accurately represents the true distances between configurations.
+                                    Lower stress means the 2D visualisation more accurately represents the true distances between configurations.
                                     """)
                         else:
                             # 3D MDS
@@ -5704,7 +5712,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             if fig_mds_3d is not None:
                                 render_interactive_chart(fig_mds_3d)
 
-                                st.success(f"💡 **Tip**: Use your mouse to rotate, zoom, and explore the 3D space! Stress: {stress:.2f}")
+                                st.success(f"**Tip**: Use your mouse to rotate, zoom, and explore the 3D space! Stress: {stress:.2f}")
 
                                 # Show stress interpretation
                                 with st.expander("Understanding the Stress Value"):
@@ -5935,7 +5943,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # ===============================================================
                     st.markdown("---")
                     st.markdown('### Trajectory Comparison',
-                                help='Visualize and compare actual trajectories:  \n  \n• Select configurations to overlay their movement patterns  \n• Compare similar or dissimilar configurations side-by-side  \n• Start points marked with circles ⭕, end points with squares ◼️')
+                                help='Visualise and compare actual trajectories:  \n  \n• Select configurations to overlay their movement patterns  \n• Compare similar or dissimilar configurations side-by-side  \n• Start points marked with circles ⭕, end points with squares ◼️')
                     
                     col_traj1, col_traj2 = st.columns([1, 1])
                     
@@ -5968,7 +5976,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         )
 
                         selected_configs_viz = st.multiselect(
-                            "Select configurations to visualize",
+                            "Select configurations to visualise",
                             options=config_ids,
                             key="pdp_viz_configs",
                             max_selections=5,
@@ -6113,7 +6121,7 @@ Each window captures a snapshot of spatial relationships at different points in 
 
                     # Visualization options for buffer and rough zones
                     st.markdown("---")
-                    st.markdown("**Advanced Visualization Options:**")
+                    st.markdown("**Advanced Visualisation Options:**")
                     st.caption(f"Overlays show only what the **{clust_variant_name}** result above used. "
                                "Values entered for variants that were not computed are not drawn.")
 
@@ -6157,7 +6165,7 @@ Each window captures a snapshot of spatial relationships at different points in 
 
                     if show_buffers or show_rough:
                         st.info(f"""
-                        **Visualization Legend:**
+                        **Visualisation Legend:**
                         - **Buffer points** (small X markers): Actual extra data points added in 'buffer' variant (4 points per original: left, right, up, down)
                         - **Rough zones** (dashed rectangles): Tolerance zones for 'rough' variant - points within this rectangle are considered "approximately equal"
                         
@@ -6205,7 +6213,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.dataframe(sim_df, use_container_width=True, hide_index=True)
                             st.caption(PDP_COMPLEMENT_NOTE)
                     else:
-                        st.warning("Please select at least one configuration to visualize.")
+                        st.warning("Please select at least one configuration to visualise.")
                     
                     # ===============================================================
                     # EXPORT FUNCTIONALITY
@@ -6320,7 +6328,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # ===============================================================
                 with st.expander("Parameter Impact Analysis (Compare PDP Variants)", expanded=False):
                     st.markdown('### Parameter Impact Analysis',
-                                help='Compare how buffer and rough parameters affect PDP distances.  \n  \nThis analysis computes distances using all four PDP variants and visualizes:  \n• How distances change across variants  \n• Which configuration pairs are most affected by parameters  \n• Correlation between variants  \n  \nUse this to:  \n• Understand parameter sensitivity in your dataset  \n• Choose the best variant for your analysis  \n• Identify configurations that behave differently with parameters  \n  \nComputes PDP distances for ALL four variants:  \n• Fundamental (baseline - no parameters)  \n• Buffer (adds virtual points around each position)  \n• Rough (treats positions within a tolerance as equal)  \n• Buffer + Rough (combined)  \n  \nNote: This may take a moment as it computes 4 distance matrices.')
+                                help='Compare how buffer and rough parameters affect PDP distances.  \n  \nThis analysis computes distances using all four PDP variants and visualises:  \n• How distances change across variants  \n• Which configuration pairs are most affected by parameters  \n• Correlation between variants  \n  \nUse this to:  \n• Understand parameter sensitivity in your dataset  \n• Choose the best variant for your analysis  \n• Identify configurations that behave differently with parameters  \n  \nComputes PDP distances for ALL four variants:  \n• Fundamental (baseline - no parameters)  \n• Buffer (adds virtual points around each position)  \n• Rough (treats positions within a tolerance as equal)  \n• Buffer + Rough (combined)  \n  \nNote: This may take a moment as it computes 4 distance matrices.')
                     
                     # Parameter configuration for comparison
                     st.markdown("---")
@@ -6583,7 +6591,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 # =================================================================
                 with st.expander("Configuration Similarity Explorer (Find Similar/Dissimilar Configs)", expanded=False):
                     st.markdown('### Configuration Similarity Explorer',
-                                help="Explore neighborhoods and find similar/dissimilar configurations.  \n  \nThis tool helps you understand the similarity landscape of your configurations:  \n  \nUse Cases:  \n• Find similar configs: Identify configurations with comparable trajectory behavior  \n• Find dissimilar configs: Discover configurations that produce very different results  \n• Explore neighborhoods: Visualize which configurations cluster together  \n• Validate parameter choices: See if parameter changes create meaningful distinctions  \n  \nHow it works:  \n1. Select a target configuration to analyze  \n2. The tool finds its k nearest and k farthest neighbors in distance space  \n3. Visualizations show the configuration's position relative to others  \n  \nWhen to use:  \n• After computing PDP distances to explore the configuration space  \n• To understand if certain parameters create distinct behavior patterns  \n• To select representative configurations for further analysis")
+                                help="Explore neighborhoods and find similar/dissimilar configurations.  \n  \nThis tool helps you understand the similarity landscape of your configurations:  \n  \nUse Cases:  \n• Find similar configs: Identify configurations with comparable trajectory behaviour  \n• Find dissimilar configs: Discover configurations that produce very different results  \n• Explore neighborhoods: Visualise which configurations cluster together  \n• Validate parameter choices: See if parameter changes create meaningful distinctions  \n  \nHow it works:  \n1. Select a target configuration to analyse  \n2. The tool finds its k nearest and k farthest neighbors in distance space  \n3. Visualisations show the configuration's position relative to others  \n  \nWhen to use:  \n• After computing PDP distances to explore the configuration space  \n• To understand if certain parameters create distinct behaviour patterns  \n• To select representative configurations for further analysis")
                 
                     # Check if distance matrix is available
                     if 'pdp_distance_matrix' in st.session_state and st.session_state.pdp_distance_matrix is not None:
@@ -6613,7 +6621,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 st.session_state.similarity_k = sim_max_k
 
                             # Configuration selection
-                            st.markdown("### 🎯 Select Target Configuration")
+                            st.markdown("### Select Target Configuration")
 
                             col_target, col_k = st.columns([3, 1])
 
@@ -6622,7 +6630,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     "Target Configuration",
                                     options=config_ids,
                                     key="similarity_target_config",
-                                    help="Configuration to analyze"
+                                    help="Configuration to analyse"
                                 )
                                 st.session_state._similarity_last_target = target_config
 
@@ -6693,7 +6701,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 # Neighborhood visualization
                                 st.markdown("---")
                                 st.markdown('### Neighborhood Graph',
-                                            help='How to read this:  \n  \n• Red star: Your selected target configuration  \n• Orange circles: Nearest neighbors  \n• Orange lines: Connections to neighbors  \n• Gray/colored dots: All other configurations  \n• Closer in 2D space → More similar trajectories')
+                                            help='How to read this:  \n  \n• Red star: Your selected target configuration  \n• Orange circles: Nearest neighbors  \n• Orange lines: Connections to neighbors  \n• Grey/coloured dots: All other configurations  \n• Closer in 2D space → More similar trajectories')
                                 st.caption(f"MDS projection showing {target_config}'s neighborhood. Lines connect to {k_neighbors} nearest neighbors.")
                                 
                                 # Colours: the user's chosen partition of this variant (not the trajectory
@@ -6717,15 +6725,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     
                                     1. **Similar Configurations (small distances):**
                                        - These configs produce trajectory patterns very close to {target_config}
-                                       - Parameters likely have similar effects on trajectory behavior
+                                       - Parameters likely have similar effects on trajectory behaviour
                                        - Could be grouped together for analysis
                                        - Consider if parameters differ: meaningful or redundant?
                                     
                                     2. **Dissimilar Configurations (large distances):**
                                        - These configs produce very different trajectory patterns
-                                       - Parameters create distinct behavior
+                                       - Parameters create distinct behaviour
                                        - Useful for understanding parameter impact boundaries
-                                       - May represent different "regimes" of trajectory behavior
+                                       - May represent different "regimes" of trajectory behaviour
                                     
                                     3. **Neighborhood Graph:**
                                        - **Dense clusters**: Groups of similar configurations
@@ -6812,7 +6820,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             with col_compute:
                                 st.write("")  # Spacing
                                 st.write("")
-                                if st.button("🧪 Evaluate Cluster Quality", type="primary", key="compute_cluster_quality"):
+                                if st.button("Evaluate Cluster Quality", type="primary", key="compute_cluster_quality"):
                                     # Earlier metrics may use another k range: never show them as this request's
                                     st.session_state.pop('cluster_quality_metrics', None)
                                     metrics_results = None
@@ -6876,7 +6884,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 
                                 # Get optimal k consensus
                                 st.markdown("---")
-                                st.markdown("### 🎯 Optimal Cluster Recommendations")
+                                st.markdown("### Optimal Cluster Recommendations")
                                 
                                 consensus = pdp_analysis.get_optimal_k_consensus(metrics_results)
                                 
@@ -6929,7 +6937,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     st.markdown("""
                                     **Interpretation:**
                                     - **Each bar**: One configuration's silhouette score
-                                    - **Grouped by cluster**: Colors show different clusters
+                                    - **Grouped by cluster**: Colours show different clusters
                                     - **Red dashed line**: Average silhouette across all configs
                                     - **Wide bars above average**: Well-clustered configurations
                                     - **Bars below zero**: Configs may be in wrong cluster
@@ -6937,7 +6945,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     """)
                                 
                                 # Interpretation guide
-                                with st.expander("📚 Understanding the Metrics"):
+                                with st.expander("Understanding the Metrics"):
                                     st.markdown(f"""
                                     **Metric Interpretations:**
                                     
@@ -7008,7 +7016,7 @@ Each window captures a snapshot of spatial relationships at different points in 
         )
     
     elif analysis_method == "Heat Maps":
-        st.header("🔥 Heat Maps")
+        st.header("Heat Maps")
         try:
             heatmap_df = None
             if uploaded_files:
@@ -7025,26 +7033,35 @@ Each window captures a snapshot of spatial relationships at different points in 
             st.error(f"Error creating heatmap: {str(e)}")
     
     elif analysis_method == "Clustering":
-        st.header("Hierarchical Clustering Methods")
-        
-        st.info("""
-        **All clustering methods use Hierarchical Ward Linkage clustering.**
-        Choose a distance metric based on what aspects of trajectories you want to group:
-        - **Features:** General properties (speed, distance, duration, etc.)
-        - **Spatial:** Shape and location similarity (Chamfer distance)
-        - **Spatiotemporal:** Time-synchronized similarity (DTW distance)
-        """)
-        
+        st.header("Hierarchical Clustering Methods", help=clustering.HELP['hierarchical'])
+
+        st.info(
+            "You choose how the dissimilarity between trajectories is calculated; the application then uses a "
+            "compatible linkage rule to merge groups:\n"
+            f"- **{clustering.method_label('Features (Euclidean)')}**, Ward linkage\n"
+            f"- **{clustering.method_label('Spatial (Chamfer)')}**, average linkage\n"
+            f"- **{clustering.method_label('Spatiotemporal (DTW)')}**, average linkage\n\n"
+            "Ward needs Euclidean distances, which only the feature-based approach provides. Switching between "
+            "approaches therefore changes two analytical choices at once: the dissimilarity and the linkage. "
+            "Differences between their results cannot be attributed to the dissimilarity alone.")
+        help_cols = st.columns(3)
+        help_cols[0].markdown("**Linkage**", help=clustering.HELP['linkage'])
+        help_cols[1].markdown("**Ward linkage**", help=clustering.HELP['ward'])
+        help_cols[2].markdown("**Average linkage**", help=clustering.HELP['average'])
+
         # Initialize clustering session state
         clustering.initialize_clustering_session_state()
-        
-        # Method selection
+
+        # Method selection (stable internal identifiers, canonical labels for display)
         clustering_method = st.radio(
-            "Select Distance Metric:",
-            ["Features (Euclidean)", "Spatial (Chamfer)", "Spatiotemporal (DTW)"],
+            "Select how trajectory dissimilarity is calculated:",
+            clustering.METHOD_IDS,
+            format_func=clustering.method_label,
             key="clustering_method_radio",
-            horizontal=True
+            horizontal=True,
+            help="\n\n".join(f"**{clustering.method_label(m)}**: {clustering.HELP[m]}" for m in clustering.METHOD_IDS)
         )
+        st.caption(f"Effective method: **{clustering.method_label(clustering_method, with_linkage=True)}**")
 
         st.markdown('---')
         
@@ -7091,6 +7108,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             st.session_state.features_df = None
             st.session_state.trajectories = None
             st.session_state.pop('clustering_run', None)
+            st.session_state.pop('fig_3d_cluster', None)
 
         # Inputs of the next computation; results are shown only when they match the computed run
         clustering_fingerprint = clustering.data_fingerprint(df)
@@ -7101,55 +7119,43 @@ Each window captures a snapshot of spatial relationships at different points in 
         
         # Method-specific UI
         if clustering_method == "Features (Euclidean)":
-            st.subheader("🎯 Feature-Based Clustering")
-            st.info("Cluster trajectories based on extracted features: distance, speed, duration, sinuosity, etc.")
-            
+            st.subheader(clustering.method_label('Features (Euclidean)', with_linkage=True),
+                         help=clustering.HELP['Features (Euclidean)'] + "\n\n" + clustering.HELP['ward'])
+            st.info("Each trajectory is summarised by the selected features. The features are standardised "
+                    "(z-scores), Euclidean distances between these vectors are calculated, and Ward linkage builds "
+                    "the hierarchy.")
+
             # Feature selection
             st.markdown("#### Select Features to Use")
-            all_features = [
-                'total_distance',
-                'duration',
-                'avg_speed',
-                'net_displacement',
-                'sinuosity',
-                'bbox_area',
-                'avg_direction',
-                'max_speed'
-            ]
-            
-            feature_labels = {
-                'total_distance': 'Total Distance',
-                'duration': '⏱️ Duration',
-                'avg_speed': '🏃 Average Speed',
-                'net_displacement': '📐 Net Displacement',
-                'sinuosity': '🌀 Sinuosity (Path Efficiency)',
-                'bbox_area': '📦 Bounding Box Area',
-                'avg_direction': '🧭 Average Direction',
-                'max_speed': '⚡ Maximum Speed'
-            }
-            
+            all_features = clustering.ALL_FEATURES
+            feature_labels = clustering.FEATURE_SELECTOR_LABELS
+
             # Initialize default selection in session state if not exists
             if 'feature_selection_default' not in st.session_state:
-                st.session_state.feature_selection_default = all_features
+                st.session_state.feature_selection_default = list(clustering.DEFAULT_FEATURES)
             
             selected_features = st.multiselect(
                 "Choose which features to include in the distance calculation:",
                 options=all_features,
                 default=st.session_state.feature_selection_default,
                 format_func=lambda x: feature_labels[x],
-                key="selected_features"
+                key="selected_features",
+                help=("Minimum Speed is the lowest valid segment speed in the interval: distance between consecutive "
+                      "positions divided by their elapsed tst. Segments with zero elapsed time (duplicate "
+                      "timestamps) or missing values are excluded; genuine standstills count as speed 0. Speeds "
+                      "are in coordinate units per tst unit (m/s when coordinates are metres and tst is seconds).")
             )
             
             clustering_signature = clustering.run_signature(
                 clustering_fingerprint, clustering_method, selected_configs, selected_objects, start_time, end_time,
                 selected_features)
             if not selected_features:
-                st.warning("⚠️ Please select at least one feature to proceed.")
+                st.warning("Please select at least one feature to proceed.")
             else:
-                st.success(f"✅ {len(selected_features)} feature(s) selected")
+                st.success(f"{len(selected_features)} feature(s) selected")
             
             # Compute distance matrix button
-            if st.button("🔄 Compute Feature Distance Matrix", key="compute_features", disabled=not selected_features):
+            if st.button("Compute Feature Distance Matrix", key="compute_features", disabled=not selected_features):
                 with st.spinner(f"Extracting {len(selected_features)} feature(s) and computing distances..."):
                     try:
                         distance_matrix, trajectory_ids, features_df, trajectories = clustering.compute_feature_distance_matrix(
@@ -7158,12 +7164,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         if distance_matrix is None or len(trajectory_ids) == 0:
                             clear_clustering_results()
-                            st.error("❌ No valid trajectories found with the current filters.")
+                            st.error("No valid trajectories found with the current filters.")
                         else:
                             store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
                                                  selected_objects, start_time, end_time, selected_features,
                                                  distance_matrix, trajectory_ids, trajectories, features_df)
-                            st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories using {len(selected_features)} features!")
+                            st.success(f"Computed distance matrix for {len(trajectory_ids)} trajectories using {len(selected_features)} features!")
                     except Exception as e:
                         clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
@@ -7177,20 +7183,24 @@ Each window captures a snapshot of spatial relationships at different points in 
                     formatted_df = clustering.format_features_dataframe(features_now)
                     st.dataframe(formatted_df, column_config=clustering.feature_column_config(features_now))
                     st.caption("Display rounded (sinuosity to six decimals); the values and the download keep full "
-                               "precision. Start/End are tst observation indices of the dataset.")
+                               "precision. Start/End are tst values of the dataset. Durations are in tst units and "
+                               "speeds in coordinate units per tst unit; for this 1 Hz data with metric coordinates "
+                               "that equals m/s only if one tst step is one second.")
                     st.download_button(
-                        "📥 Download Feature Values (CSV, full precision)",
+                        "Download Feature Values (CSV, full precision)",
                         clustering.features_csv(features_now),
                         file_name=f"feature_values_features-{'+'.join(clustering_run['features'])}"
                                   f"_run{clustering_run['run_id']}.csv",
                         mime="text/csv", key="download_feature_values")
         
         elif clustering_method == "Spatial (Chamfer)":
-            st.subheader("📍 Spatial Clustering (Chamfer Distance)")
-            st.info("Cluster trajectories based on spatial shape and location similarity using Chamfer distance.")
+            st.subheader(clustering.method_label('Spatial (Chamfer)', with_linkage=True),
+                         help=clustering.HELP['Spatial (Chamfer)'] + "\n\n" + clustering.HELP['average'])
+            st.info("Trajectories are compared by the locations they occupy (symmetric Chamfer dissimilarity, "
+                    "x and y only); average linkage builds the hierarchy from these dissimilarities.")
             
             # Compute distance matrix button
-            if st.button("🔄 Compute Chamfer Distance Matrix", key="compute_chamfer"):
+            if st.button("Compute Chamfer Distance Matrix", key="compute_chamfer"):
                 with st.spinner("Computing Chamfer distances..."):
                     try:
                         distance_matrix, trajectory_ids, trajectories = clustering.compute_chamfer_distance_matrix(
@@ -7199,22 +7209,24 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         if distance_matrix is None or len(trajectory_ids) == 0:
                             clear_clustering_results()
-                            st.error("❌ No valid trajectories found with the current filters.")
+                            st.error("No valid trajectories found with the current filters.")
                         else:
                             store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
                                                  selected_objects, start_time, end_time, None,
                                                  distance_matrix, trajectory_ids, trajectories)
-                            st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories!")
+                            st.success(f"Computed distance matrix for {len(trajectory_ids)} trajectories!")
                     except Exception as e:
                         clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
         
         elif clustering_method == "Spatiotemporal (DTW)":
-            st.subheader("⏱️ Spatiotemporal Clustering (DTW Distance)")
-            st.info("Cluster trajectories based on spatiotemporal similarity using Dynamic Time Warping (DTW).")
+            st.subheader(clustering.method_label('Spatiotemporal (DTW)', with_linkage=True),
+                         help=clustering.HELP['Spatiotemporal (DTW)'] + "\n\n" + clustering.HELP['average'])
+            st.info("Ordered trajectories are aligned with Dynamic Time Warping on (x, y, tst), with tst used "
+                    "unscaled as a third coordinate; average linkage builds the hierarchy from these dissimilarities.")
             
             # Compute distance matrix button
-            if st.button("🔄 Compute DTW Distance Matrix", key="compute_dtw"):
+            if st.button("Compute DTW Distance Matrix", key="compute_dtw"):
                 with st.spinner("Computing DTW distances... This may take a while for many trajectories."):
                     try:
                         distance_matrix, trajectory_ids, trajectories = clustering.compute_dtw_distance_matrix(
@@ -7223,12 +7235,12 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         if distance_matrix is None or len(trajectory_ids) == 0:
                             clear_clustering_results()
-                            st.error("❌ No valid trajectories found with the current filters.")
+                            st.error("No valid trajectories found with the current filters.")
                         else:
                             store_clustering_run(df, clustering_signature, clustering_method, selected_configs,
                                                  selected_objects, start_time, end_time, None,
                                                  distance_matrix, trajectory_ids, trajectories)
-                            st.success(f"✅ Computed distance matrix for {len(trajectory_ids)} trajectories!")
+                            st.success(f"Computed distance matrix for {len(trajectory_ids)} trajectories!")
                     except Exception as e:
                         clear_clustering_results()
                         st.error(f"Error computing distances: {str(e)}")
@@ -7240,20 +7252,20 @@ Each window captures a snapshot of spatial relationships at different points in 
         if clustering_run is not None and not clustering_current:
             sig_old, sig_new = clustering_run['signature'], clustering_signature
             changed = [name for name, i in (('dataset content', 0), ('method', 1), ('features', 2),
-                                            ('configurations', 3), ('objects', 4), ('start', 5), ('end', 6))
-                       if sig_old[i] != sig_new[i]]
+                                            ('configurations', 3), ('objects', 4), ('start', 5), ('end', 6),
+                                            ('linkage', 8))
+                       if i >= len(sig_old) or sig_old[i] != sig_new[i]]
             st.warning("**Inputs changed. Recompute to update results.** Changed since the last computation: "
                        + ", ".join(changed) + ". Matrices, dendrogram, memberships and downloads of the earlier "
                        "computation are hidden until you compute again.")
         if clustering_current:
             st.caption(f"**Computed run {clustering_run['run_id']}** ({clustering_run['computed_at']}): "
-                       f"{clustering_run['method']}"
+                       f"{clustering.method_label(clustering_run['method'], with_linkage=True)}"
                        + (f" · features {', '.join(clustering_run['features'])}"
                           if clustering_run['method'] == 'Features (Euclidean)' else "")
                        + f" · {len(clustering_run['configs'])} configurations · objects "
                        f"{', '.join(map(str, clustering_run['objects']))} · tst {clustering_run['start']:g}–"
-                       f"{clustering_run['end']:g} (observation indices) · {len(clustering_run['trajectory_ids'])} "
-                       f"trajectories · Ward linkage")
+                       f"{clustering_run['end']:g} · {len(clustering_run['trajectory_ids'])} trajectories")
             st.markdown('---')
             st.subheader("Distance Matrix Heatmap")
             
@@ -7284,21 +7296,20 @@ Each window captures a snapshot of spatial relationships at different points in 
             # ========================================
             # STEP 4: Dendrogram & Cluster Assignment
             # ========================================
-            st.subheader("🌳 Hierarchical Clustering - Dendrogram & Cluster Assignment")
+            run_linkage_label = clustering.LINKAGE_LABELS[clustering_run['linkage']]
+            st.subheader(f"Hierarchical Clustering ({run_linkage_label}): Dendrogram and Cluster Assignment",
+                         help=clustering.HELP['hierarchical'] + "\n\n" + clustering.HELP[clustering_run['linkage']])
             
             st.info("""
-            **Dendrogram Visualization**: Shows the hierarchical structure of trajectory clustering.
+            **Dendrogram Visualisation**: Shows the hierarchical structure of trajectory clustering.
             - Each leaf represents a trajectory
             - Height indicates dissimilarity between merged clusters
             - Use the slider to cut the dendrogram at different heights (select number of clusters)
             """)
             
-            # Create linkage matrix for hierarchical clustering
-            # Using Ward linkage for trajectory clustering
-            # Convert square distance matrix to condensed form
-            from scipy.spatial.distance import squareform
-            condensed_dist = squareform(st.session_state.distance_matrix, checks=False)
-            linkage_matrix = linkage(condensed_dist, method='ward')
+            # The hierarchy built once for this run (clustering.build_linkage, linkage per approach);
+            # the dendrogram, memberships, cluster-count evaluation and exports all use it
+            linkage_matrix = clustering_run['linkage_matrix']
             
             # Create dendrogram visualization
             st.markdown("#### Dendrogram")
@@ -7344,7 +7355,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             x_positions = [5 + i * 10 for i in range(n_leaves)]
             
             fig_dendro.update_layout(
-                title="Hierarchical Clustering Dendrogram (Ward Linkage)",
+                title=f"Hierarchical Clustering Dendrogram ({clustering.method_label(clustering_run['method'], with_linkage=True)})",
                 xaxis=dict(
                     title="Trajectory",
                     tickmode='array',
@@ -7352,7 +7363,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     ticktext=labels,
                     tickangle=-45
                 ),
-                yaxis=dict(title="Distance"),
+                yaxis=dict(title=f"Merge height ({clustering.DISTANCE_METRICS[clustering_run['method']]} dissimilarity, {run_linkage_label})"),
                 height=500,
                 hovermode='closest',
                 plot_bgcolor='white',
@@ -7384,38 +7395,43 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             with col2:
                     # Auto-detect optimal clusters button
-                    if st.button("🎯 Auto-detect Optimal Clusters", help="Use elbow method to recommend optimal number of clusters."):
-                        with st.spinner("Detecting optimal number of clusters..."):
-                            optimal_k, plot_data = clustering.detect_optimal_clusters(st.session_state.distance_matrix, return_plot_data=True)
+                    if st.button("Suggest Number of Clusters",
+                                 help="Cuts the hierarchy shown above for k = 2–10 and suggests k at the sharpest bend "
+                                      "of the within-cluster dissimilarity curve, checked against silhouette scores "
+                                      "computed from the original pairwise dissimilarities. A suggestion, not a "
+                                      "definitive answer."):
+                        with st.spinner("Evaluating cluster counts..."):
+                            optimal_k, plot_data = clustering.evaluate_cluster_counts(
+                                st.session_state.distance_matrix, linkage_matrix)
                             if optimal_k is not None:
-                                st.success(f"✅ Recommended number of clusters: **{optimal_k}**")
+                                st.success(f"Suggested number of clusters: **{optimal_k}** "
+                                           f"(cuts of the {run_linkage_label} hierarchy above)")
                                 
                                 # Display elbow plot
                                 fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
                                 
                                 fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["inertias"], mode="lines+markers",
-                                    name="Inertia", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
+                                    name="Within-cluster dissimilarity", line=dict(color="blue", width=2), marker=dict(size=8)), secondary_y=False)
                                 
                                 fig.add_trace(go.Scatter(x=plot_data["k_values"], y=plot_data["silhouette_scores"],
                                     mode="lines+markers", name="Silhouette Score", line=dict(color="green", width=2),
                                     marker=dict(size=8)), secondary_y=True)
                                 
                                 fig.add_vline(x=optimal_k, line=dict(color="red", width=2, dash="dash"),
-                                    annotation_text=f"Optimal k={optimal_k}", annotation_position="top")
+                                    annotation_text=f"Suggested k={optimal_k}", annotation_position="top")
                                 
                                 fig.update_xaxes(title_text="Number of Clusters (k)")
-                                fig.update_yaxes(title_text="Inertia", secondary_y=False)
+                                fig.update_yaxes(title_text="Within-cluster dissimilarity", secondary_y=False)
                                 fig.update_yaxes(title_text="Silhouette Score", secondary_y=True)
                                 fig.update_layout(title="Elbow Plot", hovermode="x unified", height=400)
                                 
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
-                                st.warning("Could not automatically detect optimal clusters. Please select manually.")
+                                st.warning("Too few trajectories to suggest a number of clusters. Please select manually.")
                 
                          
-            # Assign clusters based on selected number
-            from scipy.cluster.hierarchy import fcluster
-            cluster_labels = fcluster(linkage_matrix, n_clusters, criterion='maxclust')
+            # Assign clusters by cutting the run's hierarchy (same hierarchy for every cluster count)
+            cluster_labels = clustering.cut_hierarchy(linkage_matrix, n_clusters)
             
             # Store cluster assignments in session state
             st.session_state.cluster_labels = cluster_labels
@@ -7451,7 +7467,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                 )
             
             st.markdown('---')
-            st.success(f"✅ Successfully assigned {n_trajectories} trajectories into {n_clusters} clusters using Ward linkage!")
+            st.success(f"Assigned {n_trajectories} trajectories to {len(np.unique(cluster_labels))} clusters "
+                       f"({clustering.method_label(clustering_run['method'], with_linkage=True)}).")
             
             # ===========================
             # ANALYSIS TOOLS
@@ -7462,14 +7479,14 @@ Each window captures a snapshot of spatial relationships at different points in 
             
             st.info("""
             **Advanced Analysis**: Explore cluster quality and trajectory relationships
-            - **MDS Visualization**: Project high-dimensional data to 2D/3D space
+            - **MDS Visualisation**: Project high-dimensional data to 2D/3D space
             - **Similarity Search**: Find most similar trajectories to a reference
             - **Silhouette Analysis**: Evaluate cluster quality metrics
             """)
             
             # Create tabs for different analysis tools
             analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
-                "MDS Visualization", 
+                "MDS Visualisation", 
                 "Similarity Search", 
                 "Silhouette Analysis"
             ])
@@ -7479,7 +7496,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             # ===========================
             with analysis_tab1:
                 st.markdown("#### Multidimensional Scaling (MDS)")
-                st.markdown("Visualize trajectory clusters in 2D or 3D space based on their pairwise distances.")
+                st.markdown("Visualise trajectory clusters in 2D or 3D space based on their pairwise distances.")
                 
                 # MDS dimension selection
                 col1, col2 = st.columns([1, 3])
@@ -7488,11 +7505,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                         "Dimensions",
                         options=[2, 3],
                         index=0,
-                        help="Choose 2D or 3D visualization"
+                        help="Choose 2D or 3D visualisation"
                     )
                 
                 with col2:
-                    if st.button("🎨 Generate MDS Plot", help="Click to compute and visualize MDS projection"):
+                    if st.button("Generate MDS Plot", help="Click to compute and visualise MDS projection"):
                         with st.spinner(f"Computing {mds_dims}D MDS projection..."):
                             from sklearn.manifold import MDS
                             
@@ -7583,8 +7600,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 )
                             
                             st.plotly_chart(fig_mds, use_container_width=True)
-                            st.success(f"✅ {mds_dims}D MDS projection computed successfully!")
-                            st.info(f"**Normalized Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
+                            st.success(f"{mds_dims}D MDS projection computed successfully!")
+                            st.info(f"**Normalised Stress (Kruskal's Stress-1)**: {stress_normalized:.4f} ({stress_normalized*100:.2f}%) — Lower is better: <0.05 (5%) excellent, <0.10 (10%) good, <0.20 (20%) acceptable")
             
             # ===========================
             # TAB 2: SIMILARITY SEARCH
@@ -7656,11 +7673,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                         st.markdown(f"**Cluster Analysis**: {same_cluster}/{k_similar} similar trajectories are in the same cluster as the reference")
                         
                         if same_cluster == k_similar:
-                            st.success("✅ All similar trajectories are in the same cluster - excellent clustering!")
+                            st.success("All similar trajectories are in the same cluster - excellent clustering!")
                         elif same_cluster >= k_similar * 0.7:
                             st.info("ℹ️ Most similar trajectories are in the same cluster - good clustering quality")
                         else:
-                            st.warning("⚠️ Many similar trajectories are in different clusters - consider adjusting cluster count")
+                            st.warning("Many similar trajectories are in different clusters - consider adjusting cluster count")
             
             # ===========================
             # TAB 3: SILHOUETTE ANALYSIS
@@ -7693,13 +7710,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                         
                         # Quality interpretation
                         if overall_score > 0.7:
-                            st.success("🌟 **Excellent** clustering structure!")
+                            st.success("**Excellent** clustering structure!")
                         elif overall_score > 0.5:
-                            st.success("✅ **Good** clustering quality")
+                            st.success("**Good** clustering quality")
                         elif overall_score > 0.3:
                             st.info("ℹ️ **Moderate** clustering quality")
                         else:
-                            st.warning("⚠️ **Poor** clustering - consider different parameters")
+                            st.warning("**Poor** clustering - consider different parameters")
                         
                         st.markdown("---")
                         st.markdown("**Per-Cluster Silhouette Scores:**")
@@ -7780,7 +7797,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         # Identify problematic trajectories
                         negative_scores = sample_scores < 0
                         if negative_scores.any():
-                            st.warning(f"⚠️ **{negative_scores.sum()} trajectories** have negative silhouette scores (possibly misclassified)")
+                            st.warning(f"**{negative_scores.sum()} trajectories** have negative silhouette scores (possibly misclassified)")
                             
                             problematic_df = pd.DataFrame({
                                 'Trajectory ID': np.array(st.session_state.trajectory_ids)[negative_scores],
@@ -7794,46 +7811,46 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     use_container_width=True
                                 )
                         else:
-                            st.success("✅ All trajectories have positive silhouette scores!")
+                            st.success("All trajectories have positive silhouette scores!")
             
             st.markdown('---')
-            st.success("✅ Step 5 analysis tools are ready! Use the tabs above to explore your clusters.")
+            st.success("Step 5 analysis tools are ready! Use the tabs above to explore your clusters.")
             
             # ===========================
             # CLUSTER VISUALIZATIONS
             # ===========================
             
             st.markdown('---')
-            st.markdown("### 🎨 Cluster Visualizations")
+            st.markdown("### Cluster Visualisations")
             
             st.info("""
-            **Visualize Trajectories by Cluster**: See how trajectories are grouped spatially and temporally
-            - **2D Trajectory Plots**: View trajectories colored by cluster assignment
-            - **3D Spatiotemporal View**: Explore X, Y, Time dimensions with cluster colors
+            **Visualise Trajectories by Cluster**: See how trajectories are grouped spatially and temporally
+            - **2D Trajectory Plots**: View trajectories coloured by cluster assignment
+            - **3D Spatiotemporal View**: Explore X, Y, Time dimensions with cluster colours
             - **Cluster Comparison**: Compare individual clusters side-by-side
             """)
             
             # Create tabs for different visualization types
             viz_tab1, viz_tab2, viz_tab3 = st.tabs([
-                "� 2D Spatial View", 
-                "🌐 3D Spatiotemporal View", 
-                "🔄 Cluster Comparison"
+                "2D Spatial View", 
+                "3D Spatiotemporal View", 
+                "Cluster Comparison"
             ])
             
             # ===========================
             # TAB 1: 2D SPATIAL VIEW
             # ===========================
             with viz_tab1:
-                st.markdown("#### 2D Trajectory Visualization by Cluster")
-                st.markdown("All trajectories plotted in X-Y space, colored by cluster assignment.")
+                st.markdown("#### 2D Trajectory Visualisation by Cluster")
+                st.markdown("All trajectories plotted in X-Y space, coloured by cluster assignment.")
                 
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
-                    st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                    st.warning("No trajectory data available. Please compute the distance matrix first in Step 3.")
                 elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
-                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
-                elif st.button("🎨 Generate 2D Cluster Plot", key="btn_2d_cluster"):
-                    with st.spinner("Generating 2D visualization..."):
+                    st.warning("No cluster assignments available. Please assign clusters using the slider above.")
+                elif st.button("Generate 2D Cluster Plot", key="btn_2d_cluster"):
+                    with st.spinner("Generating 2D visualisation..."):
                         import plotly.express as px
                         
                         # Get cluster data from session state
@@ -7849,8 +7866,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                         # Create color palette based on actual number of clusters
                         colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                         
-                        # Start with tennis court
-                        fig_2d = create_tennis_court()
+                        # Pitch as selected under "Select Course Type" (plain axes for No selection)
+                        fig_2d = create_pitch_figure(st.session_state.court_type)
+                        n_court_traces = len(fig_2d.data)
                         
                         # Plot each cluster (only clusters that actually exist)
                         for idx, cluster_id in enumerate(unique_clusters):
@@ -7897,6 +7915,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                                         hoverinfo='skip'
                                     ))
                         
+                        fit_axes_to_data(fig_2d, [v for t in fig_2d.data[n_court_traces:] for v in t.x],
+                                         [v for t in fig_2d.data[n_court_traces:] for v in t.y])
                         fig_2d.update_layout(
                             title=f"2D Trajectory Clusters (n={n_clusters})",
                             height=900,
@@ -7931,23 +7951,28 @@ Each window captures a snapshot of spatial relationships at different points in 
             # TAB 2: 3D SPATIOTEMPORAL VIEW
             # ===========================
             with viz_tab2:
-                st.markdown("#### 3D Spatiotemporal Visualization")
-                st.markdown("Trajectories in 3D space (X, Y, Time), colored by cluster.")
+                st.markdown("#### 3D Spatiotemporal Visualisation")
+                st.markdown("Trajectories in 3D space (X, Y, Time), coloured by cluster.")
                 
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
-                    st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                    st.warning("No trajectory data available. Please compute the distance matrix first in Step 3.")
                 elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
-                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
+                    st.warning("No cluster assignments available. Please assign clusters using the slider above.")
                 else:
-                    if st.button("🌐 Regenerate 3D Plot", key="btn_3d_cluster"):
+                    if st.button("Regenerate 3D Plot", key="btn_3d_cluster"):
                         # Clear the cached plot to force regeneration
                         if 'fig_3d_cluster' in st.session_state:
                             del st.session_state.fig_3d_cluster
                     
+                    # Regenerate whenever the run, the cluster cut or the pitch background changed
+                    fig_3d_key = (clustering_run['run_id'], int(st.session_state.n_clusters),
+                                  st.session_state.court_type, st.session_state.get('show_court_background', True))
+                    if st.session_state.get('fig_3d_cluster_key') != fig_3d_key:
+                        st.session_state.pop('fig_3d_cluster', None)
                     # Generate plot on first load or if regenerate button was clicked
                     if 'fig_3d_cluster' not in st.session_state:
-                        with st.spinner("Generating 3D spatiotemporal visualization..."):
+                        with st.spinner("Generating 3D spatiotemporal visualisation..."):
                             import plotly.express as px
                             
                             # Get cluster data from session state
@@ -7964,69 +7989,48 @@ Each window captures a snapshot of spatial relationships at different points in 
                             colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                             
                             fig_3d = go.Figure()
+                            # Pitch as selected under "Select Course Type"; none for No selection or a hidden background
+                            court_3d = (st.session_state.court_type
+                                        if st.session_state.get('show_court_background', True) else 'No selection')
+                            court_extent = None  # (x_min, x_max, y_min, y_max) of a drawn pitch
                             
-                            # Tennis court dimensions
-                            court_width = 8.23
-                            court_length = 23.77
-                            doubles_width = 10.97
-                            doubles_alley_width = (doubles_width - court_width) / 2
-                            
-                            # Add tennis court as a surface at z=0
-                            court_x = np.array([[-doubles_alley_width, court_width + doubles_alley_width],
-                                               [-doubles_alley_width, court_width + doubles_alley_width]])
-                            court_y = np.array([[0, 0],
-                                               [court_length, court_length]])
-                            court_z = np.array([[0, 0],
-                                               [0, 0]])
-                            
-                            fig_3d.add_trace(go.Surface(
-                                x=court_x,
-                                y=court_y,
-                                z=court_z,
-                                colorscale=[[0, '#2ECC71'], [1, '#2ECC71']],  # Tennis court green
-                                showscale=False,
-                                opacity=0.7,
-                                name='Tennis Court',
-                                hoverinfo='skip',
-                                showlegend=False
-                            ))
-                            
-                            # Add court lines as 3D lines at z=0
                             def add_court_line_3d(x0, y0, x1, y1, color='white', width=2):
                                 fig_3d.add_trace(go.Scatter3d(
-                                    x=[x0, x1],
-                                    y=[y0, y1],
-                                    z=[0, 0],
-                                    mode='lines',
-                                    line=dict(color=color, width=width),
-                                    showlegend=False,
-                                    hoverinfo='skip'
-                                ))
+                                    x=[x0, x1], y=[y0, y1], z=[0, 0], mode='lines',
+                                    line=dict(color=color, width=width), showlegend=False, hoverinfo='skip'))
                             
-                            # Court boundary (doubles)
-                            add_court_line_3d(-doubles_alley_width, 0, court_width + doubles_alley_width, 0, width=3)
-                            add_court_line_3d(-doubles_alley_width, court_length, court_width + doubles_alley_width, court_length, width=3)
-                            add_court_line_3d(-doubles_alley_width, 0, -doubles_alley_width, court_length, width=3)
-                            add_court_line_3d(court_width + doubles_alley_width, 0, court_width + doubles_alley_width, court_length, width=3)
+                            def add_court_surface_3d(x0, x1, y0, y1, colour, name):
+                                fig_3d.add_trace(go.Surface(
+                                    x=np.array([[x0, x1], [x0, x1]]), y=np.array([[y0, y0], [y1, y1]]), z=np.zeros((2, 2)),
+                                    colorscale=[[0, colour], [1, colour]], showscale=False, opacity=0.7, name=name,
+                                    hoverinfo='skip', showlegend=False))
                             
-                            # Singles sidelines
-                            add_court_line_3d(0, 0, 0, court_length)
-                            add_court_line_3d(court_width, 0, court_width, court_length)
-                            
-                            # Net line
-                            net_position = court_length / 2
-                            add_court_line_3d(-doubles_alley_width, net_position, court_width + doubles_alley_width, net_position)
-                            
-                            # Service lines
-                            service_line_distance = 6.40
-                            service_line_bottom = net_position - service_line_distance
-                            service_line_top = net_position + service_line_distance
-                            add_court_line_3d(0, service_line_bottom, court_width, service_line_bottom)
-                            add_court_line_3d(0, service_line_top, court_width, service_line_top)
-                            
-                            # Center service line
-                            center_x = court_width / 2
-                            add_court_line_3d(center_x, service_line_bottom, center_x, service_line_top)
+                            if court_3d == 'Football':
+                                dims = get_court_dimensions('Football')
+                                pw, ph = dims['width'], dims['height']
+                                add_court_surface_3d(0, pw, 0, ph, '#3a7d44', 'Football Pitch')
+                                for x0, y0, x1, y1 in ((0, 0, pw, 0), (0, ph, pw, ph), (0, 0, 0, ph), (pw, 0, pw, ph),
+                                                       (pw / 2, 0, pw / 2, ph)):
+                                    add_court_line_3d(x0, y0, x1, y1, width=3)
+                                court_extent = (0, pw, 0, ph)
+                            elif court_3d == 'Tennis':
+                                court_width, court_length, doubles_width = 8.23, 23.77, 10.97
+                                alley = (doubles_width - court_width) / 2
+                                add_court_surface_3d(-alley, court_width + alley, 0, court_length, '#2ECC71', 'Tennis Court')
+                                for x0, y0, x1, y1 in ((-alley, 0, court_width + alley, 0),
+                                                       (-alley, court_length, court_width + alley, court_length),
+                                                       (-alley, 0, -alley, court_length),
+                                                       (court_width + alley, 0, court_width + alley, court_length)):
+                                    add_court_line_3d(x0, y0, x1, y1, width=3)
+                                net_position = court_length / 2
+                                service_bottom, service_top = net_position - 6.40, net_position + 6.40
+                                for x0, y0, x1, y1 in ((0, 0, 0, court_length), (court_width, 0, court_width, court_length),
+                                                       (-alley, net_position, court_width + alley, net_position),
+                                                       (0, service_bottom, court_width, service_bottom),
+                                                       (0, service_top, court_width, service_top),
+                                                       (court_width / 2, service_bottom, court_width / 2, service_top)):
+                                    add_court_line_3d(x0, y0, x1, y1)
+                                court_extent = (-alley, court_width + alley, 0, court_length)
                             
                             # Plot each cluster in 3D (only clusters that actually exist)
                             for idx, cluster_id in enumerate(unique_clusters):
@@ -8051,6 +8055,19 @@ Each window captures a snapshot of spatial relationships at different points in 
                                         hovertemplate=f'<b>Trajectory {tid}</b><br>Cluster: {cluster_id}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Time: %{{z}}<extra></extra>'
                                     ))
                         
+                            # Fit x/y to the displayed trajectories (plus the pitch, if drawn) with equal scales
+                            pts = np.vstack([trajectories_dict[tid][:, :2] for tid in st.session_state.trajectory_ids])
+                            x_lo, x_hi = float(np.nanmin(pts[:, 0])), float(np.nanmax(pts[:, 0]))
+                            y_lo, y_hi = float(np.nanmin(pts[:, 1])), float(np.nanmax(pts[:, 1]))
+                            if court_extent is not None:
+                                x_lo, x_hi = min(x_lo, court_extent[0]), max(x_hi, court_extent[1])
+                                y_lo, y_hi = min(y_lo, court_extent[2]), max(y_hi, court_extent[3])
+                            pad = max(0.05 * max(x_hi - x_lo, y_hi - y_lo), 0.5)
+                            x_range_3d, y_range_3d = [x_lo - pad, x_hi + pad], [y_lo - pad, y_hi + pad]
+                            span_x, span_y = x_range_3d[1] - x_range_3d[0], y_range_3d[1] - y_range_3d[0]
+                            longest = max(span_x, span_y)
+                            aspect_3d = dict(x=2 * span_x / longest, y=2 * span_y / longest, z=1)
+
                             fig_3d.update_layout(
                                 title=f"3D Spatiotemporal Trajectory Clusters (n={n_clusters})",
                                 scene=dict(
@@ -8061,14 +8078,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                                         eye=dict(x=1.3, y=-1.3, z=1.0),
                                         center=dict(x=0, y=0, z=0)
                                     ),
-                                    xaxis=dict(
-                                        range=[-doubles_alley_width - 2, court_width + doubles_alley_width + 2]
-                                    ),
-                                    yaxis=dict(
-                                        range=[-3, court_length + 3]
-                                    ),
+                                    xaxis=dict(range=x_range_3d),
+                                    yaxis=dict(range=y_range_3d),
                                     aspectmode='manual',
-                                    aspectratio=dict(x=1, y=2.5, z=1)
+                                    # Equal x/y spatial scales; time axis scaled for readability
+                                    aspectratio=aspect_3d
                                 ),
                                 height=900,
                                 margin=dict(l=0, r=0, t=50, b=50),
@@ -8086,10 +8100,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                             
                         # Store in session state
                         st.session_state.fig_3d_cluster = fig_3d
+                        st.session_state.fig_3d_cluster_key = fig_3d_key
                     
                     # Display the plot (always, since it now auto-generates)
                     render_interactive_chart(st.session_state.fig_3d_cluster)
-                    st.success("✅ 3D visualization generated! Rotate and zoom to explore the spatiotemporal patterns.")            # ===========================
+                    st.success("3D visualisation generated! Rotate and zoom to explore the spatiotemporal patterns.")            # ===========================
             # TAB 3: CLUSTER COMPARISON
             # ===========================
             with viz_tab3:
@@ -8098,9 +8113,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 # Check if trajectory data is available
                 if 'trajectories' not in st.session_state or st.session_state.trajectories is None:
-                    st.warning("⚠️ No trajectory data available. Please compute the distance matrix first in Step 3.")
+                    st.warning("No trajectory data available. Please compute the distance matrix first in Step 3.")
                 elif 'cluster_labels' not in st.session_state or st.session_state.cluster_labels is None:
-                    st.warning("⚠️ No cluster assignments available. Please assign clusters using the slider above.")
+                    st.warning("No cluster assignments available. Please assign clusters using the slider above.")
                 else:
                     # Get cluster data from session state
                     cluster_labels = st.session_state.cluster_labels
@@ -8111,11 +8126,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Cluster selection
                     selected_clusters = st.multiselect(
-                        "Select clusters to visualize",
+                        "Select clusters to visualise",
                         options=unique_clusters,
                         default=[unique_clusters[0]] if len(unique_clusters) >= 1 else [],
                         format_func=lambda x: f"Cluster {x} ({(cluster_labels == x).sum()} trajectories)",
-                        help="Select one or more clusters to visualize"
+                        help="Select one or more clusters to visualise"
                     )
                     
                     if selected_clusters:
@@ -8126,7 +8141,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             help="Overlay: all clusters on one plot | Side-by-side: separate subplots"
                         )
                         
-                        if st.button("Visualize Selected Clusters", key="btn_cluster_compare"):
+                        if st.button("Visualise Selected Clusters", key="btn_cluster_compare"):
                             with st.spinner("Generating cluster comparison..."):
                                 import plotly.express as px
                                 
@@ -8138,8 +8153,9 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 colors = px.colors.qualitative.Plotly[:len(unique_clusters)]
                                 
                                 if view_mode == "Overlay":
-                                    # Single plot with selected clusters - start with tennis court
-                                    fig_compare = create_tennis_court()
+                                    # Single plot with selected clusters on the selected pitch (or plain axes)
+                                    fig_compare = create_pitch_figure(st.session_state.court_type)
+                                    n_court_traces = len(fig_compare.data)
                                     
                                     for cluster_id in selected_clusters:
                                         mask = cluster_labels == cluster_id
@@ -8185,8 +8201,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                                                     hoverinfo='skip'
                                                 ))
                                     
+                                    fit_axes_to_data(fig_compare,
+                                                     [v for t in fig_compare.data[n_court_traces:] for v in t.x],
+                                                     [v for t in fig_compare.data[n_court_traces:] for v in t.y])
                                     fig_compare.update_layout(
-                                        title=f"Cluster Comparison - Overlay View (Clusters: {selected_clusters})",
+                                        title=f"Cluster Comparison: Overlay View (Clusters: {selected_clusters})",
                                         height=900,
                                         hovermode='closest',
                                         showlegend=True,
@@ -8195,172 +8214,37 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     
                                     render_interactive_chart(fig_compare)
                                     
-                                else:  # Side-by-side
-                                    # Create subplots with tennis courts
-                                    n_selected = len(selected_clusters)
-                                    cols = min(2, n_selected)
-                                    rows = (n_selected + cols - 1) // cols
-                                    
-                                    fig_compare = make_subplots(
-                                        rows=rows,
-                                        cols=cols,
-                                        subplot_titles=[f"Cluster {c} ({(cluster_labels == c).sum()} trajectories)" 
-                                                       for c in selected_clusters],
-                                        vertical_spacing=0.12,
-                                        horizontal_spacing=0.1
-                                    )
-                                    
-                                    # Tennis court dimensions
-                                    court_width = 8.23
-                                    court_length = 23.77
-                                    doubles_width = 10.97
-                                    doubles_alley_width = (doubles_width - court_width) / 2
-                                    service_line_distance = 6.40
-                                    net_position = court_length / 2
-                                    service_line_bottom = net_position - service_line_distance
-                                    service_line_top = net_position + service_line_distance
-                                    center_x = court_width / 2
-                                    
+                                else:  # Side-by-side: one figure per cluster, each fitted to its own trajectories
+                                    side_cols = st.columns(min(2, len(selected_clusters)))
                                     for idx, cluster_id in enumerate(selected_clusters):
-                                        row = idx // cols + 1
-                                        col = idx % cols + 1
                                         color_idx = cluster_to_idx[cluster_id]
-                                        
-                                        # Add tennis court markings for this subplot
-                                        # Outer boundary (doubles court)
-                                        fig_compare.add_shape(
-                                            type="rect", 
-                                            x0=-doubles_alley_width, y0=0, 
-                                            x1=court_width + doubles_alley_width, y1=court_length,
-                                            line=dict(color="white", width=2),
-                                            row=row, col=col
-                                        )
-                                        
-                                        # Singles sidelines
-                                        fig_compare.add_shape(
-                                            type="line", x0=0, y0=0, x1=0, y1=court_length,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        fig_compare.add_shape(
-                                            type="line", x0=court_width, y0=0, x1=court_width, y1=court_length,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        
-                                        # Net
-                                        fig_compare.add_shape(
-                                            type="line", 
-                                            x0=-doubles_alley_width, y0=net_position, 
-                                            x1=court_width + doubles_alley_width, y1=net_position,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        
-                                        # Service lines
-                                        fig_compare.add_shape(
-                                            type="line", x0=0, y0=service_line_bottom, 
-                                            x1=court_width, y1=service_line_bottom,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        fig_compare.add_shape(
-                                            type="line", x0=0, y0=service_line_top, 
-                                            x1=court_width, y1=service_line_top,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        
-                                        # Center service line
-                                        fig_compare.add_shape(
-                                            type="line", x0=center_x, y0=service_line_bottom, 
-                                            x1=center_x, y1=service_line_top,
-                                            line=dict(color="white", width=1.5),
-                                            row=row, col=col
-                                        )
-                                        
-                                        # Add trajectories for this cluster
+                                        fig_cluster = create_pitch_figure(st.session_state.court_type)
+                                        n_court_traces = len(fig_cluster.data)
                                         mask = cluster_labels == cluster_id
-                                        cluster_trajectory_ids = np.array(st.session_state.trajectory_ids)[mask]
-                                        
-                                        for tid in cluster_trajectory_ids:
+                                        for tid in np.array(st.session_state.trajectory_ids)[mask]:
                                             traj_data = trajectories_dict[tid]
-                                            
-                                            # Add trajectory line and markers
-                                            fig_compare.add_trace(
-                                                go.Scatter(
-                                                    x=traj_data[:, 0],
-                                                    y=traj_data[:, 1],
-                                                    mode='lines+markers',
-                                                    name=f"T{tid}",
-                                                    line=dict(color=colors[color_idx], width=2),
-                                                    marker=dict(
-                                                        size=[4] * (len(traj_data) - 1) + [0],  # Hide last marker
-                                                        color=colors[color_idx]
-                                                    ),
-                                                    legendgroup=f"traj_{tid}",
-                                                    showlegend=False,
-                                                    hovertemplate=f'<b>Trajectory {tid}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
-                                                ),
-                                                row=row,
-                                                col=col
-                                            )
-                                            
-                                            # Add arrow at the end
+                                            fig_cluster.add_trace(go.Scatter(
+                                                x=traj_data[:, 0], y=traj_data[:, 1], mode='lines+markers',
+                                                name=f"T{tid}", line=dict(color=colors[color_idx], width=2),
+                                                marker=dict(size=[4] * (len(traj_data) - 1) + [0], color=colors[color_idx]),
+                                                legendgroup=f"traj_{tid}", showlegend=False,
+                                                hovertemplate=f'<b>Trajectory {tid}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'))
                                             if len(traj_data) >= 2:
                                                 dx = traj_data[-1, 0] - traj_data[-2, 0]
                                                 dy = traj_data[-1, 1] - traj_data[-2, 1]
-                                                angle = np.degrees(np.arctan2(dx, dy))
-                                                
-                                                fig_compare.add_trace(
-                                                    go.Scatter(
-                                                        x=[traj_data[-1, 0]],
-                                                        y=[traj_data[-1, 1]],
-                                                        mode='markers',
-                                                        marker=dict(
-                                                            symbol='arrow',
-                                                            color=colors[color_idx],
-                                                            size=12,
-                                                            angle=angle
-                                                        ),
-                                                        legendgroup=f"traj_{tid}",
-                                                        showlegend=False,
-                                                        hoverinfo='skip'
-                                                    ),
-                                                    row=row,
-                                                    col=col
-                                                )
-                                        
-                                        # Update axes for tennis court appearance
-                                        x_margin = 2.0
-                                        y_margin = 3.0
-                                        
-                                        fig_compare.update_xaxes(
-                                            range=[-doubles_alley_width - x_margin, court_width + doubles_alley_width + x_margin],
-                                            showgrid=False,
-                                            zeroline=False,
-                                            title_text="Court Width (m)",
-                                            row=row, col=col
-                                        )
-                                        fig_compare.update_yaxes(
-                                            range=[-y_margin, court_length + y_margin],
-                                            showgrid=False,
-                                            zeroline=False,
-                                            title_text="Court Length (m)",
-                                            scaleanchor=f"x{col if row == 1 else (row-1)*cols + col}",
-                                            scaleratio=1,
-                                            row=row, col=col
-                                        )
-                                    
-                                    fig_compare.update_layout(
-                                        title_text="Cluster Comparison - Side-by-side View",
-                                        height=900 * rows,
-                                        hovermode='closest',
-                                        plot_bgcolor='#25D366',  # Tennis court green
-                                        uirevision='constant'
-                                    )
-                                    
-                                    render_interactive_chart(fig_compare)
+                                                fig_cluster.add_trace(go.Scatter(
+                                                    x=[traj_data[-1, 0]], y=[traj_data[-1, 1]], mode='markers',
+                                                    marker=dict(symbol='arrow', color=colors[color_idx], size=12,
+                                                                angle=np.degrees(np.arctan2(dx, dy))),
+                                                    legendgroup=f"traj_{tid}", showlegend=False, hoverinfo='skip'))
+                                        fit_axes_to_data(fig_cluster,
+                                                         [v for t in fig_cluster.data[n_court_traces:] for v in t.x],
+                                                         [v for t in fig_cluster.data[n_court_traces:] for v in t.y])
+                                        fig_cluster.update_layout(
+                                            title=f"Cluster {cluster_id} ({int(mask.sum())} trajectories)",
+                                            height=650, hovermode='closest', uirevision=f'cluster-{cluster_id}')
+                                        with side_cols[idx % len(side_cols)]:
+                                            render_interactive_chart(fig_cluster)
                                 
                                 # Cluster statistics
                                 st.markdown("---")
@@ -8392,10 +8276,10 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 st.dataframe(stats_df, use_container_width=True)
                     
                     else:
-                        st.info("👆 Select one or more clusters above to visualize and compare them.")
+                        st.info("Select one or more clusters above to visualise and compare them.")
             
             st.markdown('---')
-            st.success("✅ Step 6 cluster visualizations complete! Explore your clustered trajectories above.")
+            st.success("Step 6 cluster visualisations complete! Explore your clustered trajectories above.")
             
             # ===========================
             # EXPORT & SUMMARY
@@ -8415,7 +8299,7 @@ Each window captures a snapshot of spatial relationships at different points in 
             export_tab1, export_tab2, export_tab3 = st.tabs([
                 "Export Data", 
                 "Analysis Summary", 
-                "📖 Documentation"
+                "Documentation"
             ])
             
             # ===========================
@@ -8448,7 +8332,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # Download button
                     csv_clusters = cluster_export_df.to_csv(index=False)
                     st.download_button(
-                        label="📥 Download Cluster Assignments (CSV)",
+                        label="Download Cluster Assignments (CSV)",
                         data=csv_clusters,
                         file_name=f"cluster_assignments_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv",
@@ -8472,7 +8356,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # Download button
                     csv_distances = distance_df.to_csv(float_format='%.17g')
                     st.download_button(
-                        label="� Download Distance Matrix (CSV)",
+                        label="Download Distance Matrix (CSV)",
                         data=csv_distances,
                         file_name=f"distance_matrix_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv",
@@ -8513,7 +8397,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     csv_stats = stats_export_df.to_csv(index=False)
                     st.download_button(
-                        label="📥 Download Cluster Statistics (CSV)",
+                        label="Download Cluster Statistics (CSV)",
                         data=csv_stats,
                         file_name=f"cluster_statistics_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv"
@@ -8532,7 +8416,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     csv_config = config_df.to_csv()
                     st.download_button(
-                        label="📥 Download Configuration (CSV)",
+                        label="Download Configuration (CSV)",
                         data=csv_config,
                         file_name=f"analysis_configuration_{clustering.run_file_tag(clustering_run, n_clusters)}.csv",
                         mime="text/csv"
@@ -8569,7 +8453,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 st.markdown("---")
                 
                 # Cluster distribution
-                st.markdown("### 🎯 Cluster Distribution")
+                st.markdown("### Cluster Distribution")
                 
                 import plotly.express as px
                 
@@ -8643,31 +8527,31 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 st.markdown(f"""
                 **Clustering Approach:**
-                - **Method**: {clustering_run['method']}
+                - **Method**: {clustering.method_label(clustering_run['method'])}
                 - **Distance Metric**: {clustering.DISTANCE_METRICS[clustering_run['method']]}
-                - **Linkage**: Ward (minimizes within-cluster variance)
+                - **Linkage**: {clustering.LINKAGE_LABELS[clustering_run['linkage']].capitalize()}: {clustering.HELP[clustering_run['linkage']]}
                 - **Algorithm**: Hierarchical Agglomerative Clustering
                 
                 **Process:**
-                1. Computed pairwise distances between all trajectories
-                2. Built hierarchical clustering dendrogram using Ward linkage
-                3. Cut dendrogram at {n_clusters} clusters
+                1. Computed pairwise dissimilarities between all trajectories
+                2. Built the hierarchy with {clustering.LINKAGE_LABELS[clustering_run['linkage']]} on the condensed pairwise matrix
+                3. Cut that hierarchy at {n_clusters} clusters
                 4. Assigned each trajectory to its cluster
-                5. Validated with silhouette analysis and MDS visualization
+                5. Checked with silhouette analysis (original pairwise dissimilarities) and MDS visualisation
                 """)
             
             # ===========================
             # TAB 3: DOCUMENTATION
             # ===========================
             with export_tab3:
-                st.markdown("#### 📖 User Guide & Documentation")
+                st.markdown("#### User Guide & Documentation")
                 
                 st.markdown("""
                 ## Trajectory Clustering Analysis Tool
                 
                 ### Overview
                 This tool provides comprehensive trajectory clustering analysis using hierarchical methods.
-                It supports multiple distance metrics and visualization techniques to explore spatiotemporal patterns.
+                It supports multiple distance metrics and visualisation techniques to explore spatiotemporal patterns.
                 
                 ---
                 
@@ -8675,13 +8559,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 #### **Data Loading & Infrastructure**
                 - Load trajectory data from CSV/Excel files
-                - Initialize clustering algorithms and distance computation functions
+                - Initialise clustering algorithms and distance computation functions
                 
                 #### **Distance Computation**
-                Choose from three distance metrics:
-                - **Features**: Extract trajectory features (length, speed, angles) and compute Euclidean distance
-                - **Spatial (Chamfer)**: Measure spatial shape similarity
-                - **DTW**: Dynamic Time Warping for temporal alignment
+                Choose how trajectory dissimilarity is calculated; a compatible linkage is then used:
+                - **Feature-based clustering (Euclidean)**, Ward linkage: Euclidean distances between standardised feature vectors
+                - **Spatial clustering (Chamfer)**, average linkage: symmetric Chamfer dissimilarity of the occupied locations
+                - **Spatiotemporal clustering (DTW)**, average linkage: Dynamic Time Warping on (x, y, tst)
                 
                 #### **Dendrogram & Clustering**
                 - View hierarchical clustering structure
@@ -8689,11 +8573,11 @@ Each window captures a snapshot of spatial relationships at different points in 
                 - Assign trajectories to clusters
                 
                 #### **Analysis Tools**
-                - **MDS Visualization**: Project high-dimensional distances to 2D/3D
+                - **MDS Visualisation**: Project high-dimensional distances to 2D/3D
                 - **Similarity Search**: Find most similar trajectories
                 - **Silhouette Analysis**: Validate cluster quality
                 
-                #### **Cluster Visualizations**
+                #### **Cluster Visualisations**
                 - 2D spatial plots of clustered trajectories
                 - 3D spatiotemporal views
                 - Side-by-side cluster comparison
@@ -8707,20 +8591,25 @@ Each window captures a snapshot of spatial relationships at different points in 
                 
                 ### Distance Metrics Explained
                 
-                **1. Feature-Based (Euclidean)**
-                - Extracts: length, avg speed, direction, spatial extent
-                - Best for: Comparing overall trajectory characteristics
+                **1. Feature-based clustering (Euclidean), Ward linkage**
+                - Extracts summary features (e.g. travelled distance, speeds, sinuosity, spatial extent), standardises them
+                  and computes Euclidean distances between the feature vectors
+                - Suited to comparing overall trajectory characteristics
                 - Fast computation
                 
-                **2. Spatial (Chamfer)**
-                - Measures minimum point-to-point distances
-                - Best for: Shape similarity regardless of timing
-                - Symmetric distance metric
+                **2. Spatial clustering (Chamfer), average linkage**
+                - For every position, the distance to the nearest position of the other trajectory, averaged in both directions
+                - Compares the locations occupied; ignores observation order and timing
+                - Symmetric dissimilarity
                 
-                **3. Dynamic Time Warping (DTW)**
-                - Aligns trajectories temporally before measuring distance
-                - Best for: Trajectories with similar patterns at different speeds
-                - Handles temporal shifts
+                **3. Spatiotemporal clustering (DTW), average linkage**
+                - Aligns ordered observations, allowing them to be matched at different positions in their sequences
+                - Each aligned pair costs the Euclidean distance between (x, y, tst); tst is unscaled, so one tst step
+                  weighs as much as one coordinate unit, and the sum grows with trajectory length
+                
+                **Why two linkages?** Ward needs Euclidean geometry, which only the feature vectors provide. Chamfer and DTW
+                dissimilarities are not Euclidean in general, so average linkage (mean dissimilarity between all pairs across
+                two groups) is used for them. Comparing approaches therefore changes both the dissimilarity and the linkage.
                 
                 ---
                 
@@ -8741,7 +8630,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 **MDS Plot:**
                 - Shows relative positions based on distances
                 - Closer points = more similar trajectories
-                - Color indicates cluster membership
+                - Colour indicates cluster membership
                 
                 ---
                 
@@ -8750,15 +8639,15 @@ Each window captures a snapshot of spatial relationships at different points in 
                 1. **Choosing Distance Metric:**
                    - Start with Features for quick exploration
                    - Use Spatial if shape matters more than timing
-                   - Use DTW for speed-invariant comparison
+                   - Use DTW when the order of positions matters; note that tst enters its cost directly
                 
                 2. **Selecting Number of Clusters:**
-                   - Use auto-detect as starting point
+                   - Use the suggestion as a starting point
                    - Check silhouette scores for validation
                    - Consider domain knowledge
                 
                 3. **Interpreting Clusters:**
-                   - Examine cluster visualizations in Step 6
+                   - Examine cluster visualisations in Step 6
                    - Use similarity search to find representatives
                    - Check cluster statistics for size balance
                 
@@ -8781,7 +8670,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                 - Try different number of clusters
                 - Consider different distance metric
                 
-                **Q: Visualizations not showing**
+                **Q: Visualisations not showing**
                 - Ensure you completed distance computation in Step 3
                 - Check that cluster assignment was performed in Step 4
                 
@@ -8804,13 +8693,13 @@ Each window captures a snapshot of spatial relationships at different points in 
                 """)
                 
                 st.markdown("---")
-                st.success("📚 Documentation complete! Use the tabs above to export data and view analysis summary.")
+                st.success("Documentation complete! Use the tabs above to export data and view analysis summary.")
             
             st.markdown('---')
-            st.success("🎉 **Analysis Complete!** All steps finished. Use the tabs above to export results and view summary.")
+            st.success("**Analysis Complete!** All steps finished. Use the tabs above to export results and view summary.")
     
     elif analysis_method == "Extra":
-        st.header("🎯 Extra Analysis Methods")
+        st.header("Extra Analysis Methods")
 
         extra_methods = [
             "Heat map animations",
@@ -8859,7 +8748,7 @@ Each window captures a snapshot of spatial relationships at different points in 
         st.markdown('---')
 
         if selected_extra_method == "Heat map animations":
-            st.subheader("🔥 Heat Map Animations")
+            st.subheader("Heat Map Animations")
             st.info("This method creates animated heat maps showing density patterns over time.")
             
             col1, col2 = st.columns(2)
@@ -8959,7 +8848,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                             }]
                                         },
                                         {
-                                            'label': '⏸ Pause',
+                                            'label': 'Pause',
                                             'method': 'animate',
                                             'args': [[None], {
                                                 'frame': {'duration': 0, 'redraw': False},
@@ -9014,8 +8903,8 @@ Each window captures a snapshot of spatial relationships at different points in 
                             render_interactive_chart(fig_static, "Overall density across entire time period", use_container_width=use_container_width)
             
         elif selected_extra_method == "PDP":
-            st.subheader("📐 PDP (Pairwise Distance Profile)")
-            st.info("This method analyzes pairwise distances between trajectories over time.")
+            st.subheader("PDP (Pairwise Distance Profile)")
+            st.info("This method analyses pairwise distances between trajectories over time.")
             
             if st.button("Calculate PDP", key="run_pdp"):
                 with st.spinner("Calculating pairwise distance profiles..."):
@@ -9101,7 +8990,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                             st.dataframe(pd.DataFrame(stats_data).round(2))
             
         elif selected_extra_method == "QTC":
-            st.subheader("� QTC (Qualitative Trajectory Calculus)")
+            st.subheader("QTC (Qualitative Trajectory Calculus)")
             st.info("This method uses qualitative representations to characterize trajectory relationships.")
             
             if len(selected_objects) < 2:
@@ -9127,7 +9016,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         if len(traj_data) < 2:
                             st.error("Need at least 2 valid trajectories.")
                         else:
-                            st.info(f"Analyzing QTC between {traj_ids[0]} and {traj_ids[1]}")
+                            st.info(f"Analysing QTC between {traj_ids[0]} and {traj_ids[1]}")
                             
                             # Find common time steps
                             times1 = set(traj_data[0][:, 0])
@@ -9227,7 +9116,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                     st.metric("Moving Apart", qtc_counts.get('+', 0))
                                 
                                 # Visualize trajectories
-                                st.subheader("Trajectory Visualization")
+                                st.subheader("Trajectory Visualisation")
                                 fig_traj = create_pitch_figure(court_type)
                                 
                                 for idx, traj_id in enumerate(traj_ids[:2]):
@@ -9251,7 +9140,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                                 
                                 # Determine if we should use container width based on court type
                                 use_container_width = (court_type == 'Football')
-                                render_interactive_chart(fig_traj, "Trajectories analyzed with QTC", use_container_width=use_container_width)
+                                render_interactive_chart(fig_traj, "Trajectories analysed with QTC", use_container_width=use_container_width)
 
 # Run the app
 if __name__ == "__main__":

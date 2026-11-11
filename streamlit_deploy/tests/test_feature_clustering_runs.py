@@ -150,7 +150,7 @@ def check_run(app, feature, outputs):
     assert label_of['Config_5_obj0'] == label_of['Config_16_obj0']
     assert (label_of['Config_8_obj0'] == label_of['Config_16_obj0']) == (feature == 'total_distance')
 
-    tag = f"features-{feature}_4clusters_run{run['run_id']}"
+    tag = f"features-{feature}_ward_4clusters_run{run['run_id']}"
     assignments = outputs['cluster_assignments']
     assert assignments['file_name'] == f"cluster_assignments_{tag}.csv"
     table = pd.read_csv(io.StringIO(assignments['data']))
@@ -176,14 +176,14 @@ def check_run(app, feature, outputs):
     configuration = outputs['analysis_configuration']
     assert configuration['file_name'] == f"analysis_configuration_{tag}.csv"
     conf = pd.read_csv(io.StringIO(configuration['data']), index_col=0)['Value']
-    assert conf['Clustering_Method'] == 'Features (Euclidean)' and conf['Distance_Metric'] == 'Euclidean'
+    assert conf['Clustering_Method'] == 'Feature-based clustering (Euclidean)' and conf['Distance_Metric'] == 'Euclidean'
     assert conf['Selected_Features'] == feature and conf['Linkage_Method'] == 'Ward'
     assert conf['Standardisation'].startswith('StandardScaler')
     assert conf['Requested_Number_of_Clusters'] == '4' and conf['Actual_Number_of_Clusters'] == '4'
     assert conf['Dataset_Content_SHA256'] == run['fingerprint'] and conf['Run_ID'] == run['run_id']
     assert conf['Configuration_IDs'] == ', '.join(CONFIGS) and conf['Object_IDs'] == '0'
     assert (conf['Start_Observation_tst'], conf['End_Observation_tst']) == ('0', '136')
-    assert 'not seconds' in conf['Time_Unit']
+    assert 'not necessarily seconds' in conf['Time_Unit']
     assert conf['Number_of_Trajectories'] == '26' and conf['Positions_per_Trajectory'] == '137'
     assert outputs['cluster_statistics']['file_name'] == f"cluster_statistics_{tag}.csv"
     return run, partition(ids, labels), s['distance_matrix'].copy()

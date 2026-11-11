@@ -583,7 +583,7 @@ def plot_outlier_scores(features_df, score_col, title):
     return fig
 
 def plot_boxplots(features_df, feature_cols):
-    """Create box plots for multiple features to visualize outliers."""
+    """Create box plots for multiple features to visualise outliers."""
     fig = go.Figure()
     
     for col in feature_cols:
@@ -604,7 +604,7 @@ def plot_boxplots(features_df, feature_cols):
 
 
 def plot_convex_hull_layers(features_df, x_feature, y_feature):
-    """Visualize convex hull layers."""
+    """Visualise convex hull layers."""
     fig = go.Figure()
     
     max_depth = int(features_df['convex_hull_depth'].max())
@@ -757,7 +757,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     col1, col2 = st.columns(2)
     
     if method == "Graphical: Box Plots":
-        st.subheader("5️⃣ Box Plot Visualization")
+        st.subheader("5️⃣ Box Plot Visualisation")
         st.markdown("""
         **Graphical Method**: Visual identification of outliers using box plots.
         
@@ -833,7 +833,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         """)
         
         # Visualize convex hull layers
-        st.subheader("5️⃣ Convex Hull Visualization")
+        st.subheader("5️⃣ Convex Hull Visualisation")
         fig_hull = plot_convex_hull_layers(result_df, hull_features[0], hull_features[1])
         render_interactive_chart(st, fig_hull, "Convex Hull Depth Layers")
     
@@ -903,15 +903,15 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         st.dataframe(outliers_df.style.format({score_col: '{:.3f}'}))
     
     # Visualizations
-    st.subheader("6️⃣ Visualizations")
+    st.subheader("6️⃣ Visualisations")
     
     # For methods other than Convex Hull, offer MDS projection when data is high-dimensional
     if method != "Depth-Based: Convex Hull Layers" and len(selected_features) >= 3:
         st.markdown(f"""
-        **💡 Your data has {len(selected_features)} dimensions ({', '.join(selected_features)})**
+        **Your data has {len(selected_features)} dimensions ({', '.join(selected_features)})**
         
         Since the original feature space is {len(selected_features)}-dimensional, we can use 
-        **MDS (Multidimensional Scaling)** to project it to 2D or 3D for visualization while 
+        **MDS (Multidimensional Scaling)** to project it to 2D or 3D for visualisation while 
         preserving distances between trajectories.
         """)
         
@@ -919,7 +919,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             "MDS Projection Dimensions:", 
             [2, 3], 
             horizontal=True,
-            help="Project high-dimensional data to 2D or 3D for visualization"
+            help="Project high-dimensional data to 2D or 3D for visualisation"
         )
         
         with st.spinner(f"Computing MDS {mds_dims}D projection..."):
@@ -1035,7 +1035,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     
     # Trajectory Visualization on Tennis Court
     st.markdown("---")
-    st.markdown("**Trajectory Visualization on Tennis Court**")
+    st.markdown("**Trajectory Visualisation on Tennis Court**")
     st.markdown("See the actual movement patterns of outlier vs normal trajectories")
     
     if n_outliers > 0:
@@ -1045,7 +1045,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         
         # Let user select which trajectories to visualize
         viz_mode = st.radio(
-            "Visualization mode:",
+            "Visualisation mode:",
             ["Outliers Only", "Outliers + Sample of Normal", "Compare Selected"],
             horizontal=True
         )
@@ -1229,7 +1229,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 ))
             
             fig_court.update_layout(
-                title=f"Trajectory Visualization: {method}",
+                title=f"Trajectory Visualisation: {method}",
                 height=600,
                 showlegend=True,
                 legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
@@ -1242,7 +1242,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             ● Circle = Start | ■ Square = End
             """)
         else:
-            st.info("Select trajectories to visualize")
+            st.info("Select trajectories to visualise")
     else:
         st.info("No outliers detected - cannot show trajectory comparison")
     
@@ -1257,7 +1257,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     
     csv = result_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download Results as CSV",
+        label="Download Results as CSV",
         data=csv,
         file_name=f"outlier_detection_{method.replace(':', '').replace(' ', '_').lower()}.csv",
         mime="text/csv"

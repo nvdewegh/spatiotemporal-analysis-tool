@@ -8,7 +8,7 @@ Key Features:
 - Transaction preparation (spatial zones, feature bins, combined)
 - Apriori algorithm for frequent itemset mining
 - Association rule generation with multiple metrics
-- Interactive visualizations (network, scatter, heatmap, MDS)
+- Interactive visualisations (network, scatter, heatmap, MDS)
 """
 
 import streamlit as st
@@ -424,12 +424,12 @@ def find_supporting_trajectories(antecedents, consequents, transactions, traject
 def plot_court_with_grid_and_trajectories(trajectories_dict, supporting_traj_ids, 
                                           antecedents, consequents, grid_info, court_type='Tennis'):
     """
-    Visualize the court with grid overlay, highlighted rule zones, and supporting trajectories.
-    Uses the same tennis court visualization as Sequence Analysis.
+    Visualise the court with grid overlay, highlighted rule zones, and supporting trajectories.
+    Uses the same tennis court visualisation as Sequence Analysis.
     
     Args:
         trajectories_dict: Dictionary of {traj_id: DataFrame}
-        supporting_traj_ids: List of trajectory IDs to visualize
+        supporting_traj_ids: List of trajectory IDs to visualise
         antecedents: Set of antecedent zone labels
         consequents: Set of consequent zone labels
         grid_info: Grid information dictionary from create_spatial_grid()
@@ -618,7 +618,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         selected_objects: List of selected objects
         create_spatial_grid_func: Function to create spatial grid
     """
-    st.header("🛒 Association Rule Learning")
+    st.header("Association Rule Learning")
     
     st.info("""
     **Discover relationships between trajectory patterns using Association Rules:**
@@ -635,7 +635,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     
     **Goal**: Find patterns that are both **common enough** (support) and **strong enough** (confidence) to be meaningful
     
-    **Applications:** Movement pattern discovery, spatial behavior analysis, trajectory prediction
+    **Applications:** Movement pattern discovery, spatial behaviour analysis, trajectory prediction
     """)
     
     with st.expander("ℹ️ Market Basket Analysis Example", expanded=False):
@@ -659,7 +659,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     st.markdown('---')
     
     if not selected_configs or not selected_objects:
-        st.warning("⚠️ Please select at least one configuration and one object from the sidebar.")
+        st.warning("Please select at least one configuration and one object from the sidebar.")
         return
     
     filtered_df = data[
@@ -671,10 +671,10 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         st.error("No data available for selected configurations and objects.")
         return
     
-    st.success(f"✅ Loaded {len(filtered_df)} trajectories")
+    st.success(f"Loaded {len(filtered_df)} trajectories")
     
     # Configuration Panel
-    st.subheader("⚙️ Transaction Configuration")
+    st.subheader("Transaction Configuration")
     
     st.markdown("""
     **What patterns do you want to discover?**
@@ -694,7 +694,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         # Add explanations for each type
         if transaction_type == "Spatial Zones":
             st.info("""
-            **📍 Spatial Zones (WHERE)**
+            **Spatial Zones (WHERE)**
             
             Find patterns based on **which zones** are visited.
             
@@ -711,7 +711,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             """)
         else:  # Combined
             st.info("""
-            **🔄 Combined (WHERE + HOW)**
+            **Combined (WHERE + HOW)**
             
             Find patterns combining **both zones AND features**.
             
@@ -722,20 +722,20 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     
     with col2:
         if transaction_type in ["Spatial Zones", "Combined (Spatial + Features)"]:
-            st.markdown("**🗺️ Spatial Grid Settings:**")
+            st.markdown("**Spatial Grid Settings:**")
             st.caption("Divide the court into zones")
             grid_rows = st.slider("Grid Rows", 2, 6, 3, key="ar_grid_rows",
                                  help="Number of horizontal divisions")
             grid_cols = st.slider("Grid Columns", 2, 8, 5, key="ar_grid_cols",
                                  help="Number of vertical divisions")
-            st.caption(f"💡 Court divided into {grid_rows} × {grid_cols} = {grid_rows * grid_cols} zones")
+            st.caption(f"Court divided into {grid_rows} × {grid_cols} = {grid_rows * grid_cols} zones")
         
         if transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]:
             st.markdown("**Feature Binning:**")
-            st.caption("Categorize trajectory characteristics")
+            st.caption("Categorise trajectory characteristics")
             n_bins = st.select_slider("Number of Bins", [2, 3, 4, 5], value=3, key="ar_n_bins",
                                       help="How many categories (e.g., low/medium/high)")
-            st.caption(f"💡 Features grouped into {n_bins} categories")
+            st.caption(f"Features grouped into {n_bins} categories")
     
     st.markdown("---")
     
@@ -755,14 +755,14 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                                help="Support = P(A ∪ B): Frequency of the pattern in all trajectories. "
                                     "Higher support = more common pattern", 
                                key="ar_min_support")
-        st.caption(f"💡 Pattern must appear in ≥{min_support*100:.0f}% of trajectories")
+        st.caption(f"Pattern must appear in ≥{min_support*100:.0f}% of trajectories")
     
     with col2:
         min_confidence = st.slider("**Min Confidence** ⭐", 0.1, 1.0, 0.5, 0.05,
                                    help="Confidence = P(B|A): Probability that consequent occurs given antecedent. "
                                         "Higher confidence = stronger rule", 
                                    key="ar_min_confidence")
-        st.caption(f"💡 Rule must hold in ≥{min_confidence*100:.0f}% of cases")
+        st.caption(f"Rule must hold in ≥{min_confidence*100:.0f}% of cases")
     
     st.markdown("---")
     
@@ -834,7 +834,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 st.session_state.ar_item_names = item_names
                 
                 # Show transaction preview
-                st.subheader("📝 Transaction Preview")
+                st.subheader("Transaction Preview")
                 st.write(f"Total transactions: {len(transactions)}")
                 st.write(f"Unique items: {len(item_names)}")
                 
@@ -864,10 +864,10 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                         bin_df = pd.DataFrame(bin_rows)
                         st.dataframe(bin_df, use_container_width=True, hide_index=True)
                         
-                        st.caption("💡 These ranges show how continuous feature values were categorized into discrete bins for pattern mining")
+                        st.caption("These ranges show how continuous feature values were categorised into discrete bins for pattern mining")
                 
                 # Compute association rules
-                st.subheader("⚙️ Mining Association Rules...")
+                st.subheader("Mining Association Rules...")
                 rules_df, frequent_itemsets = compute_association_rules(
                     transactions, min_support, min_confidence
                 )
@@ -883,9 +883,9 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 st.session_state.ar_distance_matrix = distance_matrix
                 
                 if len(rules_df) == 0:
-                    st.warning("⚠️ No rules found. Try lowering the thresholds.")
+                    st.warning("No rules found. Try lowering the thresholds.")
                 else:
-                    st.success(f"✅ Found {len(rules_df)} association rules!")
+                    st.success(f"Found {len(rules_df)} association rules!")
             
             except Exception as e:
                 st.error(f"Error during rule mining: {str(e)}")
@@ -900,9 +900,9 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         rules_df = st.session_state.ar_rules
         
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-            "Rules Table", "🕸️ Network", 
-            "🔥 Co-occurrence Heatmap", "🗺️ MDS Projection", 
-            "Distance Matrix", "🏆 Top Rules", "🎯 Supporting Trajectories"
+            "Rules Table", "Network", 
+            "Co-occurrence Heatmap", "MDS Projection", 
+            "Distance Matrix", "Top Rules", "Supporting Trajectories"
         ])
         
         with tab1:
@@ -937,10 +937,10 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             st.caption("⭐ = Primary metrics based on theoretical framework: Support (frequency) and Confidence (strength)")
             
             csv = display_df.to_csv(index=False)
-            st.download_button("📥 Download Rules as CSV", csv, "association_rules.csv", "text/csv")
+            st.download_button("Download Rules as CSV", csv, "association_rules.csv", "text/csv")
         
         with tab2:
-            st.subheader("🕸️ Network Graph")
+            st.subheader("Network Graph")
             st.markdown("""
             **Visual network showing how items connect through association rules.**
             
@@ -955,12 +955,12 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             render_interactive_chart(st, fig)
         
         with tab3:
-            st.subheader("🔥 Co-occurrence Heatmap")
+            st.subheader("Co-occurrence Heatmap")
             st.markdown("""
             **Shows how often pairs of items appear together in transactions.**
             
-            - **Darker colors** = Items frequently co-occur (appear together in many trajectories)
-            - **Lighter colors** = Items rarely appear together
+            - **Darker colours** = Items frequently co-occur (appear together in many trajectories)
+            - **Lighter colours** = Items rarely appear together
             
             This helps identify which items have strong associations even before looking at specific rules.
             """)
@@ -974,7 +974,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 st.info("Co-occurrence matrix not available.")
         
         with tab4:
-            st.subheader("🗺️ MDS Projection")
+            st.subheader("MDS Projection")
             st.markdown("""
             **Multidimensional Scaling (MDS): Items positioned by similarity.**
             
@@ -1021,7 +1021,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 st.info("Distance matrix not available.")
         
         with tab6:
-            st.subheader("🏆 Top Rules")
+            st.subheader("Top Rules")
             st.markdown("""
             **Bar chart ranking rules by Support or Confidence.**
             
@@ -1040,12 +1040,12 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             render_interactive_chart(st, fig)
         
         with tab7:
-            st.subheader("🎯 Supporting Trajectories")
+            st.subheader("Supporting Trajectories")
             st.markdown("""
             **See the actual trajectories that create each association rule.**
             
             - Select a rule to see which specific trajectory IDs satisfy it
-            - View the trajectories visualized on a tennis court with grid overlay
+            - View the trajectories visualised on a tennis court with grid overlay
             - Understand the spatial patterns behind the statistical rules
             
             This connects abstract patterns back to real movement data.
@@ -1107,7 +1107,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 
                 # Plot supporting trajectories on court
                 if supporting_traj_ids:
-                    st.subheader("Court Visualization")
+                    st.subheader("Court Visualisation")
                     
                     # Check if grid_info is available (only for Spatial Zones and Combined types)
                     if 'ar_grid_info' in st.session_state:
@@ -1128,10 +1128,10 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                             render_interactive_chart(st, fig)
                             
                             st.info(f"""
-                            **Visualization Details:**
+                            **Visualisation Details:**
                             - 🔴 **Red zones** = Antecedent ({', '.join(list(antecedents))})
                             - 🔵 **Blue zones** = Consequent ({', '.join(list(consequents))})
-                            - Each trajectory is shown as a colored path
+                            - Each trajectory is shown as a coloured path
                             - 🟢 Green circles indicate start points
                             - 🔴 Red squares indicate end points
                             - Showing up to 20 trajectories for clarity
@@ -1141,11 +1141,11 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                         else:
                             st.warning("Could not generate trajectory plot.")
                     else:
-                        st.warning("Grid visualization is only available for 'Spatial Zones' and 'Combined' transaction types.")
+                        st.warning("Grid visualisation is only available for 'Spatial Zones' and 'Combined' transaction types.")
                 else:
-                    st.info("No trajectories to visualize for this rule.")
+                    st.info("No trajectories to visualise for this rule.")
         
-        with st.expander("📖 How to Interpret Results", expanded=False):
+        with st.expander("How to Interpret Results", expanded=False):
             st.markdown("""
             **Primary Metrics (Theoretical Focus):**
             

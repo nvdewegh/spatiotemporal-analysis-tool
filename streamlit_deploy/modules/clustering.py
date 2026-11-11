@@ -26,13 +26,24 @@ from .common import render_interactive_chart
 
 FEATURE_COLUMN_LABELS = {
     'total_distance': 'Total Distance (m)',
-    'duration': 'Duration (s)',
-    'avg_speed': 'Avg Speed (m/s)',
+    'duration': 'Duration (tst units)',
+    'avg_speed': 'Avg Speed (m per tst unit)',
     'net_displacement': 'Net Displacement (m)',
     'sinuosity': 'Sinuosity (ratio)',
     'bbox_area': 'Bbox Area (m²)',
     'avg_direction': 'Avg Direction (rad)',
-    'max_speed': 'Max Speed (m/s)'
+    'max_speed': 'Max Speed (m per tst unit)',
+    'min_speed': 'Min Speed (m per tst unit)'
+}
+# Feature order in the selector; the default selection stays the original eight (min_speed is optional)
+ALL_FEATURES = ['total_distance', 'duration', 'avg_speed', 'net_displacement', 'sinuosity', 'bbox_area',
+                'avg_direction', 'max_speed', 'min_speed']
+DEFAULT_FEATURES = ALL_FEATURES[:8]
+FEATURE_SELECTOR_LABELS = {
+    'total_distance': 'Total Distance', 'duration': 'Duration', 'avg_speed': 'Average Speed',
+    'net_displacement': 'Net Displacement', 'sinuosity': 'Sinuosity (Path Efficiency)',
+    'bbox_area': 'Bounding Box Area', 'avg_direction': 'Average Direction', 'max_speed': 'Maximum Speed',
+    'min_speed': 'Minimum Speed',
 }
 # Displayed decimals per feature (display only: values stay numeric at full precision)
 FEATURE_DISPLAY_DECIMALS = {'sinuosity': 6}
@@ -70,7 +81,162 @@ def features_csv(features_df):
 STANDARDISATION = {'Features (Euclidean)': 'StandardScaler (z-score per feature)'}
 DISTANCE_METRICS = {'Features (Euclidean)': 'Euclidean', 'Spatial (Chamfer)': 'Chamfer',
                     'Spatiotemporal (DTW)': 'DTW'}
-LINKAGE_METHOD = 'Ward'
+
+# Stable internal identifiers (saved settings, tests) -> canonical user-facing labels
+METHOD_IDS = ['Features (Euclidean)', 'Spatial (Chamfer)', 'Spatiotemporal (DTW)']
+METHOD_LABELS = {
+    'Features (Euclidean)': 'Feature-based clustering (Euclidean)',
+    'Spatial (Chamfer)': 'Spatial clustering (Chamfer)',
+    'Spatiotemporal (DTW)': 'Spatiotemporal clustering (DTW)',
+}
+
+# The single place that decides which linkage each approach uses (scipy method names).
+# Ward needs Euclidean geometry, so it is only used with Euclidean distances between standardised
+# feature vectors. Chamfer and DTW dissimilarities are not Euclidean in general (using Euclidean
+# point-to-point costs does not make the trajectory dissimilarity Euclidean), so they use average
+# linkage, which works directly with any supplied dissimilarity.
+LINKAGE_BY_METHOD = {
+    'Features (Euclidean)': 'ward',
+    'Spatial (Chamfer)': 'average',
+    'Spatiotemporal (DTW)': 'average',
+}
+LINKAGE_LABELS = {'ward': 'Ward linkage', 'average': 'average linkage'}
+
+
+def linkage_for(method):
+    return LINKAGE_BY_METHOD[method]
+
+
+def method_label(method, with_linkage=False):
+    label = METHOD_LABELS.get(method, method)
+    if with_linkage and method in LINKAGE_BY_METHOD:
+        label += ', ' + LINKAGE_LABELS[linkage_for(method)]
+    return label
+
+
+# Concise explanations, reused wherever the terms recur (shown behind question-mark help icons)
+HELP = {
+    'hierarchical': ("Starts with each trajectory in its own group and repeatedly merges groups, producing a "
+                     "hierarchy that can be displayed as a dendrogram."),
+    'linkage': "The rule used to decide which groups to merge at each step.",
+    'ward': ("Merges the groups that produce the smallest increase in variation within groups. Used here with "
+             "Euclidean distances between standardised trajectory features."),
+    'average': ("Compares two groups using the mean dissimilarity between all pairs of trajectories across those "
+                "groups. Used here with Chamfer and DTW dissimilarities."),
+    'Features (Euclidean)': ("Compares selected summary properties, such as travelled distance, speed or "
+                             "sinuosity, using Euclidean distances between their standardised values "
+                             "(z-scores: each feature has mean 0 and standard deviation 1 across the selected "
+                             "trajectories)."),
+    'Spatial (Chamfer)': ("Compares the spatial locations occupied by trajectories using nearest-point distances "
+                          "in both directions: for every position, the distance to the nearest position of the "
+                          "other trajectory, averaged per direction and then over both directions. It does not "
+                          "use observation order or timing."),
+    'Spatiotemporal (DTW)': ("Dynamic Time Warping compares ordered trajectories by allowing observations to be "
+                             "aligned at different positions in their sequences. Each aligned pair costs the "
+                             "Euclidean distance between (x, y, tst): the timestamp enters directly as a third, "
+                             "unscaled coordinate, so one tst step weighs as much as one coordinate unit (one "
+                             "metre for metric coordinates). The DTW value is the sum of the costs along the "
+                             "cheapest monotone alignment, so it also grows with trajectory length."),
+}
+
+
+def linkage_help(method):
+    return HELP[linkage_for(method)]
+
+
+def validate_distance_matrix(distance_matrix, trajectory_ids=None, atol=1e-9):
+    """
+    Check that a square dissimilarity matrix can be condensed for scipy.cluster.hierarchy.linkage:
+    matching dimensions and trajectory order, finite, non-negative, symmetric, zero diagonal.
+    Tolerance (relative to the largest entry) covers floating-point round-off only.
+    Returns a float copy with exact symmetry and an exact zero diagonal.
+    """
+    D = np.asarray(distance_matrix, dtype=float)
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError(f"Distance matrix must be square, got shape {D.shape}.")
+    n = D.shape[0]
+    if trajectory_ids is not None and len(trajectory_ids) != n:
+        raise ValueError(f"Distance matrix has {n} rows but {len(trajectory_ids)} trajectory IDs.")
+    if trajectory_ids is not None and len(set(map(str, trajectory_ids))) != n:
+        raise ValueError("Trajectory IDs are not unique.")
+    if n < 2:
+        raise ValueError("At least two trajectories are needed for hierarchical clustering.")
+    if not np.all(np.isfinite(D)):
+        raise ValueError("Distance matrix contains missing or infinite values.")
+    tol = atol * max(1.0, float(np.abs(D).max()))
+    if (D < -tol).any():
+        raise ValueError("Distance matrix contains negative values.")
+    if np.abs(D - D.T).max() > tol:
+        raise ValueError("Distance matrix is not symmetric.")
+    if np.abs(np.diag(D)).max() > tol:
+        raise ValueError("Distance matrix diagonal is not zero.")
+    D = (D + D.T) / 2.0
+    np.fill_diagonal(D, 0.0)
+    return np.clip(D, 0.0, None)
+
+
+def build_linkage(distance_matrix, method, trajectory_ids=None):
+    """
+    The hierarchy of a run: scipy linkage on the condensed form of the validated pairwise matrix,
+    with the linkage that LINKAGE_BY_METHOD assigns to the approach. For Ward the matrix holds Euclidean
+    distances between standardised feature vectors, for which Ward on the condensed distances equals
+    Ward on the vectors. Never passes the square matrix itself (that would cluster distance profiles).
+    """
+    from scipy.spatial.distance import squareform
+    D = validate_distance_matrix(distance_matrix, trajectory_ids)
+    return linkage(squareform(D, checks=True), method=linkage_for(method))
+
+
+def cut_hierarchy(linkage_matrix, n_clusters):
+    """Partition into (at most) n_clusters from an existing hierarchy; labels 1..k."""
+    from scipy.cluster.hierarchy import fcluster
+    return fcluster(linkage_matrix, int(n_clusters), criterion='maxclust')
+
+
+def evaluate_cluster_counts(distance_matrix, linkage_matrix, max_clusters=10):
+    """
+    Score cluster counts k = 2..max on cuts of the SAME hierarchy shown to the user.
+    Within-cluster dispersion = sum over clusters of (sum of within-cluster pairwise dissimilarities) / (2 n_c);
+    silhouette uses the original pairwise dissimilarities (precomputed).
+    Returns (recommended_k, plot_data), or (None, plot_data) when there are too few trajectories.
+    """
+    D = np.asarray(distance_matrix, dtype=float)
+    n = len(D)
+    max_k = min(max_clusters, n - 1)
+    k_values, inertias, sils = [], [], []
+    for k in range(2, max_k + 1):
+        labels = cut_hierarchy(linkage_matrix, k)
+        inertia = 0.0
+        for c in np.unique(labels):
+            m = labels == c
+            inertia += D[m][:, m].sum() / (2 * m.sum())
+        n_found = len(np.unique(labels))
+        sil = (silhouette_score(D, labels, metric='precomputed') if 2 <= n_found <= n - 1 else np.nan)
+        k_values.append(k)
+        inertias.append(float(inertia))
+        sils.append(float(sil))
+    plot_data = {'k_values': k_values, 'inertias': inertias, 'silhouette_scores': sils}
+    if len(k_values) < 3:
+        plot_data['optimal_k'] = None
+        return None, plot_data
+    norm = np.array(inertias)
+    norm = (norm - norm.min()) / (norm.max() - norm.min() + 1e-12)
+    angles = []
+    for i in range(1, len(norm) - 1):
+        v1 = np.array([-1.0, norm[i - 1] - norm[i]])
+        v2 = np.array([1.0, norm[i + 1] - norm[i]])
+        angles.append(np.arccos(np.clip(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)), -1, 1)))
+    # Sharpest bend = smallest angle between the two neighbouring segments
+    optimal_k = k_values[int(np.argmin(angles)) + 1]
+    sil_arr = np.array(sils)
+    if np.isfinite(sil_arr).any():
+        idx = k_values.index(optimal_k)
+        if not (sil_arr[idx] >= 0.25):
+            best = int(np.nanargmax(sil_arr))
+            if sil_arr[best] > 0.25:
+                optimal_k = k_values[best]
+    plot_data['optimal_k'] = optimal_k
+    return optimal_k, plot_data
 
 
 def data_fingerprint(df):
@@ -87,7 +253,7 @@ def run_signature(fingerprint, method, configs, objects, start, end, features=No
             tuple(features or ()) if method == 'Features (Euclidean)' else (),
             tuple(sorted(map(str, configs))), tuple(sorted(map(str, objects))),
             float(start), float(end),
-            STANDARDISATION.get(method, 'none'), LINKAGE_METHOD)
+            STANDARDISATION.get(method, 'none'), linkage_for(method))
 
 
 def run_id(signature):
@@ -96,12 +262,12 @@ def run_id(signature):
 
 
 def run_file_tag(run, n_clusters):
-    """Distinct, informative filename part: method/feature, cluster count and run identifier."""
+    """Distinct, informative filename part: method/feature, linkage, cluster count and run identifier."""
     if run['method'] == 'Features (Euclidean)':
         what = 'features-' + '+'.join(run['features'])
     else:
         what = DISTANCE_METRICS[run['method']].lower()
-    return f"{what}_{n_clusters}clusters_run{run['run_id']}"
+    return f"{what}_{run['linkage']}_{n_clusters}clusters_run{run['run_id']}"
 
 
 def run_configuration(run, n_requested, labels):
@@ -112,18 +278,19 @@ def run_configuration(run, n_requested, labels):
         'Computed_At': run['computed_at'],
         'Dataset_File': run['filename'],
         'Dataset_Content_SHA256': run['fingerprint'],
-        'Clustering_Method': run['method'],
+        'Clustering_Method': method_label(run['method']),
         'Distance_Metric': DISTANCE_METRICS[run['method']],
         'Selected_Features': ', '.join(run['features']) if run['method'] == 'Features (Euclidean)' else 'not applicable',
         'Standardisation': STANDARDISATION.get(run['method'], 'none'),
-        'Linkage_Method': LINKAGE_METHOD,
+        'Linkage_Method': LINKAGE_LABELS[run['linkage']].replace(' linkage', '').capitalize(),
         'Requested_Number_of_Clusters': int(n_requested),
         'Actual_Number_of_Clusters': int(len(np.unique(labels))),
         'Configuration_IDs': ', '.join(map(str, run['configs'])),
         'Object_IDs': ', '.join(map(str, run['objects'])),
         'Start_Observation_tst': f"{run['start']:g}",
         'End_Observation_tst': f"{run['end']:g}",
-        'Time_Unit': 'tst observation index of the dataset (not seconds)',
+        'Time_Unit': ('tst as given in the dataset (observation index, not necessarily seconds); '
+                      'speeds and durations use tst units'),
         'Number_of_Trajectories': len(run['trajectory_ids']),
         'Positions_per_Trajectory': (f"{min(lengths)}" if min(lengths) == max(lengths)
                                      else f"{min(lengths)}–{max(lengths)}"),
@@ -131,50 +298,72 @@ def run_configuration(run, n_requested, labels):
     }.items()}
 
 
+def segment_speeds(traj_df, x_col='x', y_col='y'):
+    """
+    Speeds of valid segments: distance between consecutive positions (sorted by tst) divided by their
+    elapsed tst. Segments with missing values or non-positive elapsed time (duplicate timestamps) are
+    excluded, never replaced by an invented small time step. Genuine zero-speed segments are kept.
+    """
+    t = traj_df[['tst', x_col, y_col]].sort_values('tst', kind='mergesort').to_numpy(dtype=float)
+    if len(t) < 2:
+        return np.array([])
+    dt = np.diff(t[:, 0])
+    dist = np.hypot(np.diff(t[:, 1]), np.diff(t[:, 2]))
+    valid = np.isfinite(dt) & np.isfinite(dist) & (dt > 0)
+    return dist[valid] / dt[valid]
+
+
 def extract_trajectory_features(traj_df):
-    """Extract 8 statistical features from a single trajectory."""
+    """
+    Extract statistical features from a single trajectory (observations sorted by tst).
+    Speeds and durations are in coordinate units per tst unit (m/s only when tst is in seconds).
+    min_speed / max_speed: lowest / highest valid segment speed (see segment_speeds); NaN when the
+    interval has no valid segment.
+    """
     if 'X' in traj_df.columns:
         x_col, y_col = 'X', 'Y'
     else:
         x_col, y_col = 'x', 'y'
-    
+
+    speeds = segment_speeds(traj_df, x_col, y_col)
+    min_speed = float(np.min(speeds)) if len(speeds) else float('nan')
+
     if len(traj_df) < 2:
         return {
             'total_distance': 0.0, 'duration': 0.0, 'avg_speed': 0.0,
             'net_displacement': 0.0, 'sinuosity': 1.0, 'bbox_area': 0.0,
-            'avg_direction': 0.0, 'max_speed': 0.0
+            'avg_direction': 0.0, 'max_speed': 0.0, 'min_speed': min_speed
         }
-    
+
     traj_df = traj_df.sort_values('tst').reset_index(drop=True)
-    
+
     distances = np.sqrt(np.diff(traj_df[x_col])**2 + np.diff(traj_df[y_col])**2)
     total_distance = np.sum(distances)
-    
+
     duration = traj_df['tst'].iloc[-1] - traj_df['tst'].iloc[0]
     if duration == 0:
         duration = 1.0
-    
+
     avg_speed = total_distance / duration if duration > 0 else 0.0
-    
+
     net_displacement = np.sqrt(
         (traj_df[x_col].iloc[-1] - traj_df[x_col].iloc[0])**2 +
         (traj_df[y_col].iloc[-1] - traj_df[y_col].iloc[0])**2
     )
-    
+
     sinuosity = total_distance / net_displacement if net_displacement > 0 else 1.0
     bbox_area = (traj_df[x_col].max() - traj_df[x_col].min()) * \
                 (traj_df[y_col].max() - traj_df[y_col].min())
-    
+
     dx = np.diff(traj_df[x_col])
     dy = np.diff(traj_df[y_col])
     angles = np.arctan2(dy, dx)
     avg_direction = np.mean(angles) if len(angles) > 0 else 0.0
-    
-    time_diffs = np.diff(traj_df['tst'])
-    time_diffs[time_diffs == 0] = 0.01
-    speeds = distances / time_diffs
-    max_speed = np.max(speeds) if len(speeds) > 0 else 0.0
-    
+
+    # Same valid-segment definition as min_speed (previously zero elapsed time was replaced by 0.01,
+    # which inflated the maximum for duplicate timestamps)
+    max_speed = float(np.max(speeds)) if len(speeds) else float('nan')
+
     return {
         'total_distance': float(total_distance),
         'duration': float(duration),
@@ -183,7 +372,8 @@ def extract_trajectory_features(traj_df):
         'sinuosity': float(sinuosity),
         'bbox_area': float(bbox_area),
         'avg_direction': float(avg_direction),
-        'max_speed': float(max_speed)
+        'max_speed': max_speed,
+        'min_speed': min_speed
     }
 
 
@@ -222,6 +412,13 @@ def compute_feature_distance_matrix(df, selected_configs, selected_objects, star
     
     if selected_features is not None and len(selected_features) > 0:
         features_df = features_df[selected_features]
+
+    unavailable = features_df.isna()
+    if unavailable.any().any():
+        details = '; '.join(f"{FEATURE_SELECTOR_LABELS.get(f, f)}: " + ', '.join(features_df.index[unavailable[f]])
+                            for f in features_df.columns if unavailable[f].any())
+        raise ValueError("Some selected features are unavailable (no segment with positive elapsed time in the "
+                         f"interval) for: {details}. Widen the interval or deselect these features.")
     
     scaler = StandardScaler()
     features_normalized = scaler.fit_transform(features_df)
@@ -413,22 +610,8 @@ def detect_optimal_clusters(distance_matrix, max_clusters=10, return_plot_data=F
     return optimal_k
 
 
-def perform_hierarchical_clustering(distance_matrix, n_clusters):
-    """Perform hierarchical clustering with average linkage."""
-    linkage_matrix = linkage(distance_matrix, method='average')
-    
-    clustering = AgglomerativeClustering(
-        n_clusters=n_clusters,
-        metric='precomputed',
-        linkage='average'
-    )
-    cluster_labels = clustering.fit_predict(distance_matrix)
-    
-    return cluster_labels, linkage_matrix
-
-
 def initialize_clustering_session_state():
-    """Initialize session state variables for clustering."""
+    """Initialise session state variables for clustering."""
     if 'clustering_method' not in st.session_state:
         st.session_state.clustering_method = None
     if 'clustering_distance_matrix' not in st.session_state:

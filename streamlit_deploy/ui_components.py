@@ -1,5 +1,5 @@
 """
-Reusable UI Components for Streamlit Visualization
+Reusable UI Components for Streamlit Visualisation
 ==================================================
 
 This module contains reusable UI components to ensure consistency
@@ -14,8 +14,8 @@ def configuration_selector(
     key_prefix,
     default_configs=None,
     max_selections=5,
-    label="Select configurations to visualize",
-    help_text="Choose configurations to visualize their trajectories",
+    label="Select configurations to visualise",
+    help_text="Choose configurations to visualise their trajectories",
     show_slider=False,
     show_metrics=True,
     min_slider_value=1
@@ -36,7 +36,7 @@ def configuration_selector(
         Default configurations to select. If None, starts with empty selection
     max_selections : int, default=5
         Maximum number of configurations that can be selected
-    label : str, default="Select configurations to visualize"
+    label : str, default="Select configurations to visualise"
         Label for the multiselect widget
     help_text : str, optional
         Help text shown when hovering over the widget
@@ -59,7 +59,7 @@ def configuration_selector(
     selected_configs = configuration_selector(
         config_ids=all_configs,
         key_prefix="pdp_inspect",
-        label="Select configurations to visualize",
+        label="Select configurations to visualise",
         help_text="Choose configurations from the distance matrix"
     )
     
@@ -115,7 +115,7 @@ def configuration_selector(
         if show_metrics and len(selected_configs) > 0:
             st.metric("Configs selected", len(selected_configs))
             if len(selected_configs) == 1:
-                st.caption("💡 Select 2+ to compare")
+                st.caption("Select 2+ to compare")
     
     return selected_configs
 
@@ -209,7 +209,7 @@ def object_selector(
     if globally_selected_objects is not None and len(globally_selected_objects) > 0:
         st.info(f"ℹ️ Using {len(available_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
     else:
-        st.warning("⚠️ No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
+        st.warning("No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
     
     return selected_objects
 
@@ -222,15 +222,15 @@ USAGE LOCATIONS:
 configuration_selector():
 -------------------------
 1. streamlit_visualization.py, line ~3695 - PDP Analysis → "Inspect Individual Configurations"
-   - Used after distance matrix to select configs for trajectory visualization
+   - Used after distance matrix to select configs for trajectory visualisation
    
 2. streamlit_visualization.py, line ~4173 - PDP Analysis → "Trajectory Comparison on Tennis Court"
-   - Used with slider to compare multiple trajectories with buffer/rough visualization
+   - Used with slider to compare multiple trajectories with buffer/rough visualisation
 
 object_selector():
 ------------------
 1. streamlit_visualization.py, line ~4189 - PDP Analysis → "Trajectory Comparison on Tennis Court"
-   - Used to select which objects (players) to show in trajectory visualization
+   - Used to select which objects (players) to show in trajectory visualisation
 
 REFACTORING PLAN:
 =================
@@ -247,7 +247,7 @@ To refactor existing code to use these components:
    col_inspect1, col_inspect2 = st.columns([2, 1])
    with col_inspect1:
        selected_configs_inspect = st.multiselect(
-           "Select configurations to visualize",
+           "Select configurations to visualise",
            options=config_ids,
            default=[],
            ...
@@ -262,14 +262,14 @@ To refactor existing code to use these components:
        config_ids=config_ids,
        key_prefix="pdp_inspect",
        default_configs=[],
-       label="Select configurations to visualize",
+       label="Select configurations to visualise",
        help_text="Choose configurations from the distance matrix to see their actual trajectories"
    )
    ```
 
 3. Benefits:
    - Consistent UI across all analysis methods
-   - Single place to update labels, styling, behavior
+   - Single place to update labels, styling, behaviour
    - Easier to add new features (e.g., quick selection buttons could be added to the component)
    - Reduced code duplication
 """

@@ -65,6 +65,10 @@ def check_frames(fig, df, configs, objects):
             assert len(trail.x) == trail_lengths[k]
             # 2. The line ends exactly at the head
             assert trail.x[-1] == head.x[0] and trail.y[-1] == head.y[0]
+            # 3. Plotly must not simplify away the padding points: otherwise the drawn point count
+            #    changes, the path is not tweened and the line jumps ahead of the head (verified in a
+            #    browser on A2_1Hz_dataset.csv, 26 configurations, object 1, 550 ms)
+            assert trail.line.simplify is False
     return trail_lengths
 
 

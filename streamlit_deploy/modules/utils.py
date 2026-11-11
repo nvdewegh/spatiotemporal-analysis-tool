@@ -2,7 +2,7 @@
 Shared utility functions for spatiotemporal analysis.
 
 This module contains common utilities used across different analysis methods,
-including color management, distance functions, and data processing helpers.
+including colour management, distance functions, and data processing helpers.
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ import streamlit as st
 # =============================================================================
 
 def get_color(obj_id):
-    """Return a consistent color for a given object ID."""
+    """Return a consistent colour for a given object ID."""
     colors = [
         '#1f77b4',  # blue
         '#ff7f0e',  # orange
@@ -269,7 +269,7 @@ def load_data(uploaded_file, update_state=True, show_success=True):
                         raise ValueError("No valid data points found in the file")
                     
                     df = pd.DataFrame(rows_list)
-                    st.success(f"✅ Parsed {len(config_ids)} configurations with {num_time_steps} time steps each")
+                    st.success(f"Parsed {len(config_ids)} configurations with {num_time_steps} time steps each")
                 else:
                     raise ValueError(f"Cannot parse {num_data_cols} data columns (expected even number for x,y pairs)")
             else:
@@ -307,13 +307,13 @@ def load_data(uploaded_file, update_state=True, show_success=True):
         if show_success:
             num_configs = df['config'].nunique()
             num_objects = df['obj'].nunique()
-            st.success(f"✅ Loaded {len(df)} points from {df['rally_id'].nunique()} trajectories "
+            st.success(f"Loaded {len(df)} points from {df['rally_id'].nunique()} trajectories "
                       f"across {num_configs} configurations with {num_objects} objects.")
         
         return df
         
     except Exception as e:
-        st.error(f"❌ Error loading file: {str(e)}")
+        st.error(f"Error loading file: {str(e)}")
         return None
 
 
