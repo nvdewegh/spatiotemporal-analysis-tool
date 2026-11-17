@@ -175,6 +175,98 @@ def validate_distance_matrix(distance_matrix, trajectory_ids=None, atol=1e-9):
     return np.clip(D, 0.0, None)
 
 
+# Relative tolerance for "no meaningful variation" (see assess_input_variation). Far above accumulated
+# floating-point round-off (about 1e-16 per operation) and far below any difference worth interpreting.
+VARIATION_RTOL = 1e-9
+
+
+def constant_features(features_df):
+    """
+    Selected features that contribute no distinction: their standardised column is zero for every trajectory.
+    Uses the same StandardScaler as compute_feature_distance_matrix, so this matches the actual computation
+    (a column with zero variance is centred to 0 and scaled by 1, so it adds nothing to any distance).
+    """
+    if features_df is None or len(features_df.columns) == 0:
+        return []
+    z = StandardScaler().fit_transform(features_df)
+    return [f for i, f in enumerate(features_df.columns) if np.all(np.abs(z[:, i]) <= VARIATION_RTOL)]
+
+
+def input_scale(method, trajectories=None):
+    """
+    Natural scale of the values the dissimilarities are computed from (see assess_input_variation).
+    Features: 1, because standardised features have standard deviation 1 (a varying feature always gives a
+    largest pairwise distance of at least 1) or are exactly 0 (constant feature).
+    Chamfer: the largest absolute x/y coordinate. DTW: the largest absolute (x, y, tst) value times the
+    longest trajectory length, because DTW sums one cost per aligned pair.
+    """
+    if method == 'Features (Euclidean)' or not trajectories:
+        return 1.0
+    ncols = 2 if method == 'Spatial (Chamfer)' else 3
+    mags = [float(np.nanmax(np.abs(np.asarray(t, dtype=float)[:, :ncols]))) for t in trajectories if len(t)]
+    scale = max(mags) if mags else 0.0
+    if method == 'Spatiotemporal (DTW)':
+        scale *= max(len(t) for t in trajectories)
+    return scale
+
+
+def assess_input_variation(distance_matrix, method, trajectories=None, features_df=None):
+    """
+    Decide whether the selected representation distinguishes the trajectories at all.
+
+    Rule: the input is wholly uninformative when every pairwise dissimilarity is at most
+    VARIATION_RTOL x input_scale(method, trajectories). The threshold is relative to the scale of the
+    input values, never a global absolute number, so a genuinely small but nonzero matrix (for example
+    coordinates in micrometres) is kept, while round-off on otherwise identical inputs is not read as
+    structure. Individual zero or tied distances are fine as long as some pair differs beyond the threshold.
+
+    Returns {'uninformative', 'max_distance', 'tolerance', 'scale', 'constant_features'}.
+    """
+    D = np.asarray(distance_matrix, dtype=float)
+    scale = input_scale(method, trajectories)
+    tolerance = VARIATION_RTOL * scale
+    max_distance = float(D.max()) if D.size else 0.0
+    return {
+        'uninformative': bool(max_distance <= tolerance),
+        'max_distance': max_distance,
+        'tolerance': float(tolerance),
+        'scale': float(scale),
+        'constant_features': (constant_features(features_df)
+                              if method == 'Features (Euclidean)' and features_df is not None else []),
+    }
+
+
+def feature_names(features):
+    return ', '.join(FEATURE_SELECTOR_LABELS.get(f, f) for f in features)
+
+
+def uninformative_message(run):
+    """UK English explanation shown when the selected representation does not distinguish the trajectories."""
+    msg = ("The selected representation does not distinguish the trajectories: all pairwise "
+           f"{DISTANCE_METRICS[run['method']]} dissimilarities are zero (largest value "
+           f"{run['variation']['max_distance']:.3g}, threshold {run['variation']['tolerance']:.3g}). "
+           "All trajectories therefore form one undifferentiated group. No number of clusters is suggested, "
+           "no silhouette score is available and no MDS projection is drawn, because any split into "
+           "several groups would be arbitrary.")
+    const = run['variation']['constant_features']
+    if run['method'] == 'Features (Euclidean)' and const:
+        msg += (f" The selected feature{'s' if len(const) > 1 else ''} {feature_names(const)} "
+                f"{'have' if len(const) > 1 else 'has'} the same value for every trajectory in this "
+                "observation window. Select a feature that varies, or widen the window.")
+    return msg
+
+
+def constant_feature_note(run):
+    """Note for a run where some, but not all, selected features are constant."""
+    const = run['variation']['constant_features']
+    if run['method'] != 'Features (Euclidean)' or not const or run['variation']['uninformative']:
+        return None
+    return (f"{feature_names(const)} {'have' if len(const) > 1 else 'has'} the same value for every "
+            "trajectory in this observation window and therefore contribute"
+            f"{'' if len(const) > 1 else 's'} no distinction: distances and memberships are determined by "
+            f"{feature_names([f for f in run['features'] if f not in const])}.")
+
+
 def build_linkage(distance_matrix, method, trajectory_ids=None):
     """
     The hierarchy of a run: scipy linkage on the condensed form of the validated pairwise matrix,
@@ -198,12 +290,13 @@ def evaluate_cluster_counts(distance_matrix, linkage_matrix, max_clusters=10):
     Score cluster counts k = 2..max on cuts of the SAME hierarchy shown to the user.
     Within-cluster dispersion = sum over clusters of (sum of within-cluster pairwise dissimilarities) / (2 n_c);
     silhouette uses the original pairwise dissimilarities (precomputed).
-    Returns (recommended_k, plot_data), or (None, plot_data) when there are too few trajectories.
+    Returns (recommended_k, plot_data), or (None, plot_data) when there are too few trajectories or when no
+    cut yields two actual groups (plot_data['reason'] == 'uninformative'). Unavailable silhouette scores are NaN.
     """
     D = np.asarray(distance_matrix, dtype=float)
     n = len(D)
     max_k = min(max_clusters, n - 1)
-    k_values, inertias, sils = [], [], []
+    k_values, inertias, sils, actual = [], [], [], []
     for k in range(2, max_k + 1):
         labels = cut_hierarchy(linkage_matrix, k)
         inertia = 0.0
@@ -215,7 +308,12 @@ def evaluate_cluster_counts(distance_matrix, linkage_matrix, max_clusters=10):
         k_values.append(k)
         inertias.append(float(inertia))
         sils.append(float(sil))
-    plot_data = {'k_values': k_values, 'inertias': inertias, 'silhouette_scores': sils}
+        actual.append(int(n_found))
+    plot_data = {'k_values': k_values, 'inertias': inertias, 'silhouette_scores': sils, 'actual_counts': actual}
+    if k_values and max(actual) < 2:
+        plot_data['optimal_k'] = None
+        plot_data['reason'] = 'uninformative'
+        return None, plot_data
     if len(k_values) < 3:
         plot_data['optimal_k'] = None
         return None, plot_data
@@ -261,13 +359,84 @@ def run_id(signature):
     return hashlib.sha256(repr(signature).encode()).hexdigest()[:10]
 
 
-def run_file_tag(run, n_clusters):
-    """Distinct, informative filename part: method/feature, linkage, cluster count and run identifier."""
+def run_file_tag(run, n_clusters, n_actual=None):
+    """
+    Distinct, informative filename part: method/feature, linkage, cluster count and run identifier.
+    When ties give fewer actual groups than requested, both counts are named.
+    """
     if run['method'] == 'Features (Euclidean)':
         what = 'features-' + '+'.join(run['features'])
     else:
         what = DISTANCE_METRICS[run['method']].lower()
-    return f"{what}_{run['linkage']}_{n_clusters}clusters_run{run['run_id']}"
+    count = f"{n_clusters}clusters"
+    if n_actual is not None and int(n_actual) != int(n_clusters):
+        count = f"{n_clusters}requested-{n_actual}actual"
+    return f"{what}_{run['linkage']}_{count}_run{run['run_id']}"
+
+
+def cluster_count_text(n_requested, labels):
+    """'3 clusters', or '1 actual group (2 requested; tied distances)' when the cut yields fewer groups."""
+    n_actual = int(len(np.unique(labels)))
+    if n_actual == int(n_requested):
+        return f"{n_actual} cluster{'s' if n_actual != 1 else ''}"
+    return (f"{n_actual} actual group{'s' if n_actual != 1 else ''} ({int(n_requested)} requested; "
+            "tied distances prevent more)")
+
+
+# Display names of the figures (what is drawn), kept separate from the calculation (how memberships arose)
+VIEW_NOTES = {
+    'mds': ("Axes are MDS embedding dimensions fitted to the pairwise dissimilarities; their orientation is "
+            "arbitrary and they are not the original feature or coordinate axes."),
+}
+
+
+def figure_header(run, view, n_requested=None, labels=None, wrap=110):
+    """
+    Header for a clustering figure, built only from the immutable computed run and the actual hierarchy cut:
+    display, calculation (method, features, linkage), objects, observation window, cluster count and run ID.
+    Lines are wrapped with <br> for Plotly titles so the context survives image download.
+    """
+    import textwrap
+    calc = method_label(run['method'])
+    if run['method'] == 'Features (Euclidean)':
+        calc += f" on {feature_names(run['features'])}"
+    calc += f", {LINKAGE_LABELS[run['linkage']]}"
+    items = [f"Object{'s' if len(run['objects']) > 1 else ''} {', '.join(map(str, run['objects']))}",
+             f"tst {run['start']:g}–{run['end']:g}", f"{len(run['trajectory_ids'])} trajectories"]
+    if labels is not None:
+        items.append(cluster_count_text(n_requested if n_requested is not None else len(np.unique(labels)), labels))
+    if run.get('variation', {}).get('uninformative'):
+        items.append("input does not distinguish the trajectories")
+    items.append(f"run {run['run_id']}")
+    # Context line breaks only between items, so "run <ID>" and each count stay on one line
+    context = ['']
+    for item in items:
+        if context[-1] and len(context[-1]) + 3 + len(item) > wrap:
+            context.append(item)
+        else:
+            context[-1] = f"{context[-1]} · {item}" if context[-1] else item
+    lines = [f"<b>{view}</b>"] + textwrap.wrap(f"Calculation: {calc}", wrap, break_long_words=False) + context
+    note = next((v for k, v in VIEW_NOTES.items() if k in view.lower()), None)
+    if note:
+        lines += textwrap.wrap(note, wrap, break_long_words=False)
+    return '<br>'.join(lines)
+
+
+def add_run_header(fig, run, view, n_requested=None, labels=None, wrap=110):
+    """
+    Put the run header inside the Plotly figure (as its title, so it is part of any downloaded image) and make
+    room for it above the plot. A figure with a fixed pixel width gets correspondingly shorter lines.
+    """
+    if fig.layout.width:
+        wrap = min(wrap, max(40, int(fig.layout.width / 6.8)))
+    text = figure_header(run, view, n_requested, labels, wrap)
+    n_lines = text.count('<br>') + 1
+    line_px = 16
+    fig.update_layout(title=dict(text=text, x=0.01, xanchor='left', xref='container',
+                                 y=1 - 14 / (fig.layout.height or 450), yref='container', yanchor='top',
+                                 font=dict(size=12)),
+                      margin=dict(t=24 + line_px * n_lines))
+    return fig
 
 
 def run_configuration(run, n_requested, labels):
@@ -285,6 +454,13 @@ def run_configuration(run, n_requested, labels):
         'Linkage_Method': LINKAGE_LABELS[run['linkage']].replace(' linkage', '').capitalize(),
         'Requested_Number_of_Clusters': int(n_requested),
         'Actual_Number_of_Clusters': int(len(np.unique(labels))),
+        'Input_Distinguishes_Trajectories': ('no (all pairwise dissimilarities zero within the documented '
+                                             'tolerance)' if run.get('variation', {}).get('uninformative')
+                                             else 'yes'),
+        'Largest_Pairwise_Dissimilarity': f"{run['variation']['max_distance']:.17g}" if 'variation' in run else '',
+        'Constant_Selected_Features': (feature_names(run['variation']['constant_features'])
+                                       if run.get('variation', {}).get('constant_features') else
+                                       ('none' if run['method'] == 'Features (Euclidean)' else 'not applicable')),
         'Configuration_IDs': ', '.join(map(str, run['configs'])),
         'Object_IDs': ', '.join(map(str, run['objects'])),
         'Start_Observation_tst': f"{run['start']:g}",

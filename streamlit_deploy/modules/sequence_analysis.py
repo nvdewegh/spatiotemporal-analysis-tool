@@ -392,3 +392,82 @@ def compute_sequence_distance_matrix(sequences, method='levenshtein'):
             dist_matrix[j, i] = dist
     
     return dist_matrix
+
+
+# =============================================================================
+# MOVEMENT-STEP (L/H) SEQUENCES
+# =============================================================================
+
+STEP_THRESHOLD_M = 2.0
+
+
+def step_table(df, configs, objects, start_time, end_time):
+    """
+    One row per step between consecutive positions of each (configuration, object), sorted by tst (stable).
+    Distance = Euclidean displacement in the x/y units of the data. n positions give n - 1 steps.
+    """
+    rows = []
+    sel = df[df['config_source'].isin(configs) & df['obj'].isin(objects)
+             & (df['tst'] >= start_time) & (df['tst'] <= end_time)]
+    order = {c: i for i, c in enumerate(configs)}
+    for (config, obj), g in sorted(sel.groupby(['config_source', 'obj']),
+                                   key=lambda kv: (order.get(kv[0][0], 0), kv[0][1])):
+        g = g.sort_values('tst', kind='mergesort')
+        t, x, y = g['tst'].to_numpy(float), g['x'].to_numpy(float), g['y'].to_numpy(float)
+        d = np.hypot(np.diff(x), np.diff(y))
+        for i in range(len(d)):
+            rows.append({'Configuration': config, 'Object': obj, 'Step': i + 1,
+                         'tst_from': t[i], 'tst_to': t[i + 1], 'Distance_m': float(d[i])})
+    return pd.DataFrame(rows, columns=['Configuration', 'Object', 'Step', 'tst_from', 'tst_to', 'Distance_m'])
+
+
+def step_token(distance, threshold=STEP_THRESHOLD_M):
+    """'L' when the step is shorter than the threshold, 'H' when it is at least the threshold."""
+    return 'L' if distance < threshold else 'H'
+
+
+def run_length_compress(tokens):
+    return [k for k, _ in groupby(tokens)]
+
+
+def step_sequences(steps, threshold=STEP_THRESHOLD_M, compress=False):
+    """Per trajectory: positions, step distances, tokens (optionally run-length compressed)."""
+    steps = steps.copy()
+    steps['Token'] = [step_token(d, threshold) for d in steps['Distance_m']]
+    rows = []
+    for (config, obj), g in steps.groupby(['Configuration', 'Object'], sort=False):
+        tokens = list(g['Token'])
+        seq = run_length_compress(tokens) if compress else tokens
+        rows.append({'Configuration': config, 'Object': obj, 'Trajectory': f"{config}_obj{obj}",
+                     'Positions': len(g) + 1, 'Steps': len(g), 'Threshold_m': float(threshold),
+                     'Compressed': bool(compress),
+                     'Distances_m': ';'.join(repr(float(v)) for v in g['Distance_m']),
+                     'Sequence': ''.join(seq)})
+    return steps, pd.DataFrame(rows)
+
+
+def parse_pattern(text):
+    """'L H', 'L,H', 'L→H' or 'LH' -> ['L', 'H'] (tokens are single characters)."""
+    return [c for c in str(text).upper() if c.isalnum()]
+
+
+def contains_ordered(sequence, pattern):
+    """True when pattern occurs in order in sequence, gaps allowed (a subsequence, not a substring)."""
+    it = iter(sequence)
+    return all(any(s == p for s in it) for p in pattern)
+
+
+def contains_all(sequence, pattern):
+    """True when every token of pattern occurs somewhere in sequence (order ignored)."""
+    return set(pattern) <= set(sequence)
+
+
+def pattern_support(sequences, pattern, ordered=True):
+    """
+    sequences: {trajectory: sequence string}. Each trajectory counts at most once.
+    Returns (supporting trajectories, count, denominator, relative frequency).
+    """
+    test = contains_ordered if ordered else contains_all
+    supporting = [tid for tid, seq in sequences.items() if pattern and test(seq, pattern)]
+    n = len(sequences)
+    return supporting, len(supporting), n, (len(supporting) / n if n else float('nan'))

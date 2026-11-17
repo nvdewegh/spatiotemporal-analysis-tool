@@ -11,6 +11,7 @@ Key Features:
 - Interactive visualisations (network, scatter, heatmap, MDS)
 """
 
+import hashlib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -179,6 +180,64 @@ def compute_association_rules(transactions, min_support=0.1, min_confidence=0.5)
         return rules, frequent_itemsets
     except ValueError:
         return pd.DataFrame(), frequent_itemsets
+
+def add_rule_counts(rules, transactions):
+    """
+    Whole-number counts behind support and confidence, counted directly in the transactions:
+    N (all transactions), antecedent count, consequent count and joint count (antecedent and consequent).
+    support = joint / N, confidence = joint / antecedent, consequent prevalence = consequent / N.
+    """
+    rules = rules.copy()
+    sets = [set(t) for t in transactions]
+    n = len(sets)
+
+    def count(items):
+        return sum(1 for s in sets if items <= s)
+
+    rules['n_transactions'] = n
+    rules['n_antecedent'] = [count(set(a)) for a in rules['antecedents']]
+    rules['n_consequent'] = [count(set(c)) for c in rules['consequents']]
+    rules['n_joint'] = [count(set(a) | set(c)) for a, c in zip(rules['antecedents'], rules['consequents'])]
+    rules['consequent_prevalence'] = rules['n_consequent'] / n if n else np.nan
+    rules['rule'] = rules['antecedents_str'] + ' → ' + rules['consequents_str']
+    return rules
+
+
+RULE_EXPORT_COLUMNS = ['rule', 'antecedents_str', 'consequents_str', 'n_transactions', 'n_antecedent',
+                       'n_consequent', 'n_joint', 'support', 'confidence', 'consequent_prevalence', 'lift']
+
+
+def rules_export(rules):
+    """Rules with counts and full-precision metrics as CSV text."""
+    cols = [c for c in RULE_EXPORT_COLUMNS if c in rules.columns]
+    out = rules[cols].rename(columns={'antecedents_str': 'antecedent', 'consequents_str': 'consequent'})
+    return out.to_csv(index=False, float_format='%.17g')
+
+
+def filter_rules(rules, text='', antecedent_items=(), consequent_items=()):
+    """Rules whose text contains `text` (case-insensitive) and whose sides contain all chosen items."""
+    keep = pd.Series(True, index=rules.index)
+    if text.strip():
+        t = text.strip().lower()
+        keep &= rules['rule'].str.lower().str.contains(t, regex=False)
+    for item in antecedent_items:
+        keep &= rules['antecedents'].apply(lambda s, i=item: i in s)
+    for item in consequent_items:
+        keep &= rules['consequents'].apply(lambda s, i=item: i in s)
+    return rules[keep]
+
+
+def mining_signature(data, configs, objects, transaction_type, grid, n_bins, min_support, min_confidence):
+    """Everything that determines a mining result; results are shown only while this is unchanged."""
+    from .clustering import data_fingerprint
+    return (data_fingerprint(data), tuple(sorted(map(str, configs))), tuple(sorted(map(str, objects))),
+            transaction_type, grid, n_bins, float(min_support), float(min_confidence))
+
+
+AR_RESULT_KEYS = ['ar_rules', 'ar_frequent_itemsets', 'ar_transactions', 'ar_item_names', 'ar_trajectory_mapping',
+                  'ar_trajectories_dict', 'ar_bin_info', 'ar_grid_info', 'ar_cooccurrence_matrix',
+                  'ar_distance_matrix', 'ar_signature']
+
 
 # ============================================================================
 # MATRIX COMPUTATIONS
@@ -649,11 +708,16 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         4. {Diaper, Beer, Cola}
         5. {Milk, Diaper, Beer, Cola}
         
-        **Discovered Rule:** {Milk, Diaper} → {Beer}
-        - **Support ⭐**: 3/5 = 0.6 (appears in 3 out of 5 transactions - 60% frequency)
-        - **Confidence ⭐**: 3/3 = 1.0 (100% of times when {Milk, Diaper} appear, Beer also appears - perfect reliability!)
-        
-        **Interpretation**: This is a strong rule with high support (common pattern) AND high confidence (very reliable). Customers buying milk and diapers are very likely to also buy beer!
+        **Rule:** {Milk, Diaper} → {Beer}
+        - {Milk, Diaper} occurs in transactions 1, 2 and 5: **3** of 5
+        - {Milk, Diaper, Beer} occurs in transactions 1 and 5: **2** of 5
+        - **Support**: 2/5 = 0.4 (the whole pattern occurs in 2 of the 5 transactions)
+        - **Confidence**: 2/3 ≈ 0.67 (of the 3 transactions with Milk and Diaper, 2 also contain Beer)
+
+        **Interpretation**: Beer is in 4 of the 5 transactions (consequent prevalence 4/5 = 0.8). A confidence
+        of 2/3 is therefore *lower* than the share of beer buyers overall: knowing that a basket contains milk
+        and diapers does not make beer more likely here. Always compare confidence with the prevalence of the
+        consequent.
         """)
     
     st.markdown('---')
@@ -765,9 +829,18 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         st.caption(f"Rule must hold in ≥{min_confidence*100:.0f}% of cases")
     
     st.markdown("---")
-    
+
+    spatial = transaction_type in ["Spatial Zones", "Combined (Spatial + Features)"]
+    binned = transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]
+    signature = mining_signature(data, selected_configs, selected_objects, transaction_type,
+                                 (grid_rows, grid_cols) if spatial else None, n_bins if binned else None,
+                                 min_support, min_confidence)
+
     # Mine Rules Button
     if st.button("Mine Association Rules", type="primary"):
+        # Nothing from an earlier computation may survive a new one (also not after an error)
+        for key in AR_RESULT_KEYS:
+            st.session_state.pop(key, None)
         with st.spinner("Preparing transactions and mining rules..."):
             try:
                 # Prepare trajectories dictionary
@@ -871,8 +944,11 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 rules_df, frequent_itemsets = compute_association_rules(
                     transactions, min_support, min_confidence
                 )
-                
+                if len(rules_df) > 0:
+                    rules_df = add_rule_counts(rules_df, transactions)
+
                 st.session_state.ar_rules = rules_df
+                st.session_state.ar_signature = signature
                 st.session_state.ar_frequent_itemsets = frequent_itemsets
                 
                 # Compute matrices
@@ -892,12 +968,27 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 import traceback
                 st.code(traceback.format_exc())
     
+    # Results belong to the inputs they were computed from: hide them as soon as any input changes
+    if st.session_state.get('ar_rules') is not None and st.session_state.get('ar_signature') != signature:
+        old = st.session_state.get('ar_signature') or ()
+        names = ['dataset content', 'configurations', 'objects', 'analysis type', 'grid', 'number of bins',
+                 'minimum support', 'minimum confidence']
+        changed = [n for i, n in enumerate(names) if i >= len(old) or old[i] != signature[i]]
+        st.warning("**Inputs changed. Recompute to update results.** Changed since the last mining run: "
+                   + ", ".join(changed) + ". Rules, plots and downloads of the earlier run are hidden until you "
+                   "click Mine Association Rules again.")
+        return
+
     # Display results if available
     if st.session_state.get('ar_rules') is not None and len(st.session_state.ar_rules) > 0:
         st.markdown("---")
         st.header("Association Rules Results")
-        
+
         rules_df = st.session_state.ar_rules
+        run_tag = hashlib.sha256(repr(signature).encode()).hexdigest()[:10]
+        st.caption(f"Mining run {run_tag}: {len(st.session_state.ar_transactions)} transactions, "
+                   f"{len(rules_df)} rules (minimum support {min_support:g}, minimum confidence "
+                   f"{min_confidence:g}).")
         
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "Rules Table", "Network", 
@@ -914,30 +1005,63 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             Sort by either metric to find the most interesting patterns.
             """)
             
+            all_items = sorted({i for s in rules_df['antecedents'] for i in s} |
+                               {i for s in rules_df['consequents'] for i in s})
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                find_text = st.text_input("Find rules containing", key="ar_find_text",
+                                          help="Case-insensitive text search in the rule, e.g. avg_speed_high")
+            with f2:
+                find_ante = st.multiselect("Antecedent contains", all_items, key="ar_find_antecedent")
+            with f3:
+                find_cons = st.multiselect("Consequent contains", all_items, key="ar_find_consequent")
+            matching = filter_rules(rules_df, find_text, find_ante, find_cons)
+
             col1, col2 = st.columns(2)
             with col1:
                 sort_by = st.selectbox("Sort by:", ["confidence", "support"], 
                                       help="Default sorted by Confidence (rule strength)")
             with col2:
-                top_k_table = st.number_input("Show top N rules:", min_value=1, max_value=len(rules_df), value=min(50, len(rules_df)))
+                top_k_table = st.number_input("Show top N rules:", min_value=1, max_value=len(rules_df),
+                                              value=min(50, len(rules_df)), key="ar_top_n")
             
-            display_rules = rules_df.nlargest(top_k_table, sort_by)
+            # Stable ordering: metric, then the rule text, so ties are listed reproducibly
+            display_rules = matching.sort_values([sort_by, 'rule'], ascending=[False, True],
+                                                 kind='mergesort').head(int(top_k_table))
+            st.markdown(f"Showing **{len(display_rules)}** of {len(matching)} matching rules "
+                        f"({len(rules_df)} rules in total).")
             
-            # Only show Support and Confidence (primary metrics)
-            display_df = display_rules[['antecedents_str', 'consequents_str', 'support', 'confidence']]
-            display_df.columns = ['Antecedents →', 'Consequents', 'Support ⭐', 'Confidence ⭐']
+            n_total = int(rules_df['n_transactions'].iloc[0])
+            display_df = pd.DataFrame({
+                'Rule': display_rules['rule'],
+                'Antecedent count': display_rules['n_antecedent'],
+                'Consequent count': display_rules['n_consequent'],
+                'Joint count': display_rules['n_joint'],
+                'Support': display_rules['support'],
+                'Support (counts)': display_rules['n_joint'].astype(str) + f'/{n_total}',
+                'Confidence': display_rules['confidence'],
+                'Confidence (counts)': display_rules['n_joint'].astype(str) + '/' + display_rules['n_antecedent'].astype(str),
+                'Consequent prevalence': display_rules['consequent_prevalence'],
+                'Prevalence (counts)': display_rules['n_consequent'].astype(str) + f'/{n_total}',
+            })
             
             st.dataframe(
-                display_df.style.format({
-                    'Support ⭐': '{:.3f}', 'Confidence ⭐': '{:.3f}'
-                }).background_gradient(subset=['Support ⭐', 'Confidence ⭐'], cmap='YlOrRd'),
-                use_container_width=True, height=400
+                display_df, use_container_width=True, height=400, hide_index=True,
+                column_config={c: st.column_config.NumberColumn(c, format="%.3f")
+                               for c in ('Support', 'Confidence', 'Consequent prevalence')}
             )
             
-            st.caption("⭐ = Primary metrics based on theoretical framework: Support (frequency) and Confidence (strength)")
+            st.caption(f"N = {n_total} transactions. Support = joint count / N; confidence = joint count / antecedent "
+                       "count; consequent prevalence = consequent count / N. A confidence close to the consequent "
+                       "prevalence means the antecedent adds little information. Display rounded to three "
+                       "decimals; downloads keep full precision.")
             
-            csv = display_df.to_csv(index=False)
-            st.download_button("Download Rules as CSV", csv, "association_rules.csv", "text/csv")
+            d1, d2 = st.columns(2)
+            d1.download_button(f"Download all rules (CSV, {len(rules_df)} rules)", rules_export(rules_df),
+                               f"association_rules_all_run{run_tag}.csv", "text/csv", key="ar_download_all")
+            d2.download_button(f"Download displayed rules only (CSV, {len(display_rules)} rules)",
+                               rules_export(display_rules), f"association_rules_displayed_run{run_tag}.csv",
+                               "text/csv", key="ar_download_displayed")
         
         with tab2:
             st.subheader("Network Graph")
@@ -1062,7 +1186,8 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                 for idx, row in rules_df.iterrows():
                     antecedents_str = ', '.join(list(row['antecedents']))
                     consequents_str = ', '.join(list(row['consequents']))
-                    rule_str = f"{antecedents_str} → {consequents_str} (Supp: {row['support']:.2f}, Conf: {row['confidence']:.2f})"
+                    rule_str = (f"{antecedents_str} → {consequents_str} (support {row['n_joint']}/{row['n_transactions']}, "
+                                f"confidence {row['n_joint']}/{row['n_antecedent']})")
                     rule_strings.append(rule_str)
                 
                 # Rule selector

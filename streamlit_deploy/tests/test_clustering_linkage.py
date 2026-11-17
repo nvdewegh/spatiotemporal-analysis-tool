@@ -347,7 +347,7 @@ def test_side_by_side_individual_clusters_fit_their_own_trajectories(clustered):
     next(r for r in clustered.radio if r.label == 'View mode').set_value('Side-by-side').run()
     clustered.button(key='btn_cluster_compare').click().run()
     assert not clustered.exception
-    specs = [s for s in chart_specs(clustered) if re.match(r'Cluster \d+ \(', s['layout'].get('title', {}).get('text', ''))]
+    specs = [s for s in chart_specs(clustered) if re.match(r'(<b>)?Cluster \d+ \(', s['layout'].get('title', {}).get('text', ''))]
     assert len(specs) == len(set(labels))
     for spec in specs:
         assert not spec['layout'].get('shapes')

@@ -206,6 +206,34 @@ def detect_outliers_modified_zscore(features_df, feature_cols, threshold=3.5):
     return result_df
 
 
+def iqr_bounds(features_df, feature_cols, multiplier=1.5):
+    """
+    Per feature: Q1, Q3 (pandas linear quantiles, the same rule as Plotly's default box plot), IQR and the
+    lower/upper bounds Q1 - multiplier x IQR and Q3 + multiplier x IQR, at full floating-point precision.
+    Also lists the trajectories below and above the bounds (strictly outside, as in detect_outliers_iqr).
+    """
+    rows = []
+    ids = (features_df['trajectory_id'] if 'trajectory_id' in features_df.columns
+           else pd.Series(features_df.index.astype(str), index=features_df.index))
+    for col in feature_cols:
+        q1 = float(features_df[col].quantile(0.25))
+        q3 = float(features_df[col].quantile(0.75))
+        iqr = q3 - q1
+        lower, upper = q1 - multiplier * iqr, q3 + multiplier * iqr
+        low = features_df[col] < lower
+        high = features_df[col] > upper
+        rows.append({'Feature': col, 'Factor': float(multiplier), 'Q1': q1, 'Q3': q3, 'IQR': iqr,
+                     'Lower_Bound': lower, 'Upper_Bound': upper,
+                     'Below_Lower': ', '.join(ids[low]), 'Above_Upper': ', '.join(ids[high]),
+                     'Flagged_Count': int((low | high).sum())})
+    return pd.DataFrame(rows).set_index('Feature')
+
+
+def trajectory_label(row):
+    """'Config_2 · Object 1': lets the same trajectory be found in every table and plot."""
+    return f"{row['config']} · Object {row['object']}"
+
+
 def detect_outliers_iqr(features_df, feature_cols, multiplier=1.5):
     """
     Detect outliers using Interquartile Range (IQR) method.
@@ -219,17 +247,12 @@ def detect_outliers_iqr(features_df, feature_cols, multiplier=1.5):
         DataFrame with outlier labels
     """
     result_df = features_df.copy()
-    
+
     outlier_counts = np.zeros(len(features_df))
-    
+    bounds = iqr_bounds(features_df, feature_cols, multiplier)
+
     for col in feature_cols:
-        Q1 = features_df[col].quantile(0.25)
-        Q3 = features_df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        
-        lower_bound = Q1 - multiplier * IQR
-        upper_bound = Q3 + multiplier * IQR
-        
+        lower_bound, upper_bound = bounds.loc[col, 'Lower_Bound'], bounds.loc[col, 'Upper_Bound']
         outliers = (features_df[col] < lower_bound) | (features_df[col] > upper_bound)
         outlier_counts += outliers.astype(int)
     
@@ -586,15 +609,20 @@ def plot_boxplots(features_df, feature_cols):
     """Create box plots for multiple features to visualise outliers."""
     fig = go.Figure()
     
+    labels = (features_df.apply(trajectory_label, axis=1)
+              if {'config', 'object'} <= set(features_df.columns) else features_df.index.astype(str))
     for col in feature_cols:
         fig.add_trace(go.Box(
             y=features_df[col],
             name=col.replace('_', ' ').title(),
-            boxmean='sd'
+            boxmean='sd',
+            boxpoints='all', jitter=0.35, pointpos=-1.7,   # every trajectory as a point, identifiable on hover
+            text=list(labels),
+            hovertemplate='%{text}<br>%{y:.6f}<extra>' + col + '</extra>',
         ))
-    
+
     fig.update_layout(
-        title='Feature Distributions (Box Plots)',
+        title='Feature Distributions (Box Plots, whiskers at 1.5 × IQR)',
         yaxis_title='Value',
         height=500,
         showlegend=True
@@ -764,8 +792,14 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         Box plots show the distribution of each feature and highlight potential outliers:
         - **Box** = Interquartile Range (IQR: Q1 to Q3) - contains middle 50% of data
         - **Line in box** = Median (Q2)
-        - **Whiskers** = Extend to 1.5×IQR from the quartiles
-        - **Points beyond whiskers** = Potential outliers
+        - **Whiskers** = Extend to the most extreme observation that still lies within 1.5×IQR of the
+          box (lower whisker: smallest value ≥ Q1 − 1.5×IQR; upper whisker: largest value ≤ Q3 + 1.5×IQR).
+          They do not end exactly at 1.5×IQR unless an observation happens to lie there.
+        - **Points beyond the whiskers** = Values outside the 1.5×IQR bounds (candidate outliers)
+        - Every trajectory is drawn as a point next to its box; hover to see its configuration ID and object.
+
+        This standard box plot always uses factor 1.5. The IQR method under "Statistical" lets you change the
+        factor and lists the numerical bounds.
         """)
         fig_box = plot_boxplots(features_df, selected_features)
         render_interactive_chart(st, fig_box, "Feature distributions showing outliers")
@@ -808,6 +842,23 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         - Upper bound = Q3 + {multiplier}×IQR
         - Points outside these bounds are outliers
         """)
+        bounds = iqr_bounds(features_df, selected_features, multiplier)
+        st.markdown(f"**IQR bounds** (factor {multiplier:g}; features: {', '.join(selected_features)})")
+        st.dataframe(bounds, use_container_width=True,
+                     column_config={c: st.column_config.NumberColumn(c, format="%.6f")
+                                    for c in ('Q1', 'Q3', 'IQR', 'Lower_Bound', 'Upper_Bound')})
+        st.caption("Displayed to six decimals; calculations and the download use full precision. Quartiles use "
+                   "linear interpolation (pandas default, also used by the box plot). A trajectory is flagged "
+                   "when its value is strictly below the lower bound or strictly above the upper bound. "
+                   "Configurations used: " + ', '.join(map(str, features_df['config'])) + ".")
+        st.download_button("Download IQR bounds (CSV, full precision)",
+                           bounds.reset_index().to_csv(index=False, float_format='%.17g'),
+                           file_name=f"iqr_bounds_factor{multiplier:g}_{'+'.join(selected_features)}.csv",
+                           mime="text/csv", key="download_iqr_bounds")
+        st.info("An IQR flag only means that a value lies unusually far from the middle half of **these "
+                "selected trajectories** for the chosen feature and factor. It is not a measure of traffic "
+                "danger or of unsafe behaviour: a long, fast or short trajectory can be entirely normal driving, "
+                "and the flags change when the selection of configurations, features or the factor changes.")
     
     elif method == "Depth-Based: Convex Hull Layers":
         with col1:
@@ -1035,7 +1086,10 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     
     # Trajectory Visualization on Tennis Court
     st.markdown("---")
-    st.markdown("**Trajectory Visualisation on Tennis Court**")
+    court_type = st.session_state.get('court_type', 'No selection')
+    court_word = ({'Tennis': 'Tennis Court', 'Football': 'Football Pitch'}.get(court_type)
+                  if st.session_state.get('show_court_background', True) else None)   # neutral without a pitch
+    st.markdown(f"**Trajectory Visualisation{' on ' + court_word if court_word else ''}**")
     st.markdown("See the actual movement patterns of outlier vs normal trajectories")
     
     if n_outliers > 0:
@@ -1188,7 +1242,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             
             from streamlit_visualization import create_pitch_figure
             
-            fig_court = create_pitch_figure('Tennis')
+            fig_court = create_pitch_figure(court_type)
             
             # Add each trajectory
             for traj_data, color, label in zip(trajectories_to_plot, colors, labels):
@@ -1235,7 +1289,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
             )
             
-            render_interactive_chart(st, fig_court, "Trajectories on tennis court")
+            render_interactive_chart(st, fig_court, f"Trajectories{' on the ' + court_word.lower() if court_word else ' (x, y in metres)'}")
             
             st.caption("""
             **Legend**: 🔴 Red = Outlier trajectories | 🔵 Light Blue = Normal trajectories | 
