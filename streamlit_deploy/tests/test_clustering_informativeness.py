@@ -267,3 +267,44 @@ def test_app_headers_feature_then_dtw_and_stale_protection(at):
     np.testing.assert_array_equal(assignments['Cluster'].to_numpy(), labels)
     conf = pd.read_csv(io.StringIO(latest(at, 'analysis_configuration')['data']), index_col=0)['Value']
     assert conf['Actual_Number_of_Clusters'] == str(len(set(labels))) and conf['Linkage_Method'] == 'Average'
+
+
+# --------------------------------------------------------------------------- interpretation views
+
+def test_raw_feature_table_matches_clustering_features(a2):
+    D, ids, F, T, Z = feature_run(a2, ['avg_speed', 'sinuosity', 'min_speed'])
+    labels = c.cut_hierarchy(Z, 3)
+    table = c.raw_feature_table(T, ids, labels)
+    assert list(table.index) == ids and (table['Cluster'].to_numpy() == labels).all()
+    for f in F.columns:  # bit-identical to the values that were clustered
+        assert (table[f].to_numpy() == F[f].to_numpy()).all()
+
+
+def test_segment_speed_table_order_definition_and_gaps():
+    traj = [np.array([[3.0, 4.0, 1.0], [0.0, 0.0, 0.0], [3.0, 4.0, 1.0], [3.0, 10.0, 3.0]])]
+    seg = c.segment_speed_table(traj, ['T0'], [2])
+    assert list(seg['Segment']) == [1, 2, 3] and list(seg['tst_start']) == [0.0, 1.0, 1.0]
+    assert seg['Speed_m_per_tst'].iloc[0] == 5.0 and np.isnan(seg['Speed_m_per_tst'].iloc[1])
+    assert seg['Speed_m_per_tst'].iloc[2] == 3.0 and (seg['Cluster'] == 2).all()
+    valid = seg['Speed_m_per_tst'].dropna().to_numpy()
+    df = pd.DataFrame(traj[0], columns=['x', 'y', 'tst'])
+    assert np.array_equal(np.sort(valid), np.sort(c.segment_speeds(df)))
+
+
+def test_app_interpretation_tabs_carry_run_identity(at):
+    run_features(at, ['avg_speed'])
+    at.slider(key='n_clusters_slider').set_value(3).run()
+    ok(at)
+    run = at.session_state['clustering_run']
+    t = titles(at)
+    raw = [x for x in t if x.startswith('<b>Raw features')]
+    seg = [x for x in t if x.startswith('<b>Ordered segment speeds')]
+    assert raw and seg and f"run {run['run_id']}" in raw[0] and f"run {run['run_id']}" in seg[0]
+    raw_csv = pd.read_csv(io.StringIO(latest(at, 'raw_features_')['data']), index_col=0)
+    assign = pd.read_csv(io.StringIO(latest(at, 'cluster_assignments')['data']))
+    assert dict(zip(assign.iloc[:, 0], assign['Cluster'])) == raw_csv['Cluster'].to_dict()
+    seg_csv = pd.read_csv(io.StringIO(latest(at, 'segment_speeds_')['data']))
+    assert len(seg_csv) == 26 * 5 and latest(at, 'segment_speeds_')['file_name'].endswith(f"run{run['run_id']}.csv")
+    # a DTW run gets its own identity in the new views
+    at.radio(key='clustering_method_radio').set_value(DTW).run()
+    ok(at)

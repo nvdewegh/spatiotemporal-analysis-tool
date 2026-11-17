@@ -120,6 +120,8 @@ def store_clustering_run(df, signature, method, configs, objects, start, end, fe
         'filename': s.get('filename') or 'unknown file',
         'computed_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
         'trajectory_ids': list(trajectory_ids),
+        # (x, y, tst) per trajectory for the raw-feature and segment-speed views (all methods)
+        'positions': clustering.run_positions(df, configs, objects, start, end, trajectory_ids),
         'trajectory_lengths': [int(len(t)) for t in trajectories],
         # Does the selected representation distinguish the trajectories at all? (documented relative tolerance)
         'variation': clustering.assess_input_variation(distance_matrix, method, trajectories, features_df),
@@ -7889,12 +7891,88 @@ Each window captures a snapshot of spatial relationships at different points in 
             """)
             
             # Create tabs for different analysis tools
-            analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
-                "MDS Visualisation", 
-                "Similarity Search", 
-                "Silhouette Analysis"
+            analysis_tab1, analysis_tab2, analysis_tab3, analysis_tab4, analysis_tab5 = st.tabs([
+                "MDS Visualisation",
+                "Similarity Search",
+                "Silhouette Analysis",
+                "Raw Features",
+                "Segment Speeds"
             ])
-            
+
+            interp_labels = st.session_state.get('cluster_labels')
+            interp_traj = clustering_run.get('positions')
+            interp_ready = interp_labels is not None and interp_traj is not None
+            interp_tag = clustering.run_file_tag(clustering_run, st.session_state.n_clusters,
+                                                 len(set(interp_labels))) if interp_ready else ''
+
+            # ===========================
+            # TAB 4: RAW FEATURE SCATTER
+            # ===========================
+            with analysis_tab4:
+                st.markdown("#### Raw Feature Scatter")
+                st.caption("Each point is one trajectory, placed by two raw feature values in their own units and "
+                           "coloured by the clusters of this computed run. Unlike MDS axes, these axes can be read "
+                           "directly. Features are recomputed from the run's positions, so this view also works "
+                           "for Chamfer and DTW runs.")
+                if not interp_ready:
+                    st.warning("No cluster assignments available yet.")
+                else:
+                    raw_table = clustering.raw_feature_table(interp_traj, clustering_run['trajectory_ids'],
+                                                             interp_labels)
+                    chosen = clustering_run.get('features') or []
+                    default_x = chosen[0] if chosen else 'avg_speed'
+                    default_y = chosen[1] if len(chosen) > 1 else (
+                        'sinuosity' if default_x != 'sinuosity' else 'avg_speed')
+                    fc1, fc2 = st.columns(2)
+                    fmt = lambda f: clustering.FEATURE_SELECTOR_LABELS[f]
+                    x_feat = fc1.selectbox("Horizontal axis", clustering.ALL_FEATURES,
+                                           index=clustering.ALL_FEATURES.index(default_x), format_func=fmt,
+                                           key='raw_scatter_x')
+                    y_feat = fc2.selectbox("Vertical axis", clustering.ALL_FEATURES,
+                                           index=clustering.ALL_FEATURES.index(default_y), format_func=fmt,
+                                           key='raw_scatter_y')
+                    missing = raw_table[[x_feat, y_feat]].isna().any(axis=1)
+                    if missing.any():
+                        st.info(f"Not plotted (no segment with positive elapsed tst): {', '.join(raw_table.index[missing])}")
+                    st.plotly_chart(clustering.feature_scatter_figure(
+                        clustering_run, raw_table[~missing], x_feat, y_feat, st.session_state.n_clusters,
+                        interp_labels), use_container_width=True)
+                    st.download_button("Download raw feature values (CSV)",
+                                       data=raw_table.to_csv(float_format='%.17g'),
+                                       file_name=f"raw_features_{interp_tag}.csv", mime="text/csv",
+                                       key='dl_raw_features')
+
+            # ===========================
+            # TAB 5: ORDERED SEGMENT SPEEDS
+            # ===========================
+            with analysis_tab5:
+                st.markdown("#### Ordered Segment Speeds")
+                st.caption("Speed of every segment (Euclidean step between consecutive positions sorted by tst, "
+                           "divided by elapsed tst), plotted at the segment's midpoint. Minimum, maximum and "
+                           "average speed do not show when a trajectory brakes or accelerates; this view does. "
+                           "Speeds are in m per tst unit; tst is not assumed to be calibrated seconds.")
+                if not interp_ready:
+                    st.warning("No cluster assignments available yet.")
+                else:
+                    seg_table = clustering.segment_speed_table(interp_traj, clustering_run['trajectory_ids'],
+                                                               interp_labels)
+                    seg_clusters = sorted(seg_table['Cluster'].unique())
+                    show = st.multiselect("Clusters to show", seg_clusters, default=seg_clusters,
+                                          key='segment_speed_clusters')
+                    shown = seg_table[seg_table['Cluster'].isin(show)]
+                    if shown.empty:
+                        st.info("Select at least one cluster.")
+                    else:
+                        st.plotly_chart(clustering.segment_speed_figure(
+                            clustering_run, shown, st.session_state.n_clusters, interp_labels),
+                            use_container_width=True)
+                    if seg_table['Speed_m_per_tst'].isna().any():
+                        st.info("Segments with non-positive elapsed tst have no speed and are left as gaps.")
+                    st.download_button("Download segment speeds (CSV)",
+                                       data=seg_table.to_csv(index=False, float_format='%.17g'),
+                                       file_name=f"segment_speeds_{interp_tag}.csv", mime="text/csv",
+                                       key='dl_segment_speeds')
+
             # ===========================
             # TAB 1: MDS VISUALIZATION
             # ===========================

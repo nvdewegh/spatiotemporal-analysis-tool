@@ -554,6 +554,100 @@ def extract_trajectory_features(traj_df):
 
 
 # =============================================================================
+# INTERPRETATION VIEWS (raw features and ordered segment speeds of a computed run)
+# =============================================================================
+
+def run_positions(df, configs, objects, start, end, trajectory_ids):
+    """(x, y, tst) arrays of each trajectory, in trajectory_ids order, with the same selection and ID
+    scheme as the distance computations (Chamfer runs keep only (x, y), so tst is taken from df here)."""
+    sel = df[df['config_source'].isin(configs) & df['obj'].isin(objects)
+             & (df['tst'] >= start) & (df['tst'] <= end)]
+    x_col, y_col = ('X', 'Y') if 'X' in sel.columns else ('x', 'y')
+    by_id = {f"{config}_obj{obj}": g[[x_col, y_col, 'tst']].to_numpy(dtype=float)
+             for (config, obj), g in sel.groupby(['config_source', 'obj'])}
+    return [by_id[t] for t in trajectory_ids]
+
+
+def _trajectory_frame(coords):
+    return pd.DataFrame(np.asarray(coords, dtype=float)[:, :3], columns=['x', 'y', 'tst'])
+
+
+def raw_feature_table(trajectories, trajectory_ids, labels):
+    """
+    All features of every trajectory in the run, at full precision, recomputed from the run's own
+    (x, y, tst) arrays with extract_trajectory_features. Independent of which features were selected
+    for clustering, so DTW and Chamfer runs can be interpreted with the same raw quantities.
+    """
+    rows = [extract_trajectory_features(_trajectory_frame(t)) for t in trajectories]
+    table = pd.DataFrame(rows, index=list(trajectory_ids))[ALL_FEATURES]
+    table.insert(0, 'Cluster', np.asarray(labels, dtype=int))
+    return table.rename_axis('Trajectory_ID')
+
+
+def segment_speed_table(trajectories, trajectory_ids, labels):
+    """
+    Ordered segment speeds per trajectory: positions sorted by tst (stable), one row per consecutive pair.
+    Speed = Euclidean step / elapsed tst, the definition used by segment_speeds; segments with
+    non-positive elapsed tst get NaN speed (kept as rows, never given an invented time step).
+    """
+    rows = []
+    for tid, coords, label in zip(trajectory_ids, trajectories, labels):
+        t = _trajectory_frame(coords).sort_values('tst', kind='mergesort').to_numpy()
+        for i in range(len(t) - 1):
+            dt = t[i + 1, 2] - t[i, 2]
+            dist = float(np.hypot(t[i + 1, 0] - t[i, 0], t[i + 1, 1] - t[i, 1]))
+            rows.append({'Trajectory_ID': tid, 'Cluster': int(label), 'Segment': i + 1,
+                         'tst_start': t[i, 2], 'tst_end': t[i + 1, 2], 'Distance_m': dist,
+                         'Elapsed_tst': dt, 'Speed_m_per_tst': dist / dt if dt > 0 else float('nan')})
+    return pd.DataFrame(rows, columns=['Trajectory_ID', 'Cluster', 'Segment', 'tst_start', 'tst_end',
+                                       'Distance_m', 'Elapsed_tst', 'Speed_m_per_tst'])
+
+
+def _cluster_colour(label):
+    import plotly.express as _px
+    palette = _px.colors.qualitative.Plotly
+    return palette[(int(label) - 1) % len(palette)]
+
+
+def feature_scatter_figure(run, table, x_feature, y_feature, n_requested, labels):
+    """Raw-feature scatter coloured by the run's actual memberships, with the run header inside."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    for label in sorted(table['Cluster'].unique()):
+        part = table[table['Cluster'] == label]
+        fig.add_trace(go.Scatter(
+            x=part[x_feature], y=part[y_feature], mode='markers', name=f'Cluster {label}',
+            marker=dict(size=10, color=_cluster_colour(label), line=dict(width=1, color='white')),
+            text=part.index, hovertemplate='%{text}<br>' + FEATURE_COLUMN_LABELS[x_feature] + ': %{x:.6g}<br>'
+                                           + FEATURE_COLUMN_LABELS[y_feature] + ': %{y:.6g}<extra></extra>'))
+    fig.update_layout(height=600, xaxis_title=FEATURE_COLUMN_LABELS[x_feature],
+                      yaxis_title=FEATURE_COLUMN_LABELS[y_feature], legend_title_text='Cluster')
+    return add_run_header(fig, run, f"Raw features: {FEATURE_SELECTOR_LABELS[x_feature]} vs "
+                                    f"{FEATURE_SELECTOR_LABELS[y_feature]}", n_requested, labels)
+
+
+def segment_speed_figure(run, seg, n_requested, labels):
+    """Speed of each segment against its midpoint tst; one line per trajectory, coloured by cluster."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    shown = set()
+    for tid, part in seg.groupby('Trajectory_ID', sort=False):
+        label = int(part['Cluster'].iloc[0])
+        mid = (part['tst_start'] + part['tst_end']) / 2
+        fig.add_trace(go.Scatter(
+            x=mid, y=part['Speed_m_per_tst'], mode='lines+markers', name=f'Cluster {label}',
+            legendgroup=f'c{label}', showlegend=label not in shown,
+            line=dict(color=_cluster_colour(label), width=1.5), marker=dict(size=5),
+            customdata=np.c_[part['Segment'], part['tst_start'], part['tst_end']],
+            hovertemplate=(f'{tid}<br>Segment %{{customdata[0]}} (tst %{{customdata[1]:g}}–%{{customdata[2]:g}})'
+                           '<br>Speed: %{y:.6g} m per tst unit<extra></extra>')))
+        shown.add(label)
+    fig.update_layout(height=600, xaxis_title='tst (segment midpoint)', yaxis_title='Segment speed (m per tst unit)',
+                      legend_title_text='Cluster')
+    return add_run_header(fig, run, "Ordered segment speeds", n_requested, labels)
+
+
+# =============================================================================
 # DISTANCE MATRIX COMPUTATION
 # =============================================================================
 
