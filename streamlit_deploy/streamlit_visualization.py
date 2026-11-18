@@ -67,7 +67,10 @@ from sklearn.metrics import silhouette_score
 # Import analysis modules
 from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
 from modules import browser_storage
-from modules import local_a2_viewer
+try:                                     # optional: the local A2 viewer component may not be deployed
+    from modules import local_a2_viewer
+except ImportError:
+    local_a2_viewer = None
 from modules import navigation
 from modules import pdp_reference_systems
 from modules import point_size_clustering as psc
@@ -3013,7 +3016,8 @@ def main():
 
     # Main content
     if df is None:
-        local_a2_viewer.render()
+        if local_a2_viewer is not None:
+            local_a2_viewer.render()
         st.info("Please upload a CSV file to begin.")
         st.markdown("""
         ### Expected CSV Formats
@@ -3088,7 +3092,8 @@ def main():
     # Analysis-specific interface
     if analysis_method == "Visual Exploration":
         st.header("Visual Exploration")
-        local_a2_viewer.render()
+        if local_a2_viewer is not None:
+            local_a2_viewer.render()
         
         st.info("""
         **Explore your trajectory data visually with interactive plots:**
