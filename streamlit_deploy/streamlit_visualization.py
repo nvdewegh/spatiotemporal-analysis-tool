@@ -217,20 +217,18 @@ def render_step_sequences(df):
     """
     configs = st.session_state.shared_selected_configs
     objects = st.session_state.shared_selected_objects
-    min_time, max_time = float(df['tst'].min()), float(df['tst'].max())
-    init_time_range("seq_start", "seq_end", min_time, max_time)
-    c1, c2, c3, c4 = st.columns(4)
-    start_time = c1.number_input("Start time", min_value=min_time, max_value=max_time, step=0.01, format="%.2f",
-                                 key="seq_start")
-    end_time = c2.number_input("End time", min_value=min_time, max_value=max_time, step=0.01, format="%.2f",
-                               key="seq_end")
+    window = sequence_analysis.time_window_inputs(st, df, "seq_start", "seq_end")
+    c3, c4 = st.columns(2)
     threshold = c3.number_input("Threshold (m)", min_value=0.0, value=sequence_analysis.STEP_THRESHOLD_M,
                                 step=0.1, format="%.2f", key="seq_step_threshold",
                                 help="L: displacement < threshold; H: displacement ≥ threshold.")
     compress = c4.checkbox("Run-length compression", value=False, key="seq_step_compress",
                            help="Off by default: LLH stays LLH. On: repeated tokens are merged (LLH → LH).")
-    if not time_range_valid(start_time, end_time):
+    if window is None:
         return
+    start_time, end_time = window
+    st.caption(sequence_analysis.time_window_text(
+        start_time, end_time, sequence_analysis.select_window(df, configs, objects, start_time, end_time)))
     if not configs or not objects:
         st.warning("Please select at least one configuration and one object.")
         return
@@ -259,9 +257,11 @@ def render_step_sequences(df):
     p1, p2 = st.columns(2)
     pattern_text = p1.text_input("Pattern", value="L H", key="seq_step_pattern",
                                  help="Tokens in order, e.g. 'L H' or 'H L'. Spaces, commas and arrows are ignored.")
-    mode = p2.radio("Matching", ["Ordered, gaps allowed", "Unordered: all tokens present"], key="seq_step_mode",
-                    help="Ordered: the tokens occur in this order, other tokens may lie in between. Unordered: each "
-                         "token occurs somewhere. Each trajectory counts at most once.")
+    mode = p2.radio("Matching", ["Ordered, gaps allowed", "Token co-occurrence (order ignored)"],
+                    key="seq_step_mode",
+                    help="Each trajectory counts at most once.")
+    p2.caption("Ordered matching needs the tokens in this order (other tokens may lie in between), whereas token "
+               "co-occurrence only needs each token somewhere in the sequence, so HL also matches the pattern L H.")
     pattern = sequence_analysis.parse_pattern(pattern_text)
     seq_map = dict(zip(seqs['Trajectory'], seqs['Sequence']))
     ordered = mode.startswith("Ordered")
@@ -278,15 +278,65 @@ def render_step_sequences(df):
     standard = []
     for label, pat, ordd in (("L followed by H (gaps allowed)", ['L', 'H'], True),
                              ("H followed by L (gaps allowed)", ['H', 'L'], True),
-                             ("Both L and H present (order ignored)", ['L', 'H'], False)):
+                             ("L and H co-occur (order ignored)", ['L', 'H'], False)):
         sup, kk, nn, ff = sequence_analysis.pattern_support(seq_map, pat, ordd)
         standard.append({'Pattern': label, 'Count': kk, 'Denominator': nn, 'Fraction': f"{kk}/{nn}",
                          'Relative_Frequency': ff, 'Supporting_Trajectories': ', '.join(sup)})
     standard_df = pd.DataFrame(standard)
+
+    # Pattern-frequency chart: the entered pattern next to the standard patterns, same denominator
+    chart_df = standard_df[['Pattern', 'Count', 'Denominator', 'Fraction', 'Relative_Frequency']].copy()
+    if pattern:
+        chart_df = pd.concat([pd.DataFrame([{
+            'Pattern': f"Entered: {' '.join(pattern)} ({'ordered' if ordered else 'order ignored'})",
+            'Count': k, 'Denominator': n, 'Fraction': f"{k}/{n}", 'Relative_Frequency': freq}]), chart_df],
+            ignore_index=True)
+    st.markdown("**Pattern frequency chart**")
+    fig_freq = go.Figure(go.Bar(
+        x=chart_df['Relative_Frequency'], y=chart_df['Pattern'], orientation='h',
+        text=[f"{fr} = {v:.3f}" for fr, v in zip(chart_df['Fraction'], chart_df['Relative_Frequency'])],
+        textposition='auto', marker_color='#4C78A8',
+        hovertemplate='%{y}<br>Relative frequency %{x:.3f}<extra></extra>'))
+    fig_freq.update_layout(title=f"Pattern frequency ({settings})", xaxis=dict(title='Relative frequency',
+                           range=[0, 1]), yaxis=dict(autorange='reversed'), height=120 + 60 * len(chart_df),
+                           margin=dict(l=10, r=10, t=60, b=40), title_font_size=12)
+    render_interactive_chart(fig_freq)
+    st.download_button("Download chart data (CSV)", chart_df.to_csv(index=False, float_format='%.17g'),
+                       f"lh_pattern_frequency_{tag}.csv", "text/csv", key="dl_lh_freq_chart")
+
     st.markdown("**Standard patterns**")
     st.dataframe(standard_df, use_container_width=True, hide_index=True,
                  column_config={'Relative_Frequency': st.column_config.NumberColumn('Relative_Frequency',
                                                                                     format="%.3f")})
+
+    # Step-by-step comparison of chosen trajectories
+    st.subheader("Step-by-step L/H comparison")
+    trajectories = list(seqs['Trajectory'])
+    chosen = st.multiselect("Trajectories to compare", trajectories, default=trajectories[:2], key="seq_step_compare")
+    if chosen:
+        sel = steps.assign(Trajectory=steps['Configuration'] + '_obj' + steps['Object'].astype(str))
+        sel = sel[sel['Trajectory'].isin(chosen)]
+        fig_cmp = go.Figure()
+        for tid in chosen:
+            g = sel[sel['Trajectory'] == tid]
+            fig_cmp.add_trace(go.Scatter(
+                x=g['Step'], y=g['Distance_m'], mode='lines+markers+text', name=f"{tid}: {seq_map.get(tid, '')}",
+                text=g['Token'], textposition='top center', marker=dict(size=9),
+                hovertemplate=tid + '<br>Step %{x}<br>%{y:.6f} m → %{text}<extra></extra>'))
+        fig_cmp.add_hline(y=threshold, line_dash='dash', line_color='grey',
+                          annotation_text=f"threshold {threshold:g} m (at or above: H)")
+        fig_cmp.update_layout(title=f"Step distances and tokens ({settings})", xaxis=dict(title='Step', dtick=1),
+                              yaxis_title='Step distance (m)', height=450, title_font_size=12)
+        render_interactive_chart(fig_cmp)
+        compare = sel.pivot_table(index='Trajectory', columns='Step', values='Token', aggfunc='first').reindex(chosen)
+        compare.columns = [f"Step {c}" for c in compare.columns]
+        compare.insert(0, 'Sequence', [seq_map.get(t, '') for t in compare.index])
+        st.dataframe(compare, use_container_width=True)
+        st.caption("Tokens per step before any run-length compression; the Sequence column follows the "
+                   "compression setting.")
+        st.download_button("Download comparison (CSV)",
+                           sel.to_csv(index=False, float_format='%.17g'),
+                           f"lh_step_comparison_{tag}.csv", "text/csv", key="dl_lh_compare")
 
     results = seqs[['Configuration', 'Object', 'Trajectory', 'Sequence']].copy()
     results['Pattern'] = ' '.join(pattern)
@@ -3402,136 +3452,60 @@ def main():
             Finer grids capture more spatial detail, while coarser grids provide a more abstract representation.
             """)
         
-        # Get available configurations and objects
-        config_sources = df['config_source'].drop_duplicates().tolist()
-        objects = sorted(df['obj'].unique())
-        
-        # Time range
-        min_time = df['tst'].min()
-        max_time = df['tst'].max()
-        
+        selected_configs = st.session_state.shared_selected_configs
+        selected_objects = st.session_state.shared_selected_objects
+
         st.markdown("---")
         st.subheader("Sequence Configuration")
-        
-        col1, col2, col3 = st.columns(3)
-        
+
+        window = sequence_analysis.time_window_inputs(st, df, "seq_start", "seq_end")
+        if window is None:
+            st.stop()
+        start_time, end_time = window
+        seq_positions = sequence_analysis.select_window(df, selected_configs, selected_objects, start_time, end_time)
+        st.caption(sequence_analysis.time_window_text(start_time, end_time, seq_positions))
+        if seq_positions.empty:
+            st.warning("No positions for the selected configurations and objects in this time window.")
+            st.stop()
+
+        col1, col2 = st.columns(2)
+
         with col1:
             st.write("**Grid Resolution**")
-            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows", 
-                                 help="Rows for the court area (buffer zones added automatically)")
+            sports_grid = st.session_state.court_type in sequence_analysis.SPORTS_COURTS
+            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows",
+                                 help="Rows for the court area (buffer zones added automatically)" if sports_grid
+                                 else "Rows over the grid bounds")
             grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols",
-                                 help="Columns for the court area (buffer zones added automatically)")
-            
-            # Calculate actual grid with buffers
-            actual_rows = grid_rows + 2  # +1 top buffer, +1 bottom buffer
-            actual_cols = grid_cols + 2  # +1 left buffer, +1 right buffer
-            total_zones = actual_rows * actual_cols
-            
-            st.caption(f"Court zones: {grid_rows} × {grid_cols} = {grid_rows * grid_cols}")
-            st.caption(f"Total zones (with buffer): {actual_rows} × {actual_cols} = {total_zones}")
-        
+                                 help="Columns for the court area (buffer zones added automatically)" if sports_grid
+                                 else "Columns over the grid bounds")
+            grid_info, _ = sequence_analysis.zone_grid_controls(st, st.session_state.court_type, seq_positions,
+                                                               "seq", grid_rows, grid_cols)
+            if grid_info is None:
+                st.stop()
+
         # Spatial Grid Visualization - show immediately so users can see the effect of their grid choices
         st.markdown("---")
         st.subheader("Spatial Grid Visualisation")
-        
+        st.caption(sequence_analysis.grid_description(grid_info))
+        n_outside = sequence_analysis.outside_grid_count(seq_positions, grid_info)
+        if n_outside:
+            st.warning(f"{n_outside} of {len(seq_positions)} positions lie outside the explicit bounds and get no zone.")
+
         st.info("""
         **Understanding the Grid:**
-        - The **tennis field in the broad sense** (light grey zones) extends beyond the court boundaries to capture out-of-bounds positions
-        - All zones are labeled **A, B, C,** etc. (row by row from bottom to top, filling each row left to right)
+        - With a court or pitch selected, light grey buffer zones extend beyond its boundaries to capture out-of-bounds positions
+        - Without one, the zones cover the data extent (or the explicit bounds) of the selected positions
+        - All zones are labelled **A1, B1, ...** (row by row from bottom to top, filling each row left to right)
         - Each trajectory position is mapped to the zone it falls in
-        - Adjust the grid resolution sliders above to see how it affects the zone layout
         """)
-        
-        # Create grid info for visualization
-        grid_info = sequence_analysis.create_spatial_grid(
-            st.session_state.court_type,
-            grid_rows,
-            grid_cols
-        )
-        
-        # Show grid overlay on court
-        fig_grid = create_pitch_figure(st.session_state.court_type)
-        
-        # Draw grid lines
-        x_bins = grid_info['x_bins']
-        y_bins = grid_info['y_bins']
-        court_width = grid_info['court_width']
-        court_height = grid_info['court_height']
-        buffer = grid_info['buffer']
-        
-        # Add buffer zone background (light gray)
-        fig_grid.add_shape(
-            type="rect",
-            x0=-buffer, y0=-buffer,
-            x1=court_width + buffer, y1=court_height + buffer,
-            fillcolor='rgba(200, 200, 200, 0.3)',
-            line=dict(color='rgba(150, 150, 150, 0.5)', width=2),
-            layer="below"
-        )
-        
-        # Add grid lines on top of court (using shapes for better visibility)
-        # Vertical lines
-        for x in x_bins:
-            fig_grid.add_shape(
-                type="line",
-                x0=x, y0=y_bins[0],
-                x1=x, y1=y_bins[-1],
-                line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
-                layer="above"
-            )
-        
-        # Horizontal lines
-        for y in y_bins:
-            fig_grid.add_shape(
-                type="line",
-                x0=x_bins[0], y0=y,
-                x1=x_bins[-1], y1=y,
-                line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
-                layer="above"
-            )
-        
-        # Add zone labels with background
-        actual_rows_viz = grid_info['grid_rows']
-        actual_cols_viz = grid_info['grid_cols']
-        
-        for row in range(actual_rows_viz):
-            for col in range(actual_cols_viz):
-                zone_idx = row * actual_cols_viz + col
-                zone_label = grid_info['zone_labels'][zone_idx]
-                
-                x_center = (x_bins[col] + x_bins[col + 1]) / 2
-                y_center = (y_bins[row] + y_bins[row + 1]) / 2
-                
-                # Determine if this is a buffer zone or court zone
-                is_buffer = (col == 0 or col == actual_cols_viz - 1 or 
-                           row == 0 or row == actual_rows_viz - 1)
-                
-                # Add zone label with uniform styling (no distinction between buffer and court)
-                # All zones get the same appearance
-                bgcolor = 'rgba(0, 0, 0, 0.7)'
-                bordercolor = 'black'
-                font_size = 18
-                
-                fig_grid.add_annotation(
-                    x=x_center,
-                    y=y_center,
-                    text=f"<b>{zone_label}</b>",
-                    showarrow=False,
-                    font=dict(size=font_size, color='white', family='Arial Black'),
-                    bgcolor=bgcolor,
-                    bordercolor=bordercolor,
-                    borderwidth=2,
-                    borderpad=6
-                )
-        
-        fig_grid.update_layout(
-            height=700,
-            xaxis=dict(range=[x_bins[0] - 0.5, x_bins[-1] + 0.5]),
-            yaxis=dict(range=[y_bins[0] - 0.5, y_bins[-1] + 0.5])
-        )
-        
+
+        fig_grid = sequence_analysis.draw_zone_grid(create_pitch_figure(st.session_state.court_type), grid_info)
+        fig_grid.add_trace(go.Scatter(x=seq_positions['x'], y=seq_positions['y'], mode='markers', name='Positions',
+                                      marker=dict(size=5, color='rgba(30, 30, 30, 0.6)'), hoverinfo='skip'))
+        fig_grid.update_layout(height=700)
         render_interactive_chart(fig_grid)
-        
+
         with col2:
             st.write("**Compression**")
             compress_runs = st.checkbox(
@@ -3568,50 +3542,14 @@ def main():
                 **Tip**: Start with Per-entity for individual analyses, use Multi-entity to discover interactions.
                 """)
         
-        # Use selections from sidebar
-        selected_configs = st.session_state.shared_selected_configs
-        selected_objects = st.session_state.shared_selected_objects
-        
         st.markdown("---")
-        
-        init_time_range("seq_start", "seq_end", min_time, max_time)
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            start_time = st.number_input(
-                "Start time",
-                min_value=float(min_time),
-                max_value=float(max_time),
-                step=0.01,
-                format="%.2f",
-                key="seq_start"
-            )
-        
-        with col4:
-            end_time = st.number_input(
-                "End time",
-                min_value=float(min_time),
-                max_value=float(max_time),
-                step=0.01,
-                format="%.2f",
-                key="seq_end"
-            )
-        if not time_range_valid(start_time, end_time):
-            st.stop()
-        
+
         if not selected_configs:
             st.warning("Please select at least one configuration.")
         elif not selected_objects:
             st.warning("Please select at least one object.")
         else:
-            # Create grid
-            grid_info = sequence_analysis.create_spatial_grid(
-                court_type=st.session_state.court_type,
-                grid_rows=grid_rows,
-                grid_cols=grid_cols
-            )
-            
-            # Build sequences
+            # Build sequences (grid and time window as shown above)
             st.markdown("---")
             st.subheader("Generated Sequences")
             
@@ -3673,7 +3611,7 @@ def main():
                 
                 # Trajectory Visualization on Tennis Court
                 st.markdown("---")
-                st.subheader("Trajectory Visualisation on Tennis Court")
+                st.subheader("Trajectory Visualisation on the Zone Grid")
                 st.markdown("See the actual movement patterns of the trajectories used to generate sequences")
                 
                 # Let user select which trajectories to visualize
@@ -3764,8 +3702,9 @@ def main():
                 
                 # Plot trajectories on tennis court
                 if trajectories_to_plot:
-                    fig_court = create_pitch_figure(st.session_state.court_type)
-                    
+                    fig_court = sequence_analysis.draw_zone_grid(create_pitch_figure(st.session_state.court_type),
+                                                                 grid_info)
+
                     # Add each trajectory
                     for traj_data, color, label in zip(trajectories_to_plot, colors_list, labels_list):
                         # Add trajectory line
@@ -3804,7 +3743,7 @@ def main():
                         ))
                     
                     fig_court.update_layout(
-                        title=f"Trajectories on Tennis Court (Sequence Analysis)",
+                        title="Trajectories on the zone grid (Sequence Analysis)",
                         height=600,
                         showlegend=True,
                         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)

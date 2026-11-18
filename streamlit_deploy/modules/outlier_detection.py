@@ -38,6 +38,9 @@ from .common import PLOTLY_CONFIG, render_interactive_chart
 # FEATURE EXTRACTION
 # =============================================================================
 
+from .clustering import extract_trajectory_features as clustering_features
+
+
 def extract_trajectory_features(df, config, obj_id):
     """
     Extract statistical features from a single trajectory for outlier detection.
@@ -100,7 +103,8 @@ def extract_trajectory_features(df, config, obj_id):
         'y_std': y_coords.std(),
         
         # Velocity statistics
-        'avg_speed': np.mean(velocities) if len(velocities) > 0 else 0,
+        # Same definition as Clustering and Association Rules: total distance / duration (m per tst unit)
+        'avg_speed': clustering_features(traj)['avg_speed'],
         'max_speed': np.max(velocities) if len(velocities) > 0 else 0,
         'std_speed': np.std(velocities) if len(velocities) > 0 else 0,
         
@@ -227,6 +231,38 @@ def iqr_bounds(features_df, feature_cols, multiplier=1.5):
                      'Below_Lower': ', '.join(ids[low]), 'Above_Upper': ', '.join(ids[high]),
                      'Flagged_Count': int((low | high).sum())})
     return pd.DataFrame(rows).set_index('Feature')
+
+
+def iqr_summary(bounds, n_trajectories):
+    """Feature, multiplier, fences and flagged IDs in one row per feature; zero flags are stated, not left blank."""
+    rows = []
+    for feat, b in bounds.iterrows():
+        flagged = [s for s in (b['Below_Lower'], b['Above_Upper']) if s]
+        rows.append({'Feature': feat, 'Multiplier': f"{b['Factor']:g} × IQR",
+                     'Lower fence': f"{b['Lower_Bound']:.6f}", 'Upper fence': f"{b['Upper_Bound']:.6f}",
+                     'Flagged': f"{int(b['Flagged_Count'])} of {n_trajectories}",
+                     'Flagged IDs': ', '.join(flagged) if flagged else 'none (zero flags)'})
+    return pd.DataFrame(rows)
+
+
+def plot_iqr_fences(features_df, feature, b):
+    """
+    Standard box plot (whiskers by the 1.5 × IQR rule, labelled as such) with the active fences of this run
+    drawn as separate dashed lines, so a multiplier other than 1.5 is never confused with the whiskers.
+    """
+    labels = (features_df.apply(trajectory_label, axis=1)
+              if {'config', 'object'} <= set(features_df.columns) else features_df.index.astype(str))
+    fig = go.Figure(go.Box(y=features_df[feature], name='Standard box plot (whiskers: 1.5 × IQR rule)',
+                           boxpoints='all', jitter=0.35, pointpos=-1.7, text=list(labels),
+                           hovertemplate='%{text}<br>%{y:.6f}<extra></extra>'))
+    k = b['Factor']
+    for name, y in (('Lower', b['Lower_Bound']), ('Upper', b['Upper_Bound'])):
+        fig.add_hline(y=y, line_dash='dash', line_color='firebrick',
+                      annotation_text=f"Active {name.lower()} fence ({k:g} × IQR): {y:.6f}",
+                      annotation_position='top right' if name == 'Upper' else 'bottom right')
+    fig.update_layout(title=f"{feature}: active fences at {k:g} × IQR (dashed); box plot whiskers use 1.5 × IQR",
+                      yaxis_title=feature, height=450, showlegend=True, title_font_size=13)
+    return fig
 
 
 def trajectory_label(row):
@@ -701,15 +737,16 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     - **Density-Based**: Based on local density differences
     """)
     
-    # Filter data
-    filtered_df = data[
-        (data['config_source'].isin(selected_configs)) &
-        (data['obj'].isin(selected_objects))
-    ]
-    
-    if filtered_df.empty:
-        st.warning("No data available for the selected configurations and objects.")
+    from .sequence_analysis import time_window_inputs, select_window, time_window_text
+    window = time_window_inputs(st, data, "od_start", "od_end")
+    if window is None:
         return
+    filtered_df = select_window(data, selected_configs, selected_objects, *window)
+
+    if filtered_df.empty:
+        st.warning("No data available for the selected configurations and objects in this time window.")
+        return
+    st.caption(time_window_text(*window, filtered_df))
     
     # Extract features for all trajectories
     st.subheader("1️⃣ Feature Extraction")
@@ -843,6 +880,17 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         - Points outside these bounds are outliers
         """)
         bounds = iqr_bounds(features_df, selected_features, multiplier)
+        n_traj = len(features_df)
+        st.markdown(f"**IQR result** (multiplier {multiplier:g} × IQR, {n_traj} trajectories)")
+        st.dataframe(iqr_summary(bounds, n_traj), use_container_width=True, hide_index=True)
+        flagged_any = result_df['is_outlier_iqr'].sum()
+        if flagged_any == 0:
+            st.success(f"Result: no trajectory flagged. All {n_traj} values lie within the fences "
+                       f"Q1 − {multiplier:g} × IQR and Q3 + {multiplier:g} × IQR for "
+                       f"{', '.join(selected_features)}.")
+        if st.checkbox("Plot this statistical run (box plot with the active fences)", value=True, key="od_iqr_plot"):
+            for feat in selected_features:
+                render_interactive_chart(st, plot_iqr_fences(features_df, feat, bounds.loc[feat]))
         st.markdown(f"**IQR bounds** (factor {multiplier:g}; features: {', '.join(selected_features)})")
         st.dataframe(bounds, use_container_width=True,
                      column_config={c: st.column_config.NumberColumn(c, format="%.6f")
@@ -946,7 +994,9 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     col2.metric("Outliers Detected", n_outliers)
     col3.metric("Outlier Percentage", f"{outlier_pct:.1f}%")
     
-    # Outlier list
+    # Outlier list; zero flags are a result in their own right
+    if n_outliers == 0:
+        st.info(f"No trajectories flagged: 0 of {n_total} with these settings ({method}).")
     if n_outliers > 0:
         st.subheader("Detected Outliers")
         outliers_df = result_df[result_df[outlier_col]][['trajectory_id', score_col] + selected_features]

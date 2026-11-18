@@ -69,77 +69,133 @@ def prepare_spatial_transactions(trajectories_dict, get_zone_func):
     return transactions, item_names, trajectory_mapping
 
 
+# ---------------------------------------------------------------------------- features for Feature Bins
+# Names, formulas and units shared with Clustering (clustering.extract_trajectory_features); x_range and y_range
+# are kept from the original Association Rules feature set.
+AR_FEATURE_DEFINITIONS = {
+    'total_distance': ('Total Distance', 'm', 'Sum of the Euclidean distances between consecutive positions'),
+    'duration': ('Duration', 'tst units', 'Last tst minus first tst'),
+    'avg_speed': ('Average Speed', 'm per tst unit', 'Total distance / duration'),
+    'net_displacement': ('Net Displacement', 'm', 'Straight-line distance from first to last position'),
+    'sinuosity': ('Sinuosity (Path Efficiency)', 'ratio', 'Total distance / net displacement (1 when net '
+                                                           'displacement is 0)'),
+    'bbox_area': ('Bounding Box Area', 'm²', 'x range × y range'),
+    'avg_direction': ('Average Direction', 'rad', 'Mean of the step headings atan2(dy, dx)'),
+    'max_speed': ('Maximum Speed', 'm per tst unit', 'Highest segment speed (distance / elapsed tst)'),
+    'min_speed': ('Minimum Speed', 'm per tst unit', 'Lowest segment speed (distance / elapsed tst)'),
+    'x_range': ('x Range', 'm', 'Maximum x minus minimum x'),
+    'y_range': ('y Range', 'm', 'Maximum y minus minimum y'),
+}
+AR_FEATURES = list(AR_FEATURE_DEFINITIONS)
+AR_DEFAULT_FEATURES = ['total_distance', 'duration', 'avg_speed', 'x_range', 'y_range']
+
+
+def feature_label(name):
+    label, unit, _ = AR_FEATURE_DEFINITIONS.get(name, (name, '', ''))
+    return f"{label} ({unit})" if unit else label
+
+
+def feature_definitions_table(features=AR_FEATURES):
+    return pd.DataFrame([{'Feature': f, 'Name': AR_FEATURE_DEFINITIONS[f][0], 'Unit': AR_FEATURE_DEFINITIONS[f][1],
+                          'Formula': AR_FEATURE_DEFINITIONS[f][2]} for f in features])
+
+
+def association_features(traj_df):
+    """Clustering features of one trajectory (same function, same values) plus x_range and y_range."""
+    from .clustering import extract_trajectory_features
+    feats = extract_trajectory_features(traj_df)
+    feats['x_range'] = float(traj_df['x'].max() - traj_df['x'].min())
+    feats['y_range'] = float(traj_df['y'].max() - traj_df['y'].min())
+    return feats
+
+
+def bin_labels_for(n_bins):
+    return ['low', 'medium', 'high'] if n_bins == 3 else [f'bin{i+1}' for i in range(n_bins)]
+
+
+def feature_bin_edges(values, n_bins):
+    """n_bins equal-width bins between minimum and maximum: n_bins + 1 edges, or None for a constant feature."""
+    v = pd.Series(values).dropna()
+    if v.empty or not v.max() > v.min():
+        return None
+    lo, hi = float(v.min()), float(v.max())
+    width = (hi - lo) / n_bins
+    return [lo + i * width for i in range(n_bins)] + [hi]
+
+
+def constant_features(features_df):
+    """Numeric feature columns with a single value (or none): they cannot be binned and produce no items."""
+    cols = [c for c in features_df.select_dtypes(include=[np.number]).columns if c not in ('config', 'object', 'rally_id')]
+    return [c for c in cols if feature_bin_edges(features_df[c], 2) is None]
+
+
+def feature_items(features_df, n_bins=3):
+    """
+    Items per row (aligned with features_df rows, possibly empty) and the bin table.
+    A value v is in bin i when edge_i <= v < edge_(i+1); the last bin also contains the maximum.
+    """
+    numeric_cols = features_df.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [col for col in numeric_cols if col not in ('config', 'object', 'rally_id')]
+    labels = bin_labels_for(n_bins)
+    bin_info, edges = {}, {}
+    for col in feature_cols:
+        e = feature_bin_edges(features_df[col], n_bins)
+        if e is not None:
+            edges[col] = e
+            bin_info[col] = {labels[i]: (e[i], e[i + 1]) for i in range(n_bins)}
+    rows = []
+    for _, row in features_df.iterrows():
+        items = []
+        for col, e in edges.items():
+            value = row[col]
+            if pd.notna(value):
+                idx = min(int(np.searchsorted(e[1:-1], value, side='right')), n_bins - 1)
+                items.append(f"{col}_{labels[idx]}")
+        rows.append(items)
+    return rows, bin_info
+
+
 def prepare_feature_transactions(features_df, n_bins=3):
     """
     Convert feature data into transactions based on binned feature values.
-    
-    Args:
-        features_df: DataFrame with trajectory features
-        n_bins: Number of bins for each feature
-        
-    Returns:
-        transactions: List of lists
-        item_names: Sorted list of unique items
-        bin_info: Dictionary with bin ranges for each feature
+    Returns transactions (rows without any item are left out), sorted item names and the bin ranges per feature.
     """
-    transactions = []
-    bin_info = {}  # Store bin ranges for display
-    numeric_cols = features_df.select_dtypes(include=[np.number]).columns.tolist()
-    exclude_cols = ['config', 'object', 'rally_id']
-    feature_cols = [col for col in numeric_cols if col not in exclude_cols]
-    
-    # Calculate bin ranges for each feature
-    bin_labels = ['low', 'medium', 'high'] if n_bins == 3 else [f'bin{i+1}' for i in range(n_bins)]
-    for col in feature_cols:
-        col_min = features_df[col].min()
-        col_max = features_df[col].max()
-        if col_max > col_min:
-            bin_width = (col_max - col_min) / n_bins
-            bin_info[col] = {}
-            for i in range(n_bins):
-                bin_start = col_min + i * bin_width
-                bin_end = col_min + (i + 1) * bin_width
-                bin_info[col][bin_labels[i]] = (bin_start, bin_end)
-    
-    for idx, row in features_df.iterrows():
-        transaction = []
-        for col in feature_cols:
-            value = row[col]
-            if pd.notna(value):
-                col_min = features_df[col].min()
-                col_max = features_df[col].max()
-                
-                if col_max > col_min:
-                    bin_width = (col_max - col_min) / n_bins
-                    bin_idx = min(int((value - col_min) / bin_width), n_bins - 1)
-                    item = f"{col}_{bin_labels[bin_idx]}"
-                    transaction.append(item)
-        
-        if transaction:
-            transactions.append(transaction)
-    
-    all_items = set()
-    for transaction in transactions:
-        all_items.update(transaction)
-    item_names = sorted(list(all_items))
-    
+    rows, bin_info = feature_items(features_df, n_bins)
+    transactions = [r for r in rows if r]
+    item_names = sorted({i for t in transactions for i in t})
     return transactions, item_names, bin_info
 
 
-def prepare_combined_transactions(spatial_trans, spatial_items, feature_trans, feature_items):
-    """Combine spatial and feature transactions."""
-    min_len = min(len(spatial_trans), len(feature_trans))
-    transactions = []
-    
-    for i in range(min_len):
-        spatial_prefixed = [f"zone_{item}" for item in spatial_trans[i]]
-        combined = spatial_prefixed + feature_trans[i]
-        transactions.append(combined)
-    
-    spatial_items_prefixed = [f"zone_{item}" for item in spatial_items]
-    item_names = sorted(list(set(spatial_items_prefixed + feature_items)))
-    
-    return transactions, item_names
+def bin_table(bin_info, n_bins):
+    """One row per feature bin with the exact boundaries and the interval convention."""
+    rows = []
+    for feature, bins in bin_info.items():
+        for i, (label, (lo, hi)) in enumerate(bins.items()):
+            last = i == len(bins) - 1
+            rows.append({'Feature': feature, 'Unit': AR_FEATURE_DEFINITIONS.get(feature, ('', '', ''))[1],
+                         'Bin': label, 'Item': f"{feature}_{label}", 'Lower': lo, 'Upper': hi,
+                         'Interval': f"[{lo!r}, {hi!r}" + (']' if last else ')')})
+    return pd.DataFrame(rows, columns=['Feature', 'Unit', 'Bin', 'Item', 'Lower', 'Upper', 'Interval'])
+
+
+def combine_transactions(spatial_by_id, feature_by_id):
+    """Combined transactions matched by trajectory ID (never by list position). Zone items get a 'zone_' prefix."""
+    ids = [t for t in spatial_by_id if t in feature_by_id]
+    transactions, mapping = [], []
+    for t in ids:
+        items = [f"zone_{z}" for z in spatial_by_id[t]] + list(feature_by_id[t])
+        if items:
+            transactions.append(items)
+            mapping.append(t)
+    return transactions, sorted({i for tr in transactions for i in tr}), mapping
+
+
+def prepare_combined_transactions(spatial_trans, spatial_items, feature_trans, feature_items_list):
+    """Combine spatial and feature transactions given in the same trajectory order (kept for compatibility)."""
+    if len(spatial_trans) != len(feature_trans):
+        raise ValueError("Spatial and feature transactions must describe the same trajectories in the same order.")
+    tx, items, _ = combine_transactions(dict(enumerate(spatial_trans)), dict(enumerate(feature_trans)))
+    return tx, items
 
 
 # ============================================================================
@@ -227,16 +283,57 @@ def filter_rules(rules, text='', antecedent_items=(), consequent_items=()):
     return rules[keep]
 
 
-def mining_signature(data, configs, objects, transaction_type, grid, n_bins, min_support, min_confidence):
+def split_feature_item(item, features):
+    """'total_distance_high' -> ('total_distance', 'high'); zone items and unknown items -> None."""
+    for f in sorted(features, key=len, reverse=True):
+        if item.startswith(f + '_'):
+            return f, item[len(f) + 1:]
+    return None
+
+
+def filter_feature_bins(rules, features=(), bins=()):
+    """
+    Rules containing at least one feature/bin item that matches: feature among `features` (any when empty) and
+    bin among `bins` (any when empty). With both empty, all rules are kept.
+    """
+    if not features and not bins:
+        return rules
+    known = list(AR_FEATURE_DEFINITIONS)
+
+    def hit(row):
+        for item in set(row['antecedents']) | set(row['consequents']):
+            fb = split_feature_item(item[5:] if item.startswith('zone_') else item, known)
+            if fb and (not features or fb[0] in features) and (not bins or fb[1] in bins):
+                return True
+        return False
+    return rules[rules.apply(hit, axis=1)] if len(rules) else rules
+
+
+SIGNATURE_NAMES = ['dataset content', 'configurations', 'objects', 'time window', 'analysis type', 'zone grid',
+                   'number of bins', 'mining features', 'minimum support', 'minimum confidence']
+
+
+def mining_signature(data, configs, objects, transaction_type, grid, n_bins, min_support, min_confidence,
+                     window=None, features=None):
     """Everything that determines a mining result; results are shown only while this is unchanged."""
     from .clustering import data_fingerprint
     return (data_fingerprint(data), tuple(sorted(map(str, configs))), tuple(sorted(map(str, objects))),
-            transaction_type, grid, n_bins, float(min_support), float(min_confidence))
+            tuple(window) if window else None, transaction_type, grid, n_bins,
+            tuple(features) if features is not None else None, float(min_support), float(min_confidence))
+
+
+def settings_table(signature, extra=()):
+    """Mining selections as Setting/Value rows (for the settings export)."""
+    rows = [{'Setting': n, 'Value': '' if v is None else (', '.join(map(str, v)) if isinstance(v, tuple) else str(v))}
+            for n, v in zip(SIGNATURE_NAMES, signature)]
+    rows += [{'Setting': k, 'Value': str(v)} for k, v in extra]
+    return pd.DataFrame(rows)
 
 
 AR_RESULT_KEYS = ['ar_rules', 'ar_frequent_itemsets', 'ar_transactions', 'ar_item_names', 'ar_trajectory_mapping',
                   'ar_trajectories_dict', 'ar_bin_info', 'ar_grid_info', 'ar_cooccurrence_matrix',
-                  'ar_distance_matrix', 'ar_signature']
+                  'ar_distance_matrix', 'ar_signature', 'ar_constant_features', 'ar_features_df',
+                  'ar_n_trajectories']
 
 
 # ============================================================================
@@ -504,112 +601,13 @@ def plot_court_with_grid_and_trajectories(trajectories_dict, supporting_traj_ids
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
     
-    # Import the court creation function
     from streamlit_visualization import create_pitch_figure
-    
-    # Create base tennis court figure (same as Sequence Analysis)
-    fig = create_pitch_figure(court_type)
-    
-    # Get grid information
-    x_bins = grid_info['x_bins']
-    y_bins = grid_info['y_bins']
-    court_width = grid_info['court_width']
-    court_height = grid_info['court_height']
-    buffer = grid_info['buffer']
-    actual_rows = grid_info['grid_rows']
-    actual_cols = grid_info['grid_cols']
-    zone_labels = grid_info['zone_labels']
-    
-    # Add buffer zone background (light gray)
-    fig.add_shape(
-        type="rect",
-        x0=-buffer, y0=-buffer,
-        x1=court_width + buffer, y1=court_height + buffer,
-        fillcolor='rgba(200, 200, 200, 0.3)',
-        line=dict(color='rgba(150, 150, 150, 0.5)', width=2),
-        layer="below"
-    )
-    
-    # Add grid lines (vertical)
-    for x in x_bins:
-        fig.add_shape(
-            type="line",
-            x0=x, y0=y_bins[0],
-            x1=x, y1=y_bins[-1],
-            line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
-            layer="above"
-        )
-    
-    # Add grid lines (horizontal)
-    for y in y_bins:
-        fig.add_shape(
-            type="line",
-            x0=x_bins[0], y0=y,
-            x1=x_bins[-1], y1=y,
-            line=dict(color='rgba(255, 0, 0, 0.6)', width=3, dash='dash'),
-            layer="above"
-        )
-    
-    # Add zone labels and highlight zones involved in the rule
-    for row in range(actual_rows):
-        for col in range(actual_cols):
-            zone_idx = row * actual_cols + col
-            zone_label = zone_labels[zone_idx]
-            
-            x_center = (x_bins[col] + x_bins[col + 1]) / 2
-            y_center = (y_bins[row] + y_bins[row + 1]) / 2
-            
-            # Determine if this is a buffer zone or court zone
-            is_buffer = (col == 0 or col == actual_cols - 1 or 
-                       row == 0 or row == actual_rows - 1)
-            
-            # Check if zone is part of the rule
-            is_antecedent = zone_label in antecedents
-            is_consequent = zone_label in consequents
-            
-            # Highlight zones involved in the rule
-            if is_antecedent or is_consequent:
-                # Add colored rectangle for rule zones
-                highlight_color = 'rgba(255, 0, 0, 0.4)' if is_antecedent else 'rgba(0, 0, 255, 0.4)'
-                fig.add_shape(
-                    type="rect",
-                    x0=x_bins[col], y0=y_bins[row],
-                    x1=x_bins[col + 1], y1=y_bins[row + 1],
-                    fillcolor=highlight_color,
-                    line=dict(color='red' if is_antecedent else 'blue', width=4),
-                    layer="above"
-                )
-            
-            # Add zone label with appropriate styling
-            if is_antecedent:
-                # Antecedent zones - red background (only in analysis context)
-                bgcolor = 'rgba(200, 0, 0, 0.9)'
-                bordercolor = 'darkred'
-                font_size = 22
-            elif is_consequent:
-                # Consequent zones - blue background (only in analysis context)
-                bgcolor = 'rgba(0, 0, 200, 0.9)'
-                bordercolor = 'darkblue'
-                font_size = 22
-            else:
-                # All other zones - uniform black (no distinction between buffer and court)
-                # Only use colors when analyzing specific rules
-                bgcolor = 'rgba(0, 0, 0, 0.7)'
-                bordercolor = 'black'
-                font_size = 18
-            
-            fig.add_annotation(
-                x=x_center,
-                y=y_center,
-                text=f"<b>{zone_label}</b>",
-                showarrow=False,
-                font=dict(size=font_size, color='white', family='Arial Black'),
-                bgcolor=bgcolor,
-                bordercolor=bordercolor,
-                borderwidth=2,
-                borderpad=6
-            )
-    
+
+    # Court or pitch only when that court type is selected; zone items in Combined rules carry a 'zone_' prefix
+    strip = lambda items: {i[5:] if i.startswith('zone_') else i for i in items}
+    fig = sequence_analysis.draw_zone_grid(create_pitch_figure(court_type), grid_info,
+                                           strip(antecedents), strip(consequents))
+
     # Plot supporting trajectories
     if supporting_traj_ids:
         colors = px.colors.qualitative.Set1
@@ -653,13 +651,7 @@ def plot_court_with_grid_and_trajectories(trajectories_dict, supporting_traj_ids
                     hovertemplate='<b>%{hovertext}</b><extra></extra>'
                 ))
     
-    # Update layout (same as Sequence Analysis)
-    fig.update_layout(
-        height=700,
-        xaxis=dict(range=[x_bins[0] - 0.5, x_bins[-1] + 0.5]),
-        yaxis=dict(range=[y_bins[0] - 0.5, y_bins[-1] + 0.5])
-    )
-    
+    fig.update_layout(height=700)
     return fig
 
 
@@ -726,16 +718,17 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
         st.warning("Please select at least one configuration and one object from the sidebar.")
         return
     
-    filtered_df = data[
-        (data['config_source'].isin(selected_configs)) &
-        (data['obj'].isin(selected_objects))
-    ]
-    
-    if len(filtered_df) == 0:
-        st.error("No data available for selected configurations and objects.")
+    window = sequence_analysis.time_window_inputs(st, data, "ar_start", "ar_end")
+    if window is None:
         return
-    
-    st.success(f"Loaded {len(filtered_df)} trajectories")
+    filtered_df = sequence_analysis.select_window(data, selected_configs, selected_objects, *window)
+
+    if len(filtered_df) == 0:
+        st.error("No data available for the selected configurations and objects in this time window.")
+        return
+
+    # Trajectories are configuration-object pairs; rows are sampled positions
+    st.success(sequence_analysis.time_window_text(*window, filtered_df))
     
     # Configuration Panel
     st.subheader("Transaction Configuration")
@@ -784,23 +777,65 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             **Best for:** Comprehensive analysis
             """)
     
+    spatial = transaction_type in ["Spatial Zones", "Combined (Spatial + Features)"]
+    binned = transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]
+    court_type = st.session_state.get('court_type', 'No selection')
+    grid_info = grid_settings = n_bins = mining_features = None
+
     with col2:
-        if transaction_type in ["Spatial Zones", "Combined (Spatial + Features)"]:
+        if spatial:
             st.markdown("**Spatial Grid Settings:**")
-            st.caption("Divide the court into zones")
             grid_rows = st.slider("Grid Rows", 2, 6, 3, key="ar_grid_rows",
                                  help="Number of horizontal divisions")
             grid_cols = st.slider("Grid Columns", 2, 8, 5, key="ar_grid_cols",
                                  help="Number of vertical divisions")
-            st.caption(f"Court divided into {grid_rows} × {grid_cols} = {grid_rows * grid_cols} zones")
-        
-        if transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]:
+            grid_info, grid_settings = sequence_analysis.zone_grid_controls(st, court_type, filtered_df, "ar",
+                                                                            grid_rows, grid_cols)
+            if grid_info is None:
+                return
+            st.caption(sequence_analysis.grid_description(grid_info))
+            n_outside = sequence_analysis.outside_grid_count(filtered_df, grid_info)
+            if n_outside:
+                st.warning(f"{n_outside} of {len(filtered_df)} positions lie outside the explicit bounds and get no zone.")
+
+        if binned:
             st.markdown("**Feature Binning:**")
-            st.caption("Categorise trajectory characteristics")
             n_bins = st.select_slider("Number of Bins", [2, 3, 4, 5], value=3, key="ar_n_bins",
                                       help="How many categories (e.g., low/medium/high)")
-            st.caption(f"Features grouped into {n_bins} categories")
-    
+            st.caption(f"Features grouped into {n_bins} equal-width bins between their minimum and maximum")
+
+    if binned:
+        st.markdown("**Features for mining**")
+        if 'ar_features' not in st.session_state:
+            st.session_state.ar_features = list(AR_DEFAULT_FEATURES)
+        mining_features = st.multiselect(
+            "Features (type to search)", AR_FEATURES, key="ar_features", format_func=feature_label,
+            help="Same names, formulas and units as in Clustering, plus x Range and y Range. Each selected feature "
+                 "becomes one item per trajectory, e.g. total_distance_high.")
+        with st.expander("Feature definitions", expanded=False):
+            st.dataframe(feature_definitions_table(), hide_index=True, use_container_width=True)
+            st.caption("Speeds and durations are in m per tst unit and tst units (m/s only when tst is in seconds).")
+        if not mining_features:
+            st.warning("Select at least one feature.")
+            return
+
+        # Bin boundaries from the current selection, before mining
+        trajectories_now = {f"{c}_obj{o}": g.sort_values('tst', kind='mergesort')
+                            for (c, o), g in filtered_df.groupby(['config_source', 'obj'])}
+        preview = pd.DataFrame([association_features(g) for g in trajectories_now.values()],
+                               index=list(trajectories_now))[mining_features]
+        constant = constant_features(preview)
+        if constant:
+            st.warning("Constant in this selection (one value for every trajectory, so no bins and no items): "
+                       + ", ".join(f"{feature_label(f)} = {preview[f].dropna().iloc[0]:.6g}" if preview[f].notna().any()
+                                   else f"{feature_label(f)} (no values)" for f in constant) + ".")
+        with st.expander("Bin boundaries", expanded=False):
+            bt = bin_table(feature_items(preview, n_bins)[1], n_bins)
+            st.dataframe(bt, hide_index=True, use_container_width=True,
+                         column_config={c: st.column_config.NumberColumn(c, format="%.6f") for c in ('Lower', 'Upper')})
+            st.caption("A value v belongs to a bin when Lower ≤ v < Upper; the highest bin also includes the maximum. "
+                       "The Interval column shows the boundaries at full precision.")
+
     st.markdown("---")
     
     # Threshold Settings
@@ -830,11 +865,10 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     
     st.markdown("---")
 
-    spatial = transaction_type in ["Spatial Zones", "Combined (Spatial + Features)"]
-    binned = transaction_type in ["Feature Bins", "Combined (Spatial + Features)"]
     signature = mining_signature(data, selected_configs, selected_objects, transaction_type,
-                                 (grid_rows, grid_cols) if spatial else None, n_bins if binned else None,
-                                 min_support, min_confidence)
+                                 grid_settings if spatial else None, n_bins if binned else None,
+                                 min_support, min_confidence, window=window,
+                                 features=mining_features if binned else None)
 
     # Mine Rules Button
     if st.button("Mine Association Rules", type="primary"):
@@ -843,102 +877,47 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             st.session_state.pop(key, None)
         with st.spinner("Preparing transactions and mining rules..."):
             try:
-                # Prepare trajectories dictionary
-                trajectories_dict = {}
-                for (config, obj), group in filtered_df.groupby(['config_source', 'obj']):
-                    traj_id = f"{config}_obj{obj}"
-                    trajectories_dict[traj_id] = group.sort_values('tst')
-                
-                # Store trajectories dict in session state for visualization
+                trajectories_dict = {f"{config}_obj{obj}": group.sort_values('tst', kind='mergesort')
+                                     for (config, obj), group in filtered_df.groupby(['config_source', 'obj'])}
                 st.session_state.ar_trajectories_dict = trajectories_dict
-                
-                # Prepare transactions based on type
+
+                zones_by_id, items_by_id = {}, {}
+                if spatial:
+                    st.session_state.ar_grid_info = grid_info
+                    get_zone = grid_info['get_zone']
+                    for tid, g in trajectories_dict.items():
+                        zones_by_id[tid] = sorted({z for z in map(get_zone, g['x'], g['y']) if z})
+                if binned:
+                    features_df = pd.DataFrame([association_features(g) for g in trajectories_dict.values()],
+                                               index=list(trajectories_dict))[mining_features]
+                    rows, bin_info = feature_items(features_df, n_bins)
+                    items_by_id = dict(zip(trajectories_dict, rows))
+                    st.session_state.ar_bin_info = bin_info
+                    st.session_state.ar_constant_features = constant_features(features_df)
+                    st.session_state.ar_features_df = features_df
+
                 if transaction_type == "Spatial Zones":
-                    grid_info = create_spatial_grid_func('Tennis', grid_rows, grid_cols)
-                    st.session_state.ar_grid_info = grid_info  # Store grid info
-                    get_zone = grid_info['get_zone']
-                    transactions, item_names, trajectory_mapping = prepare_spatial_transactions(trajectories_dict, get_zone)
-                    st.session_state.ar_trajectory_mapping = trajectory_mapping
-                
+                    by_id = zones_by_id
                 elif transaction_type == "Feature Bins":
-                    # Extract features
-                    features_list = []
-                    trajectory_mapping = []
-                    for traj_id, traj_data in trajectories_dict.items():
-                        features = {
-                            'total_distance': np.sum(np.sqrt(np.diff(traj_data['x'])**2 + np.diff(traj_data['y'])**2)),
-                            'duration': traj_data['tst'].max() - traj_data['tst'].min(),
-                            'avg_speed': np.mean(np.sqrt(np.diff(traj_data['x'])**2 + np.diff(traj_data['y'])**2) / np.diff(traj_data['tst'])) if len(traj_data) > 1 else 0,
-                            'x_range': traj_data['x'].max() - traj_data['x'].min(),
-                            'y_range': traj_data['y'].max() - traj_data['y'].min(),
-                        }
-                        features_list.append(features)
-                        trajectory_mapping.append(traj_id)
-                    features_df = pd.DataFrame(features_list)
-                    transactions, item_names, bin_info = prepare_feature_transactions(features_df, n_bins)
-                    st.session_state.ar_trajectory_mapping = trajectory_mapping
-                    st.session_state.ar_bin_info = bin_info  # Store bin info for display
-                
-                else:  # Combined
-                    grid_info = create_spatial_grid_func('Tennis', grid_rows, grid_cols)
-                    st.session_state.ar_grid_info = grid_info  # Store grid info
-                    get_zone = grid_info['get_zone']
-                    spatial_trans, spatial_items, trajectory_mapping = prepare_spatial_transactions(trajectories_dict, get_zone)
-                    st.session_state.ar_trajectory_mapping = trajectory_mapping
-                    
-                    features_list = []
-                    for traj_id, traj_data in trajectories_dict.items():
-                        features = {
-                            'total_distance': np.sum(np.sqrt(np.diff(traj_data['x'])**2 + np.diff(traj_data['y'])**2)),
-                            'duration': traj_data['tst'].max() - traj_data['tst'].min(),
-                            'avg_speed': np.mean(np.sqrt(np.diff(traj_data['x'])**2 + np.diff(traj_data['y'])**2) / np.diff(traj_data['tst'])) if len(traj_data) > 1 else 0,
-                            'x_range': traj_data['x'].max() - traj_data['x'].min(),
-                            'y_range': traj_data['y'].max() - traj_data['y'].min(),
-                        }
-                        features_list.append(features)
-                    features_df = pd.DataFrame(features_list)
-                    feature_trans, feature_items, bin_info = prepare_feature_transactions(features_df, n_bins)
-                    st.session_state.ar_bin_info = bin_info  # Store bin info for display
-                    transactions, item_names = prepare_combined_transactions(
-                        spatial_trans, spatial_items, feature_trans, feature_items
-                    )
-                
+                    by_id = items_by_id
+                if transaction_type == "Combined (Spatial + Features)":
+                    transactions, item_names, trajectory_mapping = combine_transactions(zones_by_id, items_by_id)
+                else:
+                    trajectory_mapping = [t for t, items in by_id.items() if items]
+                    transactions = [list(by_id[t]) for t in trajectory_mapping]
+                    item_names = sorted({i for t in transactions for i in t})
+                st.session_state.ar_trajectory_mapping = trajectory_mapping
+                st.session_state.ar_n_trajectories = len(trajectories_dict)
                 st.session_state.ar_transactions = transactions
                 st.session_state.ar_item_names = item_names
-                
+
                 # Show transaction preview
                 st.subheader("Transaction Preview")
-                st.write(f"Total transactions: {len(transactions)}")
-                st.write(f"Unique items: {len(item_names)}")
-                
-                trans_df = pd.DataFrame({
-                    'Transaction': [f"T{i+1}" for i in range(min(10, len(transactions)))],
-                    'Items': [', '.join(trans) for trans in transactions[:10]]
-                })
-                st.dataframe(trans_df, use_container_width=True)
-                
-                # Show bin ranges if feature binning was used
-                if st.session_state.get('ar_bin_info'):
-                    with st.expander("Feature Bin Ranges", expanded=False):
-                        st.markdown("**Value ranges for each feature bin:**")
-                        bin_info = st.session_state.ar_bin_info
-                        
-                        # Create a formatted table showing bin ranges
-                        bin_rows = []
-                        for feature, bins in bin_info.items():
-                            for bin_label, (bin_start, bin_end) in bins.items():
-                                bin_rows.append({
-                                    'Feature': feature,
-                                    'Bin': bin_label,
-                                    'Range': f"[{bin_start:.3f}, {bin_end:.3f})",
-                                    'Item Name': f"{feature}_{bin_label}"
-                                })
-                        
-                        bin_df = pd.DataFrame(bin_rows)
-                        st.dataframe(bin_df, use_container_width=True, hide_index=True)
-                        
-                        st.caption("These ranges show how continuous feature values were categorised into discrete bins for pattern mining")
-                
+                st.write(f"Total transactions: {len(transactions)} · Unique items: {len(item_names)}")
+                st.dataframe(pd.DataFrame({'Trajectory': trajectory_mapping[:10],
+                                           'Items': [', '.join(t) for t in transactions[:10]]}),
+                             use_container_width=True, hide_index=True)
+
                 # Compute association rules
                 st.subheader("Mining Association Rules...")
                 rules_df, frequent_itemsets = compute_association_rules(
@@ -971,9 +950,7 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     # Results belong to the inputs they were computed from: hide them as soon as any input changes
     if st.session_state.get('ar_rules') is not None and st.session_state.get('ar_signature') != signature:
         old = st.session_state.get('ar_signature') or ()
-        names = ['dataset content', 'configurations', 'objects', 'analysis type', 'grid', 'number of bins',
-                 'minimum support', 'minimum confidence']
-        changed = [n for i, n in enumerate(names) if i >= len(old) or old[i] != signature[i]]
+        changed = [n for i, n in enumerate(SIGNATURE_NAMES) if i >= len(old) or old[i] != signature[i]]
         st.warning("**Inputs changed. Recompute to update results.** Changed since the last mining run: "
                    + ", ".join(changed) + ". Rules, plots and downloads of the earlier run are hidden until you "
                    "click Mine Association Rules again.")
@@ -986,10 +963,30 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
 
         rules_df = st.session_state.ar_rules
         run_tag = hashlib.sha256(repr(signature).encode()).hexdigest()[:10]
-        st.caption(f"Mining run {run_tag}: {len(st.session_state.ar_transactions)} transactions, "
+        n_tx = len(st.session_state.ar_transactions)
+        n_traj = st.session_state.get('ar_n_trajectories', n_tx)
+        st.caption(f"Mining run {run_tag}: {n_tx} transactions, "
                    f"{len(rules_df)} rules (minimum support {min_support:g}, minimum confidence "
                    f"{min_confidence:g}).")
-        
+        st.markdown(f"**Denominator N = {n_tx} transactions** (of {n_traj} trajectories in the selection"
+                    + (f"; {n_traj - n_tx} without any item left out" if n_traj != n_tx else "") + "). "
+                    + sequence_analysis.time_window_text(*window, filtered_df) + ".")
+        if binned:
+            st.caption("Mining features: " + ", ".join(map(feature_label, mining_features)) + f" · {n_bins} bins"
+                       + (" · constant, no items: " + ", ".join(st.session_state.ar_constant_features)
+                          if st.session_state.get('ar_constant_features') else ""))
+        if spatial:
+            st.caption(sequence_analysis.grid_description(st.session_state.ar_grid_info))
+        settings_df = settings_table(signature, [('run', run_tag), ('transactions N', n_tx),
+                                                 ('trajectories', n_traj), ('rules', len(rules_df))])
+        e1, e2 = st.columns(2)
+        e1.download_button("Download mining settings (CSV)", settings_df.to_csv(index=False),
+                           f"association_settings_run{run_tag}.csv", "text/csv", key="ar_download_settings")
+        if st.session_state.get('ar_bin_info'):
+            e2.download_button("Download bin boundaries (CSV, full precision)",
+                               bin_table(st.session_state.ar_bin_info, n_bins).to_csv(index=False, float_format='%.17g'),
+                               f"association_bins_run{run_tag}.csv", "text/csv", key="ar_download_bins")
+
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "Rules Table", "Network", 
             "Co-occurrence Heatmap", "MDS Projection", 
@@ -1016,6 +1013,18 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             with f3:
                 find_cons = st.multiselect("Consequent contains", all_items, key="ar_find_consequent")
             matching = filter_rules(rules_df, find_text, find_ante, find_cons)
+            if binned:
+                st.markdown("**Filter by feature/bin items** (applies to the rules found; it does not change mining)")
+                rule_items = [split_feature_item(i[5:] if i.startswith('zone_') else i, AR_FEATURES)
+                              for i in all_items]
+                fb1, fb2 = st.columns(2)
+                with fb1:
+                    filt_features = st.multiselect("Rules with an item of feature", sorted({x[0] for x in rule_items if x}),
+                                                   key="ar_filter_features", format_func=feature_label)
+                with fb2:
+                    filt_bins = st.multiselect("in bin", bin_labels_for(n_bins), key="ar_filter_bins",
+                                               help="Leave empty for any bin.")
+                matching = filter_feature_bins(matching, filt_features, filt_bins)
 
             col1, col2 = st.columns(2)
             with col1:

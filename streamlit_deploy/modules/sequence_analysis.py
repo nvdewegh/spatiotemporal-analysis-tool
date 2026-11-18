@@ -33,22 +33,42 @@ def get_court_dimensions(court_type='Football'):
         }
 
 
-def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
+SPORTS_COURTS = ('Tennis', 'Football')
+
+
+def data_bounds(df):
+    """(x_min, x_max, y_min, y_max) of the given positions: the data extent used for zone grids."""
+    return (float(df['x'].min()), float(df['x'].max()), float(df['y'].min()), float(df['y'].max()))
+
+
+def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5, bounds=None, geometry=None):
     """
-    Create a spatial grid for the court and return zone mapping function.
-    Includes buffer zones around the court to capture out-of-bounds positions.
+    Create a spatial grid and return its zone mapping function.
+
+    - bounds=None and court_type 'Tennis' or 'Football': the court or pitch geometry, with a 5 m buffer ring of
+      zones around it; positions beyond the buffer are assigned to the nearest edge zone.
+    - bounds=(x_min, x_max, y_min, y_max): grid_rows x grid_cols zones covering exactly these bounds, no buffer
+      and no court geometry. Positions outside the bounds get no zone (None) and are left out.
+    geometry: label for the bounds ('data extent' or 'explicit bounds'), shown in captions and exports.
     """
+    if bounds is not None:
+        x_min, x_max, y_min, y_max = map(float, bounds)
+        if not (x_max > x_min and y_max > y_min):
+            raise ValueError(f"Grid bounds need x_max > x_min and y_max > y_min (got {bounds}).")
+        return _make_grid(x_min, x_max, y_min, y_max, grid_rows, grid_cols, buffer=0.0,
+                          width=x_max - x_min, height=y_max - y_min, clamp=False,
+                          geometry=geometry or 'explicit bounds')
+    if court_type not in SPORTS_COURTS:
+        raise ValueError("Without a selected court or pitch the grid needs bounds (data extent or explicit).")
     dims = get_court_dimensions(court_type)
     width, height = dims['width'], dims['height']
-    
     buffer = 5.0
-    
-    x_min, x_max = -buffer, width + buffer
-    y_min, y_max = -buffer, height + buffer
-    
-    actual_cols = grid_cols + 2
-    actual_rows = grid_rows + 2
-    
+    return _make_grid(-buffer, width + buffer, -buffer, height + buffer, grid_rows + 2, grid_cols + 2,
+                      buffer=buffer, width=width, height=height, clamp=True, geometry=court_type)
+
+
+def _make_grid(x_min, x_max, y_min, y_max, actual_rows, actual_cols, buffer, width, height, clamp, geometry):
+    """Equal-width zones between the bounds; labels A1, B1, ... from the lowest row, left to right."""
     x_bins = np.linspace(x_min, x_max, actual_cols + 1)
     y_bins = np.linspace(y_min, y_max, actual_rows + 1)
     
@@ -67,15 +87,17 @@ def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
             zone_labels.append(f"{col_label}{row_label}")
     
     def get_zone(x, y):
-        """Map (x, y) coordinate to zone label."""
+        """Map (x, y) coordinate to zone label (zones are [left, right), the last one also includes its right edge)."""
         if pd.isna(x) or pd.isna(y):
+            return None
+        if not clamp and not (x_min <= x <= x_max and y_min <= y <= y_max):
             return None
         col_idx = np.digitize(x, x_bins) - 1
         row_idx = np.digitize(y, y_bins) - 1
         col_idx = max(0, min(actual_cols - 1, col_idx))
         row_idx = max(0, min(actual_rows - 1, row_idx))
         return zone_labels[row_idx * actual_cols + col_idx]
-    
+
     return {
         'zone_labels': zone_labels,
         'x_bins': x_bins,
@@ -85,8 +107,134 @@ def create_spatial_grid(court_type='Tennis', grid_rows=3, grid_cols=5):
         'grid_cols': actual_cols,
         'court_width': width,
         'court_height': height,
-        'buffer': buffer
+        'buffer': buffer,
+        'geometry': geometry,
+        'bounds': (float(x_min), float(x_max), float(y_min), float(y_max)),
     }
+
+
+def grid_description(grid_info):
+    """One line: geometry, zone count and the exact bounds of the grid."""
+    x0, x1, y0, y1 = grid_info['bounds']
+    n = grid_info['grid_rows'] * grid_info['grid_cols']
+    if grid_info['buffer'] > 0:
+        kind = (f"{grid_info['geometry']} geometry with a {grid_info['buffer']:g} m buffer ring "
+                f"({grid_info['grid_rows'] - 2} × {grid_info['grid_cols'] - 2} court zones plus buffer)")
+    else:
+        kind = f"{grid_info['geometry']} ({grid_info['grid_rows']} × {grid_info['grid_cols']} zones, no court geometry)"
+    return f"Zone grid: {kind}, {n} zones, x {x0:.6g} to {x1:.6g}, y {y0:.6g} to {y1:.6g}"
+
+
+def outside_grid_count(df, grid_info):
+    """Number of positions that receive no zone (outside explicit bounds, or missing coordinates)."""
+    get_zone = grid_info['get_zone']
+    return int(sum(get_zone(x, y) is None for x, y in zip(df['x'], df['y'])))
+
+
+def draw_zone_grid(fig, grid_info, antecedents=(), consequents=()):
+    """
+    Grid lines and zone labels on fig. Antecedent zones are filled red, consequent zones blue.
+    A buffer background is drawn only for a court or pitch geometry. Axes are fitted to the grid.
+    """
+    x_bins, y_bins = grid_info['x_bins'], grid_info['y_bins']
+    buffer = grid_info['buffer']
+    if buffer > 0:
+        fig.add_shape(type="rect", x0=-buffer, y0=-buffer, x1=grid_info['court_width'] + buffer,
+                      y1=grid_info['court_height'] + buffer, fillcolor='rgba(200, 200, 200, 0.3)',
+                      line=dict(color='rgba(150, 150, 150, 0.5)', width=2), layer="below")
+    for x in x_bins:
+        fig.add_shape(type="line", x0=x, y0=y_bins[0], x1=x, y1=y_bins[-1],
+                      line=dict(color='rgba(255, 0, 0, 0.6)', width=2, dash='dash'), layer="above")
+    for y in y_bins:
+        fig.add_shape(type="line", x0=x_bins[0], y0=y, x1=x_bins[-1], y1=y,
+                      line=dict(color='rgba(255, 0, 0, 0.6)', width=2, dash='dash'), layer="above")
+    cols = grid_info['grid_cols']
+    for row in range(grid_info['grid_rows']):
+        for col in range(cols):
+            label = grid_info['zone_labels'][row * cols + col]
+            ante, cons = label in antecedents, label in consequents
+            if ante or cons:
+                fig.add_shape(type="rect", x0=x_bins[col], y0=y_bins[row], x1=x_bins[col + 1], y1=y_bins[row + 1],
+                              fillcolor='rgba(255, 0, 0, 0.3)' if ante else 'rgba(0, 0, 255, 0.3)',
+                              line=dict(color='red' if ante else 'blue', width=3), layer="above")
+            fig.add_annotation(x=(x_bins[col] + x_bins[col + 1]) / 2, y=(y_bins[row] + y_bins[row + 1]) / 2,
+                               text=f"<b>{label}</b>", showarrow=False,
+                               font=dict(size=14, color='white'),
+                               bgcolor=('rgba(200, 0, 0, 0.9)' if ante else 'rgba(0, 0, 200, 0.9)' if cons
+                                        else 'rgba(0, 0, 0, 0.6)'), borderpad=4)
+    pad_x = max(0.5, 0.02 * (x_bins[-1] - x_bins[0]))
+    pad_y = max(0.5, 0.02 * (y_bins[-1] - y_bins[0]))
+    fig.update_xaxes(range=[x_bins[0] - pad_x, x_bins[-1] + pad_x], autorange=False)
+    fig.update_yaxes(range=[y_bins[0] - pad_y, y_bins[-1] + pad_y], autorange=False)
+    return fig
+
+
+def zone_grid_controls(st, court_type, positions, key_prefix, grid_rows, grid_cols):
+    """
+    Zone geometry for Spatial Zones, Combined and zone-based sequences. The court or pitch geometry is used only
+    when that court type is selected in the sidebar; otherwise the grid covers the data extent of `positions`
+    (the selected trajectories in the time window) or explicit bounds entered here.
+    Returns (grid_info, settings) where settings is a hashable tuple for stale-result checks and exports.
+    """
+    if court_type in SPORTS_COURTS:
+        st.caption(f"Zone geometry: {court_type} (court type selected in the sidebar).")
+        grid = create_spatial_grid(court_type, grid_rows, grid_cols)
+        return grid, (court_type, grid_rows, grid_cols)
+    mode = st.radio("Grid bounds", ["Data extent", "Explicit bounds"], horizontal=True, key=f"{key_prefix}_bounds_mode",
+                    help="No court or pitch is selected, so zones cover the coordinates themselves. Data extent: "
+                         "the minimum and maximum x and y of the selected positions. Explicit bounds: enter them.")
+    ext = data_bounds(positions)
+    if mode == "Data extent":
+        bounds, geometry = ext, 'data extent'
+    else:
+        b = st.columns(4)
+        names = ('x min', 'x max', 'y min', 'y max')
+        bounds = tuple(float(b[i].number_input(names[i], value=float(ext[i]), format="%.3f",
+                                               key=f"{key_prefix}_bound_{i}")) for i in range(4))
+        geometry = 'explicit bounds'
+    try:
+        grid = create_spatial_grid(None, grid_rows, grid_cols, bounds=bounds, geometry=geometry)
+    except ValueError as e:
+        st.error(str(e))
+        return None, None
+    return grid, (geometry, grid_rows, grid_cols) + tuple(round(v, 9) for v in bounds)
+
+
+# =============================================================================
+# TIME WINDOW (shared by Association Rules, Sequence Analysis and Outlier Detection)
+# =============================================================================
+
+def time_window_inputs(st, df, start_key, end_key):
+    """
+    Start/End time inputs over the data's tst range (defaults: full range). Both ends are included.
+    Returns (start, end) or None when Start is after End (an error is shown).
+    """
+    lo, hi = float(df['tst'].min()), float(df['tst'].max())
+    s = st.session_state
+    for key, default in ((start_key, lo), (end_key, hi)):
+        v = s.get(key)
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not lo <= v <= hi:
+            s[key] = default
+    c1, c2 = st.columns(2)
+    start = c1.number_input("Start time", min_value=lo, max_value=hi, step=0.01, format="%.2f", key=start_key)
+    end = c2.number_input("End time", min_value=lo, max_value=hi, step=0.01, format="%.2f", key=end_key)
+    if start > end:
+        st.error(f"Start time ({start:g}) is after End time ({end:g}). Correct the time range before computing.")
+        return None
+    return float(start), float(end)
+
+
+def select_window(df, configs, objects, start, end):
+    """Positions of the selected configurations and objects with start <= tst <= end."""
+    return df[df['config_source'].isin(configs) & df['obj'].isin(objects)
+              & (df['tst'] >= start) & (df['tst'] <= end)]
+
+
+def time_window_text(start, end, positions):
+    """Same wording on every page: window, trajectories (configuration-object pairs) and sampled positions."""
+    n_traj = positions.groupby(['config_source', 'obj']).ngroups if len(positions) else 0
+    return (f"Time window: tst {start:g} to {end:g} (both ends included) · {n_traj} trajectories · "
+            f"{len(positions)} sampled positions")
 
 
 # =============================================================================

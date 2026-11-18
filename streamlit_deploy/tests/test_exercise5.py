@@ -267,3 +267,164 @@ def test_outlier_route(at):
         assert b['Flagged_Count'] == n_out
         assert {m.label: m.value for m in at.metric}['Outliers Detected'] == str(n_out)
     assert any('not a measure of traffic danger' in i.value for i in at.info)
+
+
+# --------------------------------------------------------------------------- Exercise 5 v05
+
+def test_shared_feature_names_match_clustering(a2):
+    if a2 is None:
+        pytest.skip()
+    from modules import clustering
+    for c in CONFIGS[:5]:
+        g = a2[(a2.config_source == c) & (a2.obj == 1)].sort_values('tst')
+        ours, theirs = ar.association_features(g), clustering.extract_trajectory_features(g)
+        for name in clustering.ALL_FEATURES:
+            assert ours[name] == theirs[name] or (np.isnan(ours[name]) and np.isnan(theirs[name]))
+            assert ar.AR_FEATURE_DEFINITIONS[name][1] in clustering.FEATURE_COLUMN_LABELS[name]   # same unit
+
+
+def test_grid_geometry():
+    tennis = sa.create_spatial_grid('Tennis', 3, 5)
+    assert tennis['buffer'] == 5 and tennis['grid_cols'] == 7
+    with pytest.raises(ValueError):
+        sa.create_spatial_grid('No selection', 3, 5)
+    g = sa.create_spatial_grid(None, 2, 2, bounds=(0, 10, 0, 4), geometry='data extent')
+    assert g['buffer'] == 0 and len(g['zone_labels']) == 4
+    assert g['get_zone'](10, 4) == 'B2' and g['get_zone'](0, 0) == 'A1' and g['get_zone'](11, 1) is None
+
+
+def test_feature_bin_filter():
+    tx = [['total_distance_high', 'x_range_low'], ['total_distance_high', 'x_range_low'], ['x_range_high']]
+    rules = ar.add_rule_counts(ar.compute_association_rules(tx, 0.1, 0.1)[0], tx)
+    assert len(ar.filter_feature_bins(rules, ['x_range'], ['high'])) == 0
+    assert len(ar.filter_feature_bins(rules, ['total_distance'], [])) == len(rules)
+
+
+def setup_ar(at, analysis='Feature Bins'):
+    at.multiselect(key='sidebar_configs').set_value(CONFIGS).run()
+    at.selectbox(key='analysis_method').set_value('Association Rules').run()
+    next(r for r in at.radio if r.label == 'Analysis Type:').set_value(analysis).run()
+    ok(at)
+
+
+def test_v05_associations_banner_features_and_exports(at):
+    setup_ar(at)
+    assert any('26 trajectories · 156 sampled positions' in s.value and 'tst 0 to 5' in s.value for s in at.success)
+    assert any('Duration (tst units) = 5' in w.value for w in at.warning)             # constant feature reported
+    at.select_slider(key='ar_n_bins').set_value(3).run()
+    at.slider(key='ar_min_support').set_value(0.1).run()
+    at.slider(key='ar_min_confidence').set_value(0.6).run()
+    mine(at)
+    assert any('111 rules' in c.value for c in at.caption)
+    assert any('Denominator N = 26 transactions' in m.value for m in at.markdown)
+    settings = pd.read_csv(io.StringIO(latest(at, 'association_settings')['data'])).set_index('Setting')['Value']
+    assert settings['mining features'] == 'total_distance, duration, avg_speed, x_range, y_range'
+    assert settings['transactions N'] == '26' and settings['time window'] == '0.0, 5.0'
+    bins = pd.read_csv(io.StringIO(latest(at, 'association_bins')['data']), float_precision='round_trip')
+    assert set(bins['Feature']) == {'total_distance', 'avg_speed', 'x_range', 'y_range'}       # duration constant
+
+    # Feature/bin result filter changes only the displayed rules
+    at.multiselect(key='ar_filter_features').set_value(['x_range']).run()
+    at.multiselect(key='ar_filter_bins').set_value(['high']).run()
+    ok(at)
+    shown = pd.read_csv(io.StringIO(latest(at, 'association_rules_displayed')['data']))
+    assert len(shown) > 0 and shown['rule'].str.contains('x_range_high').all()
+    assert len(pd.read_csv(io.StringIO(latest(at, 'association_rules_all')['data']))) == 111
+
+    # A second setting: drop a feature -> stale, then new results and new exports
+    del at.downloads[:]
+    at.multiselect(key='ar_features').set_value(['total_distance', 'avg_speed']).run()
+    assert any(OUTDATED in w.value and 'mining features' in w.value for w in at.warning)
+    assert latest(at, 'association_rules') is None
+    mine(at)
+    at.multiselect(key='ar_filter_features').set_value([]).run()       # clear the result filter of the first run
+    full = pd.read_csv(io.StringIO(latest(at, 'association_rules_all')['data']))
+    assert 0 < len(full) < 111 and not full['rule'].str.contains('x_range').any()
+    settings = pd.read_csv(io.StringIO(latest(at, 'association_settings')['data'])).set_index('Setting')['Value']
+    assert settings['mining features'] == 'total_distance, avg_speed' and settings['rules'] == str(len(full))
+    assert any(f'{len(full)} rules' in c.value for c in at.caption)
+
+    # Time window is part of the signature
+    at.number_input(key='ar_end').set_value(4.0).run()
+    assert any(OUTDATED in w.value and 'time window' in w.value for w in at.warning)
+
+
+@pytest.mark.parametrize('analysis', ['Spatial Zones', 'Combined (Spatial + Features)'])
+def test_v05_spatial_zones_use_data_extent(at, analysis):
+    setup_ar(at, analysis)
+    assert any('Zone grid: data extent' in c.value for c in at.caption)
+    mine(at)
+    tx = at.session_state['ar_transactions']
+    assert len(tx) == 26
+    zones = {i for t in tx for i in t if not i.startswith(('total', 'duration', 'avg', 'x_', 'y_'))}
+    assert len(zones) > 3                       # spread over the grid, not clamped into one edge column
+    assert any('Denominator N = 26 transactions' in m.value for m in at.markdown)
+
+
+def test_v05_zone_sequences_data_extent(at):
+    at.multiselect(key='sidebar_configs').set_value(EIGHT).run()
+    at.selectbox(key='analysis_method').set_value('Sequence Analysis').run()
+    ok(at)
+    assert any('Zone grid: data extent' in c.value for c in at.caption)
+    assert any('8 trajectories · 48 sampled positions' in c.value for c in at.caption)
+    seqs = pd.read_csv(io.StringIO(latest(at, 'sequences_')['data']))
+    tokens = {t for s in seqs['Sequence'] for t in s.split('-')}
+    assert len(tokens) > 3
+
+
+def test_v05_lh_chart_and_comparison(at, a2):
+    at.multiselect(key='sidebar_configs').set_value(CONFIGS).run()
+    at.selectbox(key='analysis_method').set_value('Sequence Analysis').run()
+    at.radio(key='seq_encoding').set_value('Movement steps (L/H)').run()
+    ok(at)
+    assert at.radio(key='seq_step_mode').options == ['Ordered, gaps allowed', 'Token co-occurrence (order ignored)']
+    assert at.radio(key='seq_step_mode').value == 'Ordered, gaps allowed'
+    chart = pd.read_csv(io.StringIO(latest(at, 'lh_pattern_frequency')['data'])).set_index('Pattern')
+    assert chart.loc['L followed by H (gaps allowed)', 'Fraction'] == '20/26'
+    assert chart.loc['H followed by L (gaps allowed)', 'Fraction'] == '6/26'
+    cmp_ = pd.read_csv(io.StringIO(latest(at, 'lh_step_comparison')['data']))
+    assert sorted(cmp_['Configuration'].unique()) == ['Config_0', 'Config_1'] and len(cmp_) == 10
+    at.multiselect(key='seq_step_compare').set_value(['Config_2_obj1', 'Config_22_obj1']).run()
+    cmp_ = pd.read_csv(io.StringIO(latest(at, 'lh_step_comparison')['data']))
+    assert ''.join(cmp_[cmp_.Configuration == 'Config_22']['Token']) == 'HHLLL'
+    # Second setting: threshold 1 m updates the chart export
+    at.number_input(key='seq_step_threshold').set_value(1.0).run()
+    d = latest(at, 'lh_pattern_frequency')
+    assert 'thr1m' in d['file_name']
+    _, s1 = sa.step_sequences(sa.step_table(a2, CONFIGS, [1], 0, 5), threshold=1.0)
+    m1 = dict(zip(s1['Trajectory'], s1['Sequence']))
+    chart = pd.read_csv(io.StringIO(d['data'])).set_index('Pattern')
+    for label, pat in (('L followed by H (gaps allowed)', ['L', 'H']), ('H followed by L (gaps allowed)', ['H', 'L'])):
+        assert chart.loc[label, 'Fraction'] == f"{sa.pattern_support(m1, pat)[1]}/26"
+    assert chart.loc['L followed by H (gaps allowed)', 'Fraction'] != '20/26'      # the setting really changed it
+
+
+def test_v05_outlier_summary_and_fences(at):
+    at.multiselect(key='sidebar_configs').set_value(CONFIGS).run()
+    at.selectbox(key='analysis_method').set_value('Outlier Detection').run()
+    next(m for m in at.multiselect if m.label.startswith('Select features')).set_value(['total_distance']).run()
+    next(s for s in at.selectbox if s.label.startswith('Choose outlier detection method')).set_value(
+        'Statistical: IQR (Interquartile Range)').run()
+    assert any('26 trajectories · 156 sampled positions' in c.value for c in at.caption)
+    for factor, ids in ((1.5, 'Config_2_obj1, Config_11_obj1, Config_16_obj1, Config_17_obj1, Config_18_obj1'),
+                        (3.0, 'none (zero flags)')):
+        next(s for s in at.slider if s.label.startswith('IQR Multiplier')).set_value(factor).run()
+        ok(at)
+        summary = at.dataframe[[i for i, d in enumerate(at.dataframe) if 'Flagged IDs' in d.value.columns][0]].value
+        assert summary['Multiplier'].iloc[0] == f'{factor:g} × IQR'
+        assert sorted(summary['Flagged IDs'].iloc[0].split(', ')) == sorted(ids.split(', '))
+        specs = [json.loads(ch.proto.spec) for ch in at.get('plotly_chart')]
+        fence = next(s for s in specs if 'active fences' in s['layout']['title']['text'])
+        assert fence['data'][0]['name'] == 'Standard box plot (whiskers: 1.5 × IQR rule)'
+        texts = [a['text'] for a in fence['layout']['annotations']]
+        assert any(f'({factor:g} × IQR)' in t for t in texts)
+        b = pd.read_csv(io.StringIO(latest(at, 'iqr_bounds')['data']), float_precision='round_trip').iloc[0]
+        assert b['Factor'] == factor
+    assert any('Result: no trajectory flagged' in s.value for s in at.success)
+
+
+def test_outlier_avg_speed_matches_clustering():
+    from modules import clustering
+    df = pd.DataFrame({'config_source': 'C', 'obj': 1, 'tst': [0, 1, 3], 'x': [0.0, 3.0, 3.0], 'y': [0.0, 0.0, 4.0]})
+    f = od.extract_trajectory_features(df, 'C', 1)
+    assert f['avg_speed'] == clustering.extract_trajectory_features(df)['avg_speed'] == 7 / 3   # not mean(3, 2)
