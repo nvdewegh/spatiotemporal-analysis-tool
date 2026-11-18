@@ -67,6 +67,8 @@ from sklearn.metrics import silhouette_score
 # Import analysis modules
 from modules import association_rules, clustering, sequence_analysis, outlier_detection, utils, pdp_analysis
 from modules import browser_storage
+from modules import local_a2_viewer
+from modules import navigation
 from modules import pdp_reference_systems
 from modules import point_size_clustering as psc
 import pdp_reference_ui
@@ -130,7 +132,8 @@ def store_clustering_run(df, signature, method, configs, objects, start, end, fe
 
 # Start/End time inputs of the analysis sections (session-state keys)
 TIME_RANGE_KEYS = [('visual_start', 'visual_end'), ('2sa_start', '2sa_end'), ('seq_start', 'seq_end'),
-                   ('pdp_start', 'pdp_end'), ('clustering_start', 'clustering_end'), ('extra_start', 'extra_end')]
+                   ('pdp_start', 'pdp_end'), ('clustering_start', 'clustering_end'), ('extra_start', 'extra_end'),
+                   ('ar_start', 'ar_end'), ('od_start', 'od_end')]
 # Results and selections that belong to one dataset (cleared when another dataset is opened)
 DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings', 'pdp_config_ids', 'pdp_failure',
                        'pdp_last_run_report', 'variant_comparison_results', 'cluster_quality_metrics',
@@ -146,6 +149,13 @@ DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings
 KEPT_CHOICES = [key for pair in TIME_RANGE_KEYS for key in pair] + ['pdp_window', 'pdp_variants', 'pdp_use_external',
                                                                     'pdp_reference_system', 'pdp_c4_estimator']
 # Buffer/Rough per descriptor of the R/C reference systems (kept while another system is selected)
+# Sequence Analysis: encoding, zone grid, L/H and custom-encoding settings, pattern search and comparison
+SEQUENCE_KEPT_CHOICES = ['seq_encoding', 'seq_grid_rows', 'seq_grid_cols', 'seq_compress', 'seq_type',
+                         'seq_bounds_mode', 'seq_bound_0', 'seq_bound_1', 'seq_bound_2', 'seq_bound_3',
+                         'seq_step_threshold', 'seq_step_compress', 'seq_step_pattern', 'seq_step_mode',
+                         'seq_step_compare', 'seq_custom_feature', 'seq_custom_cuts', 'seq_custom_labels',
+                         'seq_custom_pattern', 'seq_custom_mode']
+KEPT_CHOICES += SEQUENCE_KEPT_CHOICES
 KEPT_CHOICES += [f'pdp_ref_{kind}_{d}' for kind in ('buffer', 'rough')
                  for d in sorted({d for ids in pdp_reference_systems.DESCRIPTOR_ORDER.values() for d in ids})]
 
@@ -219,10 +229,12 @@ def render_step_sequences(df):
     objects = st.session_state.shared_selected_objects
     window = sequence_analysis.time_window_inputs(st, df, "seq_start", "seq_end")
     c3, c4 = st.columns(2)
-    threshold = c3.number_input("Threshold (m)", min_value=0.0, value=sequence_analysis.STEP_THRESHOLD_M,
+    threshold = c3.number_input("Threshold (m)", min_value=0.0,
+                                **widget_default("seq_step_threshold", sequence_analysis.STEP_THRESHOLD_M),
                                 step=0.1, format="%.2f", key="seq_step_threshold",
                                 help="L: displacement < threshold; H: displacement ≥ threshold.")
-    compress = c4.checkbox("Run-length compression", value=False, key="seq_step_compress",
+    compress = c4.checkbox("Run-length compression", **widget_default("seq_step_compress", False),
+                           key="seq_step_compress",
                            help="Off by default: LLH stays LLH. On: repeated tokens are merged (LLH → LH).")
     if window is None:
         return
@@ -232,6 +244,7 @@ def render_step_sequences(df):
     if not configs or not objects:
         st.warning("Please select at least one configuration and one object.")
         return
+    flag_shared_input_changes(df, configs, objects)
 
     steps = sequence_analysis.step_table(df, configs, objects, start_time, end_time)
     if steps.empty:
@@ -255,7 +268,7 @@ def render_step_sequences(df):
 
     st.subheader("Pattern frequency")
     p1, p2 = st.columns(2)
-    pattern_text = p1.text_input("Pattern", value="L H", key="seq_step_pattern",
+    pattern_text = p1.text_input("Pattern", **widget_default("seq_step_pattern", "L H"), key="seq_step_pattern",
                                  help="Tokens in order, e.g. 'L H' or 'H L'. Spaces, commas and arrows are ignored.")
     mode = p2.radio("Matching", ["Ordered, gaps allowed", "Token co-occurrence (order ignored)"],
                     key="seq_step_mode",
@@ -274,6 +287,8 @@ def render_step_sequences(df):
         m2.metric("Trajectories (denominator)", n)
         m3.metric("Relative frequency", f"{k}/{n} = {freq:.3f}")
         st.write("Supporting: " + (", ".join(supporting) if supporting else "none"))
+        render_sequence_actions(configs, objects, window, supporting, ' '.join(pattern), mode,
+                                "L/H " + settings, (threshold, compress, ' '.join(pattern), mode), "lh")
 
     standard = []
     for label, pat, ordd in (("L followed by H (gaps allowed)", ['L', 'H'], True),
@@ -312,7 +327,11 @@ def render_step_sequences(df):
     # Step-by-step comparison of chosen trajectories
     st.subheader("Step-by-step L/H comparison")
     trajectories = list(seqs['Trajectory'])
-    chosen = st.multiselect("Trajectories to compare", trajectories, default=trajectories[:2], key="seq_step_compare")
+    kept = st.session_state.get("seq_step_compare")
+    if kept is not None:                         # keep the chosen trajectories that still exist in this selection
+        st.session_state.seq_step_compare = [t for t in kept if t in trajectories]
+    chosen = st.multiselect("Trajectories to compare", trajectories, key="seq_step_compare",
+                            **({} if kept is not None else {'default': trajectories[:2]}))
     if chosen:
         sel = steps.assign(Trajectory=steps['Configuration'] + '_obj' + steps['Object'].astype(str))
         sel = sel[sel['Trajectory'].isin(chosen)]
@@ -355,6 +374,135 @@ def render_step_sequences(df):
     d4.download_button("Download standard patterns (CSV)", standard_df.to_csv(index=False, float_format='%.17g'),
                        f"lh_standard_patterns_{tag}.csv", "text/csv", key="dl_lh_standard")
     st.caption("All tables and downloads are recalculated from the current settings whenever an input changes.")
+
+    with st.expander("Custom encoding (experimental)", expanded=False):
+        render_custom_encoding(df, configs, objects, window, compress)
+
+
+def flag_shared_input_changes(df, configs, objects):
+    """Say which shared inputs changed since Sequence Analysis was last shown (results are recomputed)."""
+    current = {'dataset': clustering.data_fingerprint(df), 'configurations': tuple(sorted(map(str, configs))),
+               'objects': tuple(sorted(map(str, objects)))}
+    changed = navigation.shared_inputs_changed(current)
+    if changed:
+        st.warning("Since this sequence result was last shown, the " + ", ".join(changed) + " changed. All tables "
+                   "below are recomputed with the current selection, so they may differ from the earlier result.")
+
+
+def render_sequence_actions(configs, objects, window, supporting, pattern_label, matching, settings, extra, prefix):
+    """Inspect matching trajectories (Visual Exploration) and Compare these configurations in PDP."""
+    df = st.session_state.data
+    signature = (clustering.data_fingerprint(df), tuple(map(str, configs)), tuple(map(str, objects)),
+                 tuple(window)) + tuple(extra)
+    handoff = navigation.make_handoff(f"Sequence Analysis ({prefix})", configs, objects, window, supporting,
+                                      pattern_label, matching, settings, signature)
+    for key, where in ((navigation.INSPECT_KEY, 'Visual Exploration'), (navigation.PDP_HANDOFF_KEY, 'PDP')):
+        old = st.session_state.get(key)
+        if old and old['source'] == handoff['source'] and old['signature'] != signature:
+            st.caption(f"The trajectories last sent to {where} came from earlier settings; send them again to update.")
+    a1, a2 = st.columns(2)
+    a1.button("Inspect matching trajectories", key=f"{prefix}_inspect", disabled=not supporting,
+              on_click=navigation.go_inspect, args=(handoff,),
+              help="Opens Visual Exploration with these trajectories highlighted among all analysed ones, in the "
+                   "sequence time window.")
+    a2.button("Compare these configurations in PDP", key=f"{prefix}_to_pdp", disabled=not supporting,
+              on_click=navigation.go_pdp, args=(handoff,),
+              help="Opens PDP with the supporting configurations and the sequence time window. PDP shows which "
+                   "objects it will use before you compute.")
+
+
+def render_custom_encoding(df, configs, objects, window, compress):
+    """One step feature, ordered cut-offs and token labels; search the resulting token sequences."""
+    st.caption("Experimental. Choose a step feature, cut-offs and one token label per interval. A value equal to a "
+               "cut-off gets the higher token, as with the 2 m L/H preset (cut-off 2, labels L H). The L/H view "
+               "above is not affected.")
+    c1, c2, c3 = st.columns(3)
+    feature = c1.selectbox("Feature", list(sequence_analysis.CUSTOM_FEATURES), key="seq_custom_feature")
+    cuts_text = c2.text_input("Cut-offs (increasing)", **widget_default("seq_custom_cuts", "2"),
+                              key="seq_custom_cuts", help="For example 1, 3")
+    labels_text = c3.text_input("Token labels (low to high)", **widget_default("seq_custom_labels", "L H"),
+                                key="seq_custom_labels", help="One letter or digit per interval, e.g. S M F")
+    try:
+        cuts = sequence_analysis.parse_cutoffs(cuts_text)
+        labels = sequence_analysis.parse_labels(labels_text, len(cuts) + 1)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    if window is None:
+        return
+    unit = 'm' if feature.startswith('Step distance') else 'm per tst unit'
+    bounds = [f"{labels[0]}: < {cuts[0]:g}"] + [f"{labels[i]}: {cuts[i-1]:g} to < {cuts[i]:g}"
+                                                 for i in range(1, len(cuts))] + [f"{labels[-1]}: ≥ {cuts[-1]:g}"]
+    st.caption(f"Intervals ({unit}): " + " · ".join(bounds) + f" · {'run-length compressed' if compress else 'no compression'} "
+               "(compression follows the L/H setting above)")
+    steps = sequence_analysis.step_table(df, configs, objects, *window)
+    if steps.empty:
+        return
+    steps, seqs = sequence_analysis.custom_step_sequences(steps, feature, cuts, labels, compress)
+    st.dataframe(seqs, use_container_width=True, hide_index=True)
+    p1, p2 = st.columns(2)
+    pattern = sequence_analysis.parse_pattern(
+        p1.text_input("Search pattern", **widget_default("seq_custom_pattern", ' '.join(labels[:2])),
+                      key="seq_custom_pattern", help="Tokens in order, e.g. " + ' '.join(labels[:2])))
+    mode = p2.radio("Matching", ["Ordered, gaps allowed", "Token co-occurrence (order ignored)"], key="seq_custom_mode")
+    unknown = [t for t in pattern if t not in labels]
+    if unknown:
+        st.warning("Not a token of this encoding: " + ", ".join(unknown))
+    seq_map = dict(zip(seqs['Trajectory'], seqs['Sequence']))
+    supporting, k, n, freq = sequence_analysis.pattern_support(seq_map, pattern, mode.startswith("Ordered"))
+    if pattern:
+        st.metric("Custom pattern frequency", f"{k}/{n} = {freq:.3f}")
+        st.write("Supporting: " + (", ".join(supporting) if supporting else "none"))
+        settings = f"custom {feature}, cut-offs {', '.join(f'{c:g}' for c in cuts)}, labels {''.join(labels)}"
+        render_sequence_actions(configs, objects, window, supporting, ' '.join(pattern), mode, settings,
+                                (feature, tuple(cuts), tuple(labels), compress, ' '.join(pattern), mode), "custom")
+    tag = f"{'dist' if unit == 'm' else 'speed'}_cuts{'-'.join(f'{c:g}' for c in cuts)}_{''.join(labels)}"
+    st.download_button("Download custom sequences (CSV)", seqs.to_csv(index=False, float_format='%.17g'),
+                       f"custom_sequences_{tag}.csv", "text/csv", key="dl_custom_sequences")
+
+
+def render_inspect_panel(df):
+    """Visual Exploration: the trajectories handed over by Sequence Analysis, highlighted among the population."""
+    h = st.session_state.get(navigation.INSPECT_KEY)
+    if not h:
+        return
+    st.subheader("Inspecting matching trajectories")
+    st.info(f"From {h['source']}: {len(h['supporting'])} trajectories match **{h['pattern']}** ({h['matching']}). "
+            f"Time window tst {h['window'][0]:g} to {h['window'][1]:g}; analysis population: "
+            f"{len(h['population_configs'])} configurations × objects {', '.join(map(str, h['population_objects']))}. "
+            f"Settings: {h['settings']}.")
+    note = navigation.population_note(h, st.session_state.shared_selected_configs,
+                                      st.session_state.shared_selected_objects)
+    if note:
+        st.warning(note)
+    fig = navigation.inspect_figure(create_pitch_figure(st.session_state.court_type), df, h)
+    render_interactive_chart(fig, key="inspect_matching_chart")
+    st.caption("Supporting: " + ", ".join(h['supporting']))
+    b1, b2 = st.columns(2)
+    b1.button("Back to the sequence result", key="inspect_back", on_click=navigation.go_back_to_sequences,
+              type="primary")
+    b2.button("Stop inspecting", key="inspect_stop", on_click=navigation.clear, args=(navigation.INSPECT_KEY,))
+    st.markdown("---")
+
+
+def pdp_handoff_configs(selected_configs, selected_objects):
+    """PDP: apply a Sequence Analysis hand-off (supporting configurations) and say which objects PDP will use."""
+    h = st.session_state.get(navigation.PDP_HANDOFF_KEY)
+    if not h:
+        return selected_configs
+    configs = [c for c in h['supporting_configs'] if c in st.session_state.get('config_sources', h['supporting_configs'])]
+    st.info(f"**Comparing configurations from {h['source']}** (pattern {h['pattern']}, {h['matching']}): "
+            f"{', '.join(configs)}. Time window carried over: tst {h['window'][0]:g} to {h['window'][1]:g}. "
+            f"**PDP will use objects {', '.join(map(str, selected_objects)) or '(none selected)'}** "
+            "(the sidebar objects) for these configurations. Nothing is computed until you start PDP.")
+    note = navigation.population_note(h, st.session_state.shared_selected_configs, selected_objects)
+    if note and 'objects' in note:
+        st.warning("The sidebar objects changed after this hand-off: PDP uses the objects listed above.")
+    b1, b2 = st.columns(2)
+    b1.button("Back to the sequence result", key="pdp_handoff_back", on_click=navigation.go_back_to_sequences)
+    b2.button("Use the sidebar configurations instead", key="pdp_handoff_clear", on_click=navigation.clear,
+              args=(navigation.PDP_HANDOFF_KEY,))
+    return configs
 
 
 def _is_number(v):
@@ -2865,6 +3013,7 @@ def main():
 
     # Main content
     if df is None:
+        local_a2_viewer.render()
         st.info("Please upload a CSV file to begin.")
         st.markdown("""
         ### Expected CSV Formats
@@ -2939,6 +3088,7 @@ def main():
     # Analysis-specific interface
     if analysis_method == "Visual Exploration":
         st.header("Visual Exploration")
+        local_a2_viewer.render()
         
         st.info("""
         **Explore your trajectory data visually with interactive plots:**
@@ -2950,7 +3100,8 @@ def main():
         
         **Tip:** Use the sidebar to select which configurations and objects to analyse.
         """)
-        
+        render_inspect_panel(df)
+
         # Use selections from sidebar
         selected_configs = st.session_state.shared_selected_configs
         selected_objects = st.session_state.shared_selected_objects
@@ -3473,10 +3624,10 @@ def main():
         with col1:
             st.write("**Grid Resolution**")
             sports_grid = st.session_state.court_type in sequence_analysis.SPORTS_COURTS
-            grid_rows = st.slider("Grid rows", 2, 10, 3, key="seq_grid_rows",
+            grid_rows = st.slider("Grid rows", 2, 10, **widget_default("seq_grid_rows", 3), key="seq_grid_rows",
                                  help="Rows for the court area (buffer zones added automatically)" if sports_grid
                                  else "Rows over the grid bounds")
-            grid_cols = st.slider("Grid columns", 2, 10, 5, key="seq_grid_cols",
+            grid_cols = st.slider("Grid columns", 2, 10, **widget_default("seq_grid_cols", 5), key="seq_grid_cols",
                                  help="Columns for the court area (buffer zones added automatically)" if sports_grid
                                  else "Columns over the grid bounds")
             grid_info, _ = sequence_analysis.zone_grid_controls(st, st.session_state.court_type, seq_positions,
@@ -3510,7 +3661,7 @@ def main():
             st.write("**Compression**")
             compress_runs = st.checkbox(
                 "Run-length compression",
-                value=True,
+                **widget_default("seq_compress", True),
                 help="AAABBB → AB",
                 key="seq_compress"
             )
@@ -4651,14 +4802,15 @@ Instead of comparing exact coordinates, PDP compares whether objects are relativ
         # Initialize PDP session state
         pdp_analysis.initialize_pdp_session_state()
         
-        # Use selections from sidebar
+        # Use selections from sidebar (or the configurations handed over by Sequence Analysis)
         selected_configs = st.session_state.shared_selected_configs
         selected_objects = st.session_state.shared_selected_objects
-        
+        selected_configs = pdp_handoff_configs(selected_configs, selected_objects)
+
         # Time range
         min_time = float(df['tst'].min())
         max_time = float(df['tst'].max())
-        
+
         st.markdown("---")
         st.subheader("PDP Configuration")
         

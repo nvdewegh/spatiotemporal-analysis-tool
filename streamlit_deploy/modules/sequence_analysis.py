@@ -189,8 +189,11 @@ def zone_grid_controls(st, court_type, positions, key_prefix, grid_rows, grid_co
     else:
         b = st.columns(4)
         names = ('x min', 'x max', 'y min', 'y max')
-        bounds = tuple(float(b[i].number_input(names[i], value=float(ext[i]), format="%.3f",
-                                               key=f"{key_prefix}_bound_{i}")) for i in range(4))
+        for i in range(4):                       # first use: start from the data extent; afterwards keep the entry
+            if not isinstance(st.session_state.get(f"{key_prefix}_bound_{i}"), (int, float)):
+                st.session_state[f"{key_prefix}_bound_{i}"] = float(ext[i])
+        bounds = tuple(float(b[i].number_input(names[i], format="%.3f", key=f"{key_prefix}_bound_{i}"))
+                       for i in range(4))
         geometry = 'explicit bounds'
     try:
         grid = create_spatial_grid(None, grid_rows, grid_cols, bounds=bounds, geometry=geometry)
@@ -591,6 +594,62 @@ def step_sequences(steps, threshold=STEP_THRESHOLD_M, compress=False):
                      'Compressed': bool(compress),
                      'Distances_m': ';'.join(repr(float(v)) for v in g['Distance_m']),
                      'Sequence': ''.join(seq)})
+    return steps, pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------- custom step encoding
+CUSTOM_FEATURES = {
+    'Step distance (m)': 'Distance_m',
+    'Step speed (m per tst unit)': 'Speed_m_per_tst',
+}
+
+
+def parse_cutoffs(text):
+    """'1, 3.5' -> [1.0, 3.5]. Raises ValueError unless the cut-offs are numbers in strictly increasing order."""
+    parts = [p for p in str(text).replace(';', ',').replace(' ', ',').split(',') if p.strip()]
+    if not parts:
+        raise ValueError("Enter at least one cut-off.")
+    try:
+        cuts = [float(p) for p in parts]
+    except ValueError:
+        raise ValueError(f"Cut-offs must be numbers (got '{text}').")
+    if any(b <= a for a, b in zip(cuts, cuts[1:])):
+        raise ValueError("Cut-offs must be in strictly increasing order.")
+    return cuts
+
+
+def parse_labels(text, n_needed):
+    """Token labels: single letters or digits, all different, exactly one more than the number of cut-offs."""
+    labels = [c for c in str(text).upper() if c.isalnum()]
+    if len(labels) != n_needed:
+        raise ValueError(f"Enter {n_needed} token labels (one more than the number of cut-offs); got {len(labels)}.")
+    if len(set(labels)) != len(labels):
+        raise ValueError("Token labels must all be different.")
+    return labels
+
+
+def custom_token(value, cuts, labels):
+    """labels[i] for cuts[i-1] <= value < cuts[i]: a value equal to a cut-off gets the higher token (as 2 m is H)."""
+    if value != value:                          # NaN (e.g. speed with zero elapsed tst)
+        return None
+    return labels[int(np.searchsorted(cuts, value, side='right'))]
+
+
+def custom_step_sequences(steps, feature, cuts, labels, compress=False):
+    """Same layout as step_sequences, with tokens from the chosen feature, cut-offs and labels."""
+    steps = steps.copy()
+    dt = steps['tst_to'] - steps['tst_from']
+    steps['Speed_m_per_tst'] = np.where(dt > 0, steps['Distance_m'] / dt.where(dt > 0), np.nan)
+    col = CUSTOM_FEATURES.get(feature, feature)
+    steps['Token'] = [custom_token(v, cuts, labels) for v in steps[col]]
+    rows = []
+    for (config, obj), g in steps.groupby(['Configuration', 'Object'], sort=False):
+        tokens = [t for t in g['Token'] if t is not None]
+        seq = run_length_compress(tokens) if compress else tokens
+        rows.append({'Configuration': config, 'Object': obj, 'Trajectory': f"{config}_obj{obj}",
+                     'Positions': len(g) + 1, 'Steps': len(g), 'Feature': feature,
+                     'Cutoffs': ';'.join(repr(c) for c in cuts), 'Labels': ''.join(labels),
+                     'Compressed': bool(compress), 'Sequence': ''.join(seq)})
     return steps, pd.DataFrame(rows)
 
 
