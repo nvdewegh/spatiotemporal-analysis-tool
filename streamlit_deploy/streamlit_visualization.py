@@ -157,7 +157,7 @@ SEQUENCE_KEPT_CHOICES = ['seq_encoding', 'seq_grid_rows', 'seq_grid_cols', 'seq_
                          'seq_bounds_mode', 'seq_bound_0', 'seq_bound_1', 'seq_bound_2', 'seq_bound_3',
                          'seq_step_threshold', 'seq_step_compress', 'seq_step_pattern', 'seq_step_mode',
                          'seq_step_compare', 'seq_custom_feature', 'seq_custom_cuts', 'seq_custom_labels',
-                         'seq_custom_pattern', 'seq_custom_mode']
+                         'seq_custom_pattern', 'seq_custom_mode', 'seq_show_standard']
 KEPT_CHOICES += SEQUENCE_KEPT_CHOICES
 KEPT_CHOICES += [f'pdp_ref_{kind}_{d}' for kind in ('buffer', 'rough')
                  for d in sorted({d for ids in pdp_reference_systems.DESCRIPTOR_ORDER.values() for d in ids})]
@@ -302,8 +302,15 @@ def render_step_sequences(df):
                          'Relative_Frequency': ff, 'Supporting_Trajectories': ', '.join(sup)})
     standard_df = pd.DataFrame(standard)
 
-    # Pattern-frequency chart: the entered pattern next to the standard patterns, same denominator
+    # Pattern-frequency chart: the entered pattern next to the standard patterns, same denominator.
+    # The standard comparisons can be hidden while exploring an own pattern (Part D needs them: one click back).
+    show_standard = st.toggle("Show standard comparison patterns (L then H, H then L, L and H)",
+                              **widget_default("seq_show_standard", True), key="seq_show_standard")
     chart_df = standard_df[['Pattern', 'Count', 'Denominator', 'Fraction', 'Relative_Frequency']].copy()
+    if not show_standard:
+        chart_df = chart_df.iloc[0:0]
+        st.caption("Standard comparison patterns hidden. Switch the toggle on to show the two ordered comparisons "
+                   "(L followed by H, H followed by L) used in Part D; their download stays available below.")
     if pattern:
         chart_df = pd.concat([pd.DataFrame([{
             'Pattern': f"Entered: {' '.join(pattern)} ({'ordered' if ordered else 'order ignored'})",
@@ -322,10 +329,11 @@ def render_step_sequences(df):
     st.download_button("Download chart data (CSV)", chart_df.to_csv(index=False, float_format='%.17g'),
                        f"lh_pattern_frequency_{tag}.csv", "text/csv", key="dl_lh_freq_chart")
 
-    st.markdown("**Standard patterns**")
-    st.dataframe(standard_df, use_container_width=True, hide_index=True,
-                 column_config={'Relative_Frequency': st.column_config.NumberColumn('Relative_Frequency',
-                                                                                    format="%.3f")})
+    if show_standard:
+        st.markdown("**Standard patterns**")
+        st.dataframe(standard_df, use_container_width=True, hide_index=True,
+                     column_config={'Relative_Frequency': st.column_config.NumberColumn('Relative_Frequency',
+                                                                                        format="%.3f")})
 
     # Step-by-step comparison of chosen trajectories
     st.subheader("Step-by-step L/H comparison")

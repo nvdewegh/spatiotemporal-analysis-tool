@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local A2 viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+  <script defer src="viewer.js"></script>
+</head>
+<body>
+  <main>
+    <label for="folder">Open downloaded A2 viewer folder</label>
+    <p>Extract <code>LocalComparisonViewer_v01-1.zip</code>, then select the extracted folder that contains
+      <code>index.html</code>, <code>data.js</code> and <code>assets</code>. The files are read in this browser tab
+      and stay on your device: nothing is uploaded to SAMTool. Your browser may still ask whether to
+      “upload” the files; that wording is the browser’s standard question for granting a page read access to a folder.</p>
+    <input id="folder" type="file" webkitdirectory multiple>
+    <p id="status" role="status" aria-live="polite">Choose the extracted viewer folder to begin.</p>
+    <div id="viewer" hidden>
+      <div class="controls">
+        <label>Encounter <select id="encounter"></select></label>
+        <label>Interval <select id="interval">
+          <option value="analysis">Analysis: samples 2–122 (−3 to +2 s)</option>
+          <option value="full">Full clip: samples 0–136</option></select></label>
+        <button id="play" type="button">Play</button>
+        <button id="previous" type="button" aria-label="Previous sample">← Sample</button>
+        <button id="next" type="button" aria-label="Next sample">Sample →</button>
+        <button id="reference" type="button">Go to reference event (sample 74)</button>
+      </div>
+      <label for="timeline" class="time">Shared timeline <output id="sample"></output></label>
+      <input id="timeline" type="range" step="1">
+      <p id="source" class="note"></p>
+      <p id="media-error" role="alert" hidden></p>
+      <div class="panels">
+        <figure><figcaption>Camera clip</figcaption><canvas id="camera" width="960" height="540" role="img" aria-label="Camera frame"></canvas></figure>
+        <figure><figcaption>Point animation <small><span class="cyclist">Object 0: cyclist</span> · <span class="car">Object 1: vehicle</span></small></figcaption><canvas id="trajectory" width="960" height="540" role="img" aria-label="Trajectories"></canvas></figure>
+      </div>
+      <p class="note">Both views always show the same sample; playback uses the nominal 24 Hz analysis rate. The camera
+        clips run at about 23.976 fps and their alignment with the tracked points is approximate (producer-confirmed,
+        no subframe registration). Relative time is (sample − 74) / 24 s.</p>
+    </div>
+  </main>
+</body>
+</html>

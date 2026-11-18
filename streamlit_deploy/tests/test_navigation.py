@@ -176,3 +176,21 @@ def test_zone_settings_survive_switching(at):
     assert at.checkbox(key='seq_compress').value is False and at.radio(key='seq_encoding').value == 'Spatial zones'
     assert at.radio(key='seq_bounds_mode').value == 'Explicit bounds' and at.number_input(key='seq_bound_1').value == 70.0
     assert latest(at, 'sequences_4x6')['data'] == seqs
+
+
+def test_standard_patterns_can_be_hidden_and_revealed(at):
+    lh_page(at)
+    at.toggle(key='seq_show_standard').set_value(False).run()
+    ok(at)
+    chart = pd.read_csv(io.StringIO(latest(at, 'lh_pattern_frequency')['data']))
+    assert list(chart['Pattern']) == ['Entered: L H (ordered)']
+    assert not any('Fraction' in d.value.columns and 'Supporting_Trajectories' in d.value.columns for d in at.dataframe)
+    assert latest(at, 'lh_standard_patterns') is not None                       # download stays available
+    assert any('Part D' in c.value for c in at.caption)
+    at.selectbox(key='analysis_method').set_value('Visual Exploration').run()
+    at.selectbox(key='analysis_method').set_value('Sequence Analysis').run()
+    assert at.toggle(key='seq_show_standard').value is False                    # kept across modules
+    at.toggle(key='seq_show_standard').set_value(True).run()
+    chart = pd.read_csv(io.StringIO(latest(at, 'lh_pattern_frequency')['data'])).set_index('Pattern')
+    assert chart.loc['L followed by H (gaps allowed)', 'Fraction'] == '20/26'
+    assert chart.loc['H followed by L (gaps allowed)', 'Fraction'] == '6/26'

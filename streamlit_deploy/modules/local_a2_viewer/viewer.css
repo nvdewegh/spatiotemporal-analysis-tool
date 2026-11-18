@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+body { margin: 0; }
+p { margin: .5rem 0; }
+main { padding: .3rem .1rem .6rem; }
+label[for="folder"], figcaption { font-weight: 600; }
+input, button, select { font: inherit; }
+.controls { display: flex; flex-wrap: wrap; gap: .55rem 1rem; align-items: center; margin: .75rem 0; }
+.controls label { display: flex; align-items: center; gap: .45rem; }
+.time output { font-variant-numeric: tabular-nums; margin-left: .7rem; }
+input[type="range"] { display: block; width: 100%; margin: .4rem 0 .8rem; }
+.panels { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+figure { margin: 0; }
+canvas { display: block; width: 100%; height: auto; background: #eef1f4; border-radius: .25rem; }
+small { font-weight: normal; margin-left: .4rem; }
+.cyclist { color: #2683bb; }
+.car { color: #c76a14; }
+.note { font-size: .88rem; }
+#media-error { color: #ce4d4d; }
+@media (max-width: 630px) { .panels { grid-template-columns: 1fr; } }
