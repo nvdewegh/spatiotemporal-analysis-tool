@@ -105,7 +105,7 @@ class ReferenceChoice:
             return True
         if self.ref is None or self.compat[0] == 'incompatible':
             return False
-        return self.compat[0] == 'reference_dataset' or bool(_s().get('pdp_reference_ack'))
+        return self.compat[0] in ('reference_dataset', 'companion_dataset') or bool(_s().get('pdp_reference_ack'))
 
     def blockers(self, variant_keys, external_points):
         """Reasons the next computation is unavailable (never a silent fall-back to G2)."""
@@ -262,7 +262,7 @@ def reference_controls(df):
     if spec[0] != 'G2':
         if ref is None:
             st.error(f"Reference geometry invalid: {error}. {spec[0]} cannot be computed; G2 is not used instead.")
-        elif compat[0] == 'reference_dataset':
+        elif compat[0] in ('reference_dataset', 'companion_dataset'):
             st.caption(f"✓ {compat[1]} References are frozen: changing encounters, time range or cluster count "
                        "never refits them.")
         elif compat[0] == 'incompatible':

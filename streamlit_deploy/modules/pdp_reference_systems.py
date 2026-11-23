@@ -194,6 +194,7 @@ def data_content_sha256(df):
 def data_compatibility(ref, df):
     """
     ('reference_dataset', msg) when the loaded data is the dataset the references were fitted on;
+    ('companion_dataset', msg) when it is a listed companion (packaging.companion_datasets, e.g. the 1 Hz subsample);
     ('other_in_extent', msg) when it lies inside the reference extent but is a different dataset (needs
     explicit acknowledgement); ('incompatible', msg) otherwise.
     """
@@ -201,8 +202,14 @@ def data_compatibility(ref, df):
     required = {'config', 'tst', 'obj', 'x', 'y'}
     if not required.issubset(df.columns):
         return 'incompatible', "The loaded data lacks config/tst/obj/x/y columns."
-    if packaging.get('source_content_sha256') and data_content_sha256(df) == packaging['source_content_sha256']:
+    content = data_content_sha256(df)
+    if packaging.get('source_content_sha256') and content == packaging['source_content_sha256']:
         return 'reference_dataset', "Loaded data is the dataset these references were fitted on."
+    for companion in packaging.get('companion_datasets') or []:
+        if content == companion.get('source_content_sha256'):
+            return 'companion_dataset', (f"Loaded data is {companion.get('file', 'a known companion dataset')}, "
+                                         f"{companion.get('relation', 'a subsample of the fitted dataset')} "
+                                         "The references fitted on the detailed dataset are applied, not refitted.")
     roles = packaging.get('object_roles') or {'0': 'cyclist', '1': 'vehicle'}
     if not set(df['obj'].unique()).issubset({int(k) for k in roles}):
         return 'incompatible', "Objects other than 0 (cyclist) and 1 (vehicle) are present; roles are undefined."

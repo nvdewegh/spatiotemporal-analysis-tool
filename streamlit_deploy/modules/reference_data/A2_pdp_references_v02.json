@@ -2844,7 +2844,15 @@
       "1": "vehicle"
     },
     "loader_mapping": "conID -> config (Config_<conID>), tstID -> tst, poiID -> obj",
-    "historical_overlay_note": "The red dashed line in the overlay PNG is the rejected earlier vehicle-road estimate, shown for history only."
+    "historical_overlay_note": "The red dashed line in the overlay PNG is the rejected earlier vehicle-road estimate, shown for history only.",
+    "companion_datasets": [
+      {
+        "file": "A2_1Hz_dataset.csv",
+        "source_content_sha256": "b2de9ac50090effe405be5dc7cdf553b998f10b1a8b712ea4fe0d82fbf5d38b0",
+        "relation": "Exact subsample of the fitted detailed dataset: 1 Hz tst k = detailed sample 2 + 24k (samples 2, 26, 50, 74, 98, 122); all 312 rows identical in config, object, x and y.",
+        "use": "Accepted without confirmation: same scene and frame; the references are applied, not refitted."
+      }
+    ]
   },
   "reference_id": "A2-detailed-v02"
 }

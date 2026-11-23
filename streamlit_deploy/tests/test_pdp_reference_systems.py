@@ -376,3 +376,20 @@ def test_scalar_export_keeps_identity(ref):
     meta = rs.reference_metadata(ref, ('C4', 'median'))
     assert meta['flows']['cyclist']['estimator'] == 'median' and meta['descriptor_order'][0] == 'cyclist_flow_along'
     json.dumps(meta)
+
+
+ONE_HZ = os.path.join(os.path.dirname(DETAILED), 'A2_1Hz_dataset.csv')
+
+
+@pytest.mark.skipif(not (os.path.exists(DETAILED) and os.path.exists(ONE_HZ)), reason='A2 CSVs not available')
+def test_one_hz_companion_accepted_without_confirmation(ref):
+    """The 1 Hz file is an exact subsample (tst k = detailed 2 + 24k) and is accepted; an altered copy is not."""
+    hz = pd.read_csv(ONE_HZ).rename(columns={'conID': 'config', 'tstID': 'tst', 'poiID': 'obj'})
+    detailed = load_detailed()
+    matched = hz.assign(tst=2 + 24 * hz['tst']).merge(detailed, on=['config', 'obj', 'tst'], suffixes=('', '_d'))
+    assert len(matched) == len(hz) and (matched['x'] == matched['x_d']).all() and (matched['y'] == matched['y_d']).all()
+    assert rs.data_compatibility(ref, hz)[0] == 'companion_dataset'
+    altered = hz.copy()
+    altered.loc[0, 'x'] += 0.01
+    assert rs.data_compatibility(ref, altered)[0] == 'other_in_extent'
+    assert rs.data_compatibility(ref, hz.iloc[:-2])[0] == 'other_in_extent'
