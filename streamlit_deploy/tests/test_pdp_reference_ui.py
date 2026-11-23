@@ -159,3 +159,28 @@ def test_settings_round_trip(at):
     at.text_area(key='settings_import_text').set_value(json.dumps(bad))
     at.button(key='btn_import_settings').click().run()
     assert at.session_state['pdp_reference_system'] == 'C4'
+
+
+def test_cross_system_defaults_survive_hidden_explorer(at):
+    """System B keeps its C4 (mean) default after results were outdated (explorer hidden) and current again."""
+    at.selectbox(key='pdp_reference_system').set_value('C4').run()
+    compute(at)
+    assert at.selectbox(key='pdp_xs_spec_b').value == 'C4 (mean)'
+    at.selectbox(key='pdp_reference_system').set_value('R4').run()
+    assert outdated(at)
+    at.selectbox(key='pdp_reference_system').set_value('C4').run()
+    ok(at)
+    assert not outdated(at)
+    assert at.selectbox(key='pdp_xs_spec_a').value == 'G2'
+    assert at.selectbox(key='pdp_xs_spec_b').value == 'C4 (mean)'
+    assert at.selectbox(key='pdp_xs_chan_b_C4').value == 'cyclist_flow_along'
+
+
+def test_explorer_stays_open_after_a_choice_inside_it(at):
+    """The first change of a choice inside the explorer keeps it expanded on the rerun (no expander key)."""
+    at.selectbox(key='pdp_reference_system').set_value('C4').run()
+    compute(at)
+    assert not at.session_state['_pdp_explorer_open'] if '_pdp_explorer_open' in at.session_state else True
+    at.selectbox(key='pdp_xs_chan_b_C4').set_value('vehicle_flow_along').run()
+    ok(at)
+    assert at.session_state['_pdp_explorer_open'] is True

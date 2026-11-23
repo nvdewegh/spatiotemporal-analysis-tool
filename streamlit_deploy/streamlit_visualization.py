@@ -143,7 +143,7 @@ DATASET_RESULT_KEYS = ['pdp_results_all', 'pdp_run_signature', 'pdp_run_settings
                        'pdp_cluster_labels', 'pdp_linkage_matrix', 'pdp_viz_configs', '_pdp_viz_configs_choice',
                        'pdp_manual_points', 'pdp_external_points', 'distance_matrix', 'trajectory_ids',
                        'cluster_labels', '_pdp_ref_channels', '_pdp_ref_dataset', 'pdp_reference_override',
-                       'pdp_reference_ack', 'clustering_run', 'clustering_method', 'features_df', 'trajectories',
+                       'pdp_reference_ack', '_pdp_explorer_open', '_pdp_explorer_snapshot', 'clustering_run', 'clustering_method', 'features_df', 'trajectories',
                        'linkage_matrix', 'n_clusters']
 
 
@@ -161,6 +161,10 @@ SEQUENCE_KEPT_CHOICES = ['seq_encoding', 'seq_grid_rows', 'seq_grid_cols', 'seq_
 KEPT_CHOICES += SEQUENCE_KEPT_CHOICES
 KEPT_CHOICES += [f'pdp_ref_{kind}_{d}' for kind in ('buffer', 'rough')
                  for d in sorted({d for ids in pdp_reference_systems.DESCRIPTOR_ORDER.values() for d in ids})]
+# Reference-system explorer: systems and mapped channels (otherwise lost while outdated results hide the explorer)
+KEPT_CHOICES += ['pdp_xs_spec_a', 'pdp_xs_spec_b', 'pdp_xe_spec']
+KEPT_CHOICES += [f'{prefix}_chan_{side}_{system}' for prefix in ('pdp_xs', 'pdp_mm') for side in ('a', 'b')
+                 for system in pdp_reference_systems.SYSTEMS]
 
 
 def keep_choices_across_views():

@@ -431,9 +431,12 @@ def show_reference_view(df, ref):
 def _spec_choice(label, key, default):
     s = _s()
     labels = [rs.spec_label(sp) for sp in SPEC_OPTIONS]
-    if s.get(key) not in labels:
-        s[key] = rs.spec_label(default)
-    chosen = st.selectbox(label, labels, key=key)
+    if key in s and s[key] not in labels:
+        del s[key]
+    # Default via index only while the key is unset: a value written to session state just before the widget is
+    # created can be lost when the widget was hidden for a run (e.g. outdated results), leaving option 0 (G2).
+    default_kw = {} if key in s else {'index': labels.index(rs.spec_label(default))}
+    chosen = st.selectbox(label, labels, key=key, **default_kw)
     return SPEC_OPTIONS[labels.index(chosen)]
 
 
@@ -581,9 +584,11 @@ def cross_system_view(df, ref, prefix, fixed=None):
         c6.markdown(f"Channel of B: `{desc_b}` (same descriptor meaning)")
     else:
         default_b = da.index(desc_a) if da.index(desc_a) < len(db) else 0
-        if _s().get(f'{prefix}_chan_b_{spec_b[0]}') not in db:
-            _s()[f'{prefix}_chan_b_{spec_b[0]}'] = db[default_b]
-        desc_b = c6.selectbox("Channel of B (mapped explicitly)", db, key=f'{prefix}_chan_b_{spec_b[0]}',
+        key_b = f'{prefix}_chan_b_{spec_b[0]}'
+        if key_b in _s() and _s()[key_b] not in db:
+            del _s()[key_b]
+        desc_b = c6.selectbox("Channel of B (mapped explicitly)", db, key=key_b,
+                              **({} if key_b in _s() else {'index': default_b}),
                               format_func=lambda d: f"{d} ({rs.DESCRIPTOR_LABELS[d]})")
     st.caption(f"Mapping compared cell by cell: **A.{desc_a} ↔ B.{desc_b}**. Only these two channels are compared; "
                "systems with different descriptor counts are never subtracted as whole arrays.")
@@ -959,9 +964,29 @@ def _norm():
                 n_descriptors=s.get('pdp_norm_n_descriptors', 2))
 
 
+EXPLORER_PREFIXES = ('pdp_xs_', 'pdp_xe_', 'pdp_mm_', 'pdp_ds_', 'pdp_rx_')
+
+
+def explorer_in_use():
+    """
+    True once a choice inside the explorer has changed. Streamlit (no expander key) would otherwise collapse the
+    explorer on the rerun each choice triggers, interrupting the encounter → systems → channels → cell sequence.
+    """
+    s = _s()
+    snapshot = _explorer_snapshot()
+    previous = s.get('_pdp_explorer_snapshot')
+    if previous is not None and any(previous.get(k) != v for k, v in snapshot.items() if k in previous):
+        s['_pdp_explorer_open'] = True
+    return bool(s.get('_pdp_explorer_open'))
+
+
+def _explorer_snapshot():
+    return {k: repr(v) for k, v in _s().items() if isinstance(k, str) and k.startswith(EXPLORER_PREFIXES)}
+
+
 def render_reference_explorer(df, choice):
     with st.expander("Reference systems: G2, R2, R4 and C4 (compare systems, explain cells, mean vs median)",
-                     expanded=False):
+                     expanded=explorer_in_use()):
         rec = run_reference_record()
         st.caption(f"Completed run: **{reference_record_text(rec)}**. All tabs use its encounters, objects, time "
                    "range and window; the Fundamental relations are compared (Rough tolerance 0).")
@@ -970,13 +995,17 @@ def render_reference_explorer(df, choice):
             st.warning(f"Reference geometry unavailable ({error}): only G2 can be shown.")
         tabs = st.tabs(["Same encounter across systems", "Two encounters, one system", "C4 mean vs median",
                         "Dataset level", "Exports"])
-        with tabs[0]:
-            cross_system_view(df, ref, 'pdp_xs')
-        with tabs[1]:
-            two_encounter_view(df, ref)
-        with tabs[2]:
-            mean_median_view(df, ref)
-        with tabs[3]:
-            dataset_view(df, ref)
-        with tabs[4]:
-            exports_view(df, ref)
+        try:
+            with tabs[0]:
+                cross_system_view(df, ref, 'pdp_xs')
+            with tabs[1]:
+                two_encounter_view(df, ref)
+            with tabs[2]:
+                mean_median_view(df, ref)
+            with tabs[3]:
+                dataset_view(df, ref)
+            with tabs[4]:
+                exports_view(df, ref)
+        finally:
+            # after the widgets exist, so the first change of any choice is recognised on the next run
+            _s()['_pdp_explorer_snapshot'] = _explorer_snapshot()
