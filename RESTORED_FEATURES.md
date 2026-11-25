@@ -138,9 +138,9 @@ elif analysis_method == "2SA Method":
 
 ## Deployment Status
 
-✅ Changes committed to GitHub repository
-✅ Pushed to main branch
-✅ Streamlit Cloud will auto-deploy the update
+Changes committed to GitHub repository
+Pushed to main branch
+Streamlit Cloud will auto-deploy the update
 
 Once Streamlit Cloud completes its automatic deployment (usually takes 1-2 minutes), the restored features will be available to all users at your deployment URL.
 

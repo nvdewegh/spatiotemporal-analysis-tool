@@ -25,20 +25,20 @@ try:
     # Get the original dataset path from environment or av
     dataset_path = os.environ.get('AV_DATASET', av.dataset_name if hasattr(av, 'dataset_name') else 'N_C_Dataset.csv')
 except ImportError:
-    print("⚠️ av module not found - using default buffer values")
+    print("av module not found - using default buffer values")
     buffer_x = 25
     buffer_y = 10
     dataset_path = 'N_C_Dataset.csv'
 
-print(f"🔧 Buffer transformation: buffer_x={buffer_x}, buffer_y={buffer_y}")
-print(f"📂 Reading dataset: {dataset_path}")
+print(f"Buffer transformation: buffer_x={buffer_x}, buffer_y={buffer_y}")
+print(f"Reading dataset: {dataset_path}")
 
 # Start time
 t_start = time.time()
 
 # Check if input file exists
 if not os.path.exists(dataset_path):
-    raise FileNotFoundError(f"❌ Dataset file not found: {dataset_path}")
+    raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
 
 # Auto-detect header: Check if first row contains non-numeric data in first column
 has_header = False
@@ -52,7 +52,7 @@ with open(dataset_path) as test_file:
         except ValueError:
             has_header = True
 
-print(f"📋 Header detected: {has_header}")
+print(f"Header detected: {has_header}")
 
 # Open the CSV
 with open(dataset_path, 'r') as csv_file:
@@ -81,7 +81,7 @@ with open(dataset_path, 'r') as csv_file:
 results_dir = os.environ.get('AV_RESULTS_DIR', os.getcwd())
 output_path = os.path.join(results_dir, 'N_C_PDPg_buffer_Dataset.csv')
 
-print(f"💾 Saving buffer dataset to: {output_path}")
+print(f"Saving buffer dataset to: {output_path}")
 
 # Save the new CSV file
 with open(output_path, 'w', newline='') as new_csv_file:

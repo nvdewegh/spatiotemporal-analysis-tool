@@ -207,7 +207,7 @@ def object_selector(
     
     # Show info about object selection
     if globally_selected_objects is not None and len(globally_selected_objects) > 0:
-        st.info(f"ℹ️ Using {len(available_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
+        st.info(f"Using {len(available_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
     else:
         st.warning("No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
     

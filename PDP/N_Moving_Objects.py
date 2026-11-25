@@ -30,13 +30,13 @@ if av.N_VA_StaticAbsolute == 1:
     try:
         import N_VA_StaticAbsolute
     except ImportError:
-        print("⚠️ N_VA_StaticAbsolute not found in ")
+        print("N_VA_StaticAbsolute not found in ")
 
 if av.N_VA_TennisCourt == 1:
     try:
         import N_VA_TennisCourt
     except ImportError:
-        print("⚠️ N_VA_TennisCourt not found in ")
+        print("N_VA_TennisCourt not found in ")
 
 
 # ---------------- Helper: robust CSV loader (5 columns) ----------------
@@ -90,7 +90,7 @@ def SetDataForPDPType(data_filename, D_point_mapping, curr_point_id, window_leng
 # ---------------- PDP: Fundamental ----------------
 if av.PDPg_fundamental == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: FUNDAMENTAL")
+    print("STARTING PDP: FUNDAMENTAL")
     print("="*60)
     av.PDPg_fundamental_active = 1
 
@@ -126,29 +126,29 @@ if av.PDPg_fundamental == 1:
         try:
             import N_PDP
         except ImportError:
-            print("⚠️ N_PDP not found in ")
+            print("N_PDP not found in ")
     if av.N_VA_HeatMap == 1:
         try:
             import N_VA_HeatMap
         except ImportError:
-            print("⚠️ N_VA_HeatMap not found in ")
+            print("N_VA_HeatMap not found in ")
     if av.N_VA_HClust == 1:
         try:
             import N_VA_HClust
         except ImportError:
-            print("⚠️ N_VA_HClust not found in ")
+            print("N_VA_HClust not found in ")
     
     if av.N_VA_Mds == 1:
         try:
             import N_VA_Mds
         except ImportError:
-            print("⚠️ N_VA_Mds not found in ")
+            print("N_VA_Mds not found in ")
 
     if av.N_VA_TopK == 1:
         try:
             import N_VA_TopK
         except ImportError:
-            print("⚠️ N_VA_TopK not found in ")
+            print("N_VA_TopK not found in ")
     
 
     av.PDPg_fundamental_active = 0
@@ -157,7 +157,7 @@ if av.PDPg_fundamental == 1:
 # ---------------- PDP: Buffer ----------------
 if av.PDPg_buffer == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: BUFFER")
+    print("STARTING PDP: BUFFER")
     print("="*60)
     av.PDPg_buffer_active = 1
 
@@ -169,9 +169,9 @@ if av.PDPg_buffer == 1:
         buffer_dataset_path = os.path.join(results_dir, "N_C_PDPg_buffer_Dataset.csv")
         
         if not os.path.exists(buffer_dataset_path):
-            raise FileNotFoundError(f"❌ Buffer dataset not created: {buffer_dataset_path}")
+            raise FileNotFoundError(f"Buffer dataset not created: {buffer_dataset_path}")
         
-        print(f"✅ Buffer dataset created: {buffer_dataset_path}")
+        print(f"Buffer dataset created: {buffer_dataset_path}")
         
         av.dataset_name = buffer_dataset_path
         av.dataset_name_exclusive = os.path.splitext(av.dataset_name)[0]
@@ -195,26 +195,26 @@ if av.PDPg_buffer == 1:
                 import N_PDP
                 importlib.reload(N_PDP)
             except (ImportError, NameError):
-                print("⚠️ N_PDP not available for buffer analysis")
+                print("N_PDP not available for buffer analysis")
         if av.N_VA_HeatMap == 1:
             try:
                 import N_VA_HeatMap
                 importlib.reload(N_VA_HeatMap)
             except (ImportError, NameError):
-                print("⚠️ N_VA_HeatMap not available for buffer analysis")
+                print("N_VA_HeatMap not available for buffer analysis")
         if av.N_VA_HClust == 1:
             try:
                 import N_VA_HClust
                 importlib.reload(N_VA_HClust)
             except (ImportError, NameError):
-                print("⚠️ N_VA_HClust not available for buffer analysis")
+                print("N_VA_HClust not available for buffer analysis")
         
         if av.N_VA_Mds == 1:
             try:
                 import N_VA_Mds
                 importlib.reload(N_VA_Mds)
             except (ImportError, NameError):
-                print("⚠️ N_VA_Mds not available for buffer analysis")
+                print("N_VA_Mds not available for buffer analysis")
         
     
         if av.N_VA_TopK == 1:
@@ -222,16 +222,16 @@ if av.PDPg_buffer == 1:
                 import N_VA_TopK
                 importlib.reload(N_VA_TopK)
             except (ImportError, NameError):
-                print("⚠️ N_VA_TopK not available for buffer analysis")
+                print("N_VA_TopK not available for buffer analysis")
         
     except ImportError as e:
-        print(f"⚠️ N_T_OB import error: {e}")
+        print(f"N_T_OB import error: {e}")
         print("Skipping buffer transformation")
     except FileNotFoundError as e:
-        print(f"❌ {e}")
+        print(f"{e}")
         print("Buffer transformation failed - dataset not created")
     except Exception as e:
-        print(f"❌ Error during buffer transformation: {e}")
+        print(f"Error during buffer transformation: {e}")
         import traceback
         traceback.print_exc()
 
@@ -241,7 +241,7 @@ if av.PDPg_buffer == 1:
 # ---------------- PDP: Rough ----------------
 if av.PDPg_rough == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: ROUGH")
+    print("STARTING PDP: ROUGH")
     print("="*60)
     av.PDPg_rough_active = 1
 
@@ -270,33 +270,33 @@ if av.PDPg_rough == 1:
             import N_PDP
             importlib.reload(N_PDP)
         except (ImportError, NameError):
-            print("⚠️ N_PDP not available for rough analysis")
+            print("N_PDP not available for rough analysis")
     if av.N_VA_HeatMap == 1:
         try:
             import N_VA_HeatMap
             importlib.reload(N_VA_HeatMap)
         except (ImportError, NameError):
-            print("⚠️ N_VA_HeatMap not available for rough analysis")
+            print("N_VA_HeatMap not available for rough analysis")
     if av.N_VA_HClust == 1:
         try:
             import N_VA_HClust
             importlib.reload(N_VA_HClust)
         except (ImportError, NameError):
-            print("⚠️ N_VA_HClust not available for rough analysis")
+            print("N_VA_HClust not available for rough analysis")
     
     if av.N_VA_Mds == 1:
         try:
             import N_VA_Mds
             importlib.reload(N_VA_Mds)
         except (ImportError, NameError):
-            print("⚠️ N_VA_Mds not available for rough analysis")
+            print("N_VA_Mds not available for rough analysis")
     
     if av.N_VA_TopK == 1:
         try:
             import N_VA_TopK
             importlib.reload(N_VA_TopK)
         except (ImportError, NameError):
-            print("⚠️ N_VA_TopK not available for rough analysis")
+            print("N_VA_TopK not available for rough analysis")
     
     av.PDPg_rough_active = 0
 
@@ -304,7 +304,7 @@ if av.PDPg_rough == 1:
 # ---------------- PDP: Buffer + Rough ----------------
 if av.PDPg_bufferrough == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: BUFFER + ROUGH")
+    print("STARTING PDP: BUFFER + ROUGH")
     print("="*60)
     av.PDPg_bufferrough_active = 1
 
@@ -342,36 +342,36 @@ if av.PDPg_bufferrough == 1:
                 import N_PDP
                 importlib.reload(N_PDP)
             except (ImportError, NameError):
-                print("⚠️ N_PDP not available for buffer+rough analysis")
+                print("N_PDP not available for buffer+rough analysis")
         if av.N_VA_HeatMap == 1:
             try:
                 import N_VA_HeatMap
                 importlib.reload(N_VA_HeatMap)
             except (ImportError, NameError):
-                print("⚠️ N_VA_HeatMap not available for buffer+rough analysis")
+                print("N_VA_HeatMap not available for buffer+rough analysis")
         if av.N_VA_HClust == 1:
             try:
                 import N_VA_HClust
                 importlib.reload(N_VA_HClust)
             except (ImportError, NameError):
-                print("⚠️ N_VA_HClust not available for buffer+rough analysis")
+                print("N_VA_HClust not available for buffer+rough analysis")
         
         if av.N_VA_Mds == 1:
             try:
                 import N_VA_Mds
                 importlib.reload(N_VA_Mds)
             except (ImportError, NameError):
-                print("⚠️ N_VA_Mds not available for buffer+rough analysis")
+                print("N_VA_Mds not available for buffer+rough analysis")
         
         if av.N_VA_TopK == 1:
             try:
                 import N_VA_TopK
                 importlib.reload(N_VA_TopK)
             except (ImportError, NameError):
-                print("⚠️ N_VA_TopK not available for buffer+rough analysis")
+                print("N_VA_TopK not available for buffer+rough analysis")
         
     except ImportError:
-        print("⚠️ N_T_OB not found in  - skipping buffer+rough transformation")
+        print("N_T_OB not found in  - skipping buffer+rough transformation")
 
     av.PDPg_bufferrough_active = 0
 
@@ -380,8 +380,8 @@ if av.PDPg_bufferrough == 1:
 if not _already_printed:
     elapsed = time.time() - t_start
     print("\n" + "="*60)
-    print("✅ ALL PDP PROCESSING COMPLETE!")
+    print("ALL PDP PROCESSING COMPLETE!")
     print("="*60)
-    print(f'⏱️  Total time elapsed: {elapsed:.3f} sec ({elapsed/60:.2f} min)')
+    print(f' Total time elapsed: {elapsed:.3f} sec ({elapsed/60:.2f} min)')
     print("="*60 + "\n")
     av._moving_objects_printed = True  # Set flag to prevent duplicate print on reload

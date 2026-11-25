@@ -1,7 +1,7 @@
 # INSERT THIS SECTION BEFORE "elif analysis_method == 'Sequence Analysis':" (around line 2837)
 
     elif analysis_method == "Association Rules":
-        st.header("🛒 Association Rule Learning")
+        st.header("Association Rule Learning")
         
         st.info("""
         **Discover interesting relationships between trajectory attributes using Association Rules:**
@@ -21,7 +21,7 @@
         """)
         
         # Show market basket example
-        with st.expander("ℹ️ Market Basket Analysis Example", expanded=False):
+        with st.expander("Market Basket Analysis Example", expanded=False):
             st.markdown("""
             **Classic Example: Supermarket Transactions**
             
@@ -56,7 +56,7 @@
         selected_objects = st.session_state.shared_selected_objects
         
         if not selected_configs or not selected_objects:
-            st.warning("⚠️ Please select at least one configuration and one object from the sidebar.")
+            st.warning("Please select at least one configuration and one object from the sidebar.")
         else:
             # Filter data
             filtered_df = st.session_state.data[
@@ -67,10 +67,10 @@
             if len(filtered_df) == 0:
                 st.error("No data available for selected configurations and objects.")
             else:
-                st.success(f"✅ Loaded {len(filtered_df)} trajectories")
+                st.success(f"Loaded {len(filtered_df)} trajectories")
                 
                 # Configuration Panel
-                st.subheader("⚙️ Transaction Configuration")
+                st.subheader("Transaction Configuration")
                 
                 col1, col2 = st.columns(2)
                 
@@ -94,7 +94,7 @@
                 st.markdown("---")
                 
                 # Threshold Settings
-                st.subheader("📊 Rule Mining Thresholds")
+                st.subheader("Rule Mining Thresholds")
                 
                 col1, col2, col3 = st.columns(3)
                 
@@ -125,7 +125,7 @@
                 st.markdown("---")
                 
                 # Mine Rules Button
-                if st.button("🔍 Mine Association Rules", type="primary"):
+                if st.button("Mine Association Rules", type="primary"):
                     with st.spinner("Preparing transactions and mining rules..."):
                         try:
                             # Prepare trajectories dictionary
@@ -171,7 +171,7 @@
                             st.session_state.ar_item_names = item_names
                             
                             # Show transaction preview
-                            st.subheader("📝 Transaction Preview")
+                            st.subheader("Transaction Preview")
                             st.write(f"Total transactions: {len(transactions)}")
                             st.write(f"Unique items: {len(item_names)}")
                             
@@ -183,7 +183,7 @@
                             st.dataframe(trans_df, use_container_width=True)
                             
                             # Compute association rules
-                            st.subheader("⚙️ Mining Association Rules...")
+                            st.subheader("Mining Association Rules...")
                             rules_df, frequent_itemsets = compute_association_rules_from_transactions(
                                 transactions, min_support, min_confidence, min_lift
                             )
@@ -199,9 +199,9 @@
                             st.session_state.ar_distance_matrix = distance_matrix
                             
                             if len(rules_df) == 0:
-                                st.warning(f"⚠️ No rules found with current thresholds. Try lowering the thresholds.")
+                                st.warning(f"No rules found with current thresholds. Try lowering the thresholds.")
                             else:
-                                st.success(f"✅ Found {len(rules_df)} association rules!")
+                                st.success(f"Found {len(rules_df)} association rules!")
                         
                         except Exception as e:
                             st.error(f"Error during rule mining: {str(e)}")
@@ -211,15 +211,15 @@
                 # Display results if available
                 if st.session_state.ar_rules is not None and len(st.session_state.ar_rules) > 0:
                     st.markdown("---")
-                    st.header("📊 Association Rules Results")
+                    st.header("Association Rules Results")
                     
                     rules_df = st.session_state.ar_rules
                     
                     # Tabs for different visualizations
                     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-                        "📋 Rules Table", "🕸️ Network", "📈 Support-Confidence", 
-                        "🔥 Co-occurrence Heatmap", "🗺️ MDS Projection", 
-                        "📊 Distance Matrix", "🏆 Top Rules"
+                        "Rules Table", "Network", "Support-Confidence", 
+                        "Co-occurrence Heatmap", "MDS Projection", 
+                        "Distance Matrix", "Top Rules"
                     ])
                     
                     with tab1:
@@ -252,7 +252,7 @@
                         # Download button
                         csv = display_df.to_csv(index=False)
                         st.download_button(
-                            "📥 Download Rules as CSV",
+                            "Download Rules as CSV",
                             csv,
                             "association_rules.csv",
                             "text/csv"
@@ -331,7 +331,7 @@
                         render_interactive_chart(fig)
                     
                     # Interpretation Guide
-                    with st.expander("📖 How to Interpret Results", expanded=False):
+                    with st.expander("How to Interpret Results", expanded=False):
                         st.markdown("""
                         **Understanding Association Rule Metrics:**
                         

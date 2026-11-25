@@ -47,7 +47,7 @@
        
        Called from main streamlit_visualization.py
        """
-       st.header("🎯 My New Analysis")
+       st.header("My New Analysis")
        st.info("Description of what this method does...")
        
        # Your Streamlit UI here
@@ -213,7 +213,7 @@ st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 ### Pattern 1: Analysis with Tabs
 ```python
 def render_my_analysis_section(data, selected_configs, selected_objects):
-    st.header("📊 My Analysis")
+    st.header("My Analysis")
     
     tabs = st.tabs(["Overview", "Detailed Results", "Visualization", "Export"])
     
@@ -361,15 +361,15 @@ render_interactive_chart(st, fig, "Interactive chart - zoom, pan, or reset")
 
 2. **Provide informative messages:**
    ```python
-   st.info("ℹ️ Information message")
-   st.warning("⚠️ Warning message")
-   st.error("❌ Error message")
-   st.success("✅ Success message")
+   st.info("Information message")
+   st.warning("Warning message")
+   st.error("Error message")
+   st.success("Success message")
    ```
 
 3. **Use expanders for details:**
    ```python
-   with st.expander("ℹ️ How does this work?", expanded=False):
+   with st.expander("How does this work?", expanded=False):
        st.markdown("Detailed explanation...")
    ```
 
@@ -380,6 +380,6 @@ render_interactive_chart(st, fig, "Interactive chart - zoom, pan, or reset")
    ```
 
 5. **Consistent formatting:**
-   - Use emojis for visual clarity (📊 🎯 🔍 ⚙️)
+   - Use emojis for visual clarity ()
    - Use markdown headers (##, ###)
    - Use horizontal rules (st.markdown('---'))

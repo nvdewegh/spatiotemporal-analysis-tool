@@ -6,13 +6,13 @@ The `ui_components.py` module provides **reusable UI components** to ensure cons
 
 ## Why This Matters
 
-✅ **Before (Current State):**
+**Before (Current State):**
 - Configuration selection code duplicated in multiple places
 - Each location might have slightly different behavior
 - Changing the UI requires updating multiple locations
 - Risk of inconsistent user experience
 
-✅ **After (With UI Components):**
+**After (With UI Components):**
 - Single source of truth for selection interfaces
 - Consistent behavior everywhere
 - Update once, applies everywhere
@@ -92,7 +92,7 @@ selected_objects = object_selector(
 
 Here's where similar selection patterns exist in the code:
 
-### 🔹 Location 1: PDP Analysis → "Inspect Individual Configurations"
+### Location 1: PDP Analysis → "Inspect Individual Configurations"
 **File:** `streamlit_visualization.py`  
 **Line:** ~3695  
 **Current Code:**
@@ -126,7 +126,7 @@ selected_configs_inspect = configuration_selector(
 
 ---
 
-### 🔹 Location 2: PDP Analysis → "Trajectory Comparison on Tennis Court"
+### Location 2: PDP Analysis → "Trajectory Comparison on Tennis Court"
 **File:** `streamlit_visualization.py`  
 **Line:** ~4165-4180  
 **Current Code:**
@@ -173,24 +173,24 @@ Find each location with selection UI and replace with function call.
 
 ### Step 3: Test
 Run the app and verify:
-- ✅ Selections work correctly
-- ✅ Keys are unique (no duplicates)
-- ✅ Behavior is consistent
+- Selections work correctly
+- Keys are unique (no duplicates)
+- Behavior is consistent
 
 ---
 
 ## Benefits
 
-### 🎯 Single Point of Change
+### Single Point of Change
 Want to change the max selections from 5 to 10? Update one parameter in `ui_components.py`.
 
-### 🎯 Consistency
+### Consistency
 All selection interfaces look and behave the same way.
 
-### 🎯 New Features Everywhere
+### New Features Everywhere
 Add a "Select All" button to `configuration_selector()` → it appears in all locations automatically.
 
-### 🎯 Less Code
+### Less Code
 Reduce 15-20 lines of duplicated code to 3-4 lines per location.
 
 ---
@@ -208,12 +208,12 @@ def configuration_selector(..., show_quick_buttons=False, distance_matrix=None):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("🎲 Random 3", key=f"{key_prefix}_random"):
+            if st.button("Random 3", key=f"{key_prefix}_random"):
                 # Random selection logic
                 ...
         
         with col2:
-            if st.button("📈 Min/Max", key=f"{key_prefix}_minmax"):
+            if st.button("Min/Max", key=f"{key_prefix}_minmax"):
                 # Min/max distance logic
                 ...
         
@@ -231,4 +231,4 @@ Now any location can enable quick buttons with one parameter!
 3. **Gradually refactor** other locations
 4. **Extend** the components with new features as needed
 
-This approach makes your code more maintainable and scalable! 🚀
+This approach makes your code more maintainable and scalable!

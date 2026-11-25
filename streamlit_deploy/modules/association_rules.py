@@ -681,15 +681,15 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     - **Consequent {B}**: Items that co-occur with the antecedent (right-hand side of the rule)
     
     **Two Primary Metrics (Theoretical Focus):**
-    - **Support** ⭐: How common is this pattern? (frequency in all trajectories)
-    - **Confidence** ⭐: How reliable is this rule? (probability of finding consequent when antecedent is present)
+    - **Support** : How common is this pattern? (frequency in all trajectories)
+    - **Confidence** : How reliable is this rule? (probability of finding consequent when antecedent is present)
     
     **Goal**: Find patterns that are both **common enough** (support) and **strong enough** (confidence) to be meaningful
     
     **Applications:** Movement pattern discovery, spatial behaviour analysis, trajectory prediction
     """)
     
-    with st.expander("ℹ️ Market Basket Analysis Example", expanded=False):
+    with st.expander("Market Basket Analysis Example", expanded=False):
         st.markdown("""
         **Classic Example: Supermarket Transactions**
         
@@ -843,21 +843,21 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
     
     st.info("""
     **Primary Metrics (Theoretical Focus):**
-    - **Support ⭐**: How frequently the pattern appears (common vs. rare patterns)
-    - **Confidence ⭐**: Probability that consequent occurs given antecedent (rule strength)
+    - **Support **: How frequently the pattern appears (common vs. rare patterns)
+    - **Confidence **: Probability that consequent occurs given antecedent (rule strength)
     """)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        min_support = st.slider("**Min Support** ⭐", 0.05, 0.5, 0.1, 0.05,
+        min_support = st.slider("**Min Support** ", 0.05, 0.5, 0.1, 0.05,
                                help="Support = P(A ∪ B): Frequency of the pattern in all trajectories. "
                                     "Higher support = more common pattern", 
                                key="ar_min_support")
         st.caption(f"Pattern must appear in ≥{min_support*100:.0f}% of trajectories")
     
     with col2:
-        min_confidence = st.slider("**Min Confidence** ⭐", 0.1, 1.0, 0.5, 0.05,
+        min_confidence = st.slider("**Min Confidence** ", 0.1, 1.0, 0.5, 0.05,
                                    help="Confidence = P(B|A): Probability that consequent occurs given antecedent. "
                                         "Higher confidence = stronger rule", 
                                    key="ar_min_confidence")
@@ -1263,11 +1263,11 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
                             
                             st.info(f"""
                             **Visualisation Details:**
-                            - 🔴 **Red zones** = Antecedent ({', '.join(list(antecedents))})
-                            - 🔵 **Blue zones** = Consequent ({', '.join(list(consequents))})
+                            - **Red zones** = Antecedent ({', '.join(list(antecedents))})
+                            - **Blue zones** = Consequent ({', '.join(list(consequents))})
                             - Each trajectory is shown as a coloured path
-                            - 🟢 Green circles indicate start points
-                            - 🔴 Red squares indicate end points
+                            - Green circles indicate start points
+                            - Red squares indicate end points
                             - Showing up to 20 trajectories for clarity
                             - Hover over points to see trajectory IDs and coordinates
                             - All {num_supporting} trajectories contain both antecedent and consequent zones
@@ -1283,14 +1283,14 @@ def render_association_rules_section(data, selected_configs, selected_objects, c
             st.markdown("""
             **Primary Metrics (Theoretical Focus):**
             
-            ### 1. **Support** = P(A ∪ B) ⭐
+            ### 1. **Support** = P(A ∪ B)
             - **Definition**: Frequency of the pattern in all trajectories
             - **Interpretation**: 
               - High support (e.g., 0.3) = pattern occurs in 30% of trajectories (common)
               - Low support (e.g., 0.05) = pattern occurs in 5% of trajectories (rare)
             - **Use**: Identifies how prevalent a pattern is in your data
             
-            ### 2. **Confidence** = P(B|A) = P(A ∪ B) / P(A) ⭐
+            ### 2. **Confidence** = P(B|A) = P(A ∪ B) / P(A)
             - **Definition**: Probability that consequent occurs given antecedent
             - **Interpretation**: 
               - Confidence of 0.8 = 80% of the time A appears, B also appears

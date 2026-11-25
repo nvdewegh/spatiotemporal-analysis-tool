@@ -2,7 +2,7 @@
 
 ## Complete Checklist to Publish Your Tool
 
-### ✅ Step 1: Initialize Git Repository
+### Step 1: Initialize Git Repository
 
 Open Terminal and navigate to your project folder, then run:
 
@@ -12,7 +12,7 @@ cd "/Users/nicovandeweghe/MIJNJUISTEDATA/NVdW/z/01010100 OW Omvang Cursussen(tit
 git init
 ```
 
-### ✅ Step 2: Add All Files
+### Step 2: Add All Files
 
 ```bash
 git add .
@@ -25,20 +25,20 @@ This adds:
 - requirements.txt (Python packages)
 - .gitignore (files to ignore)
 
-### ✅ Step 3: Create First Commit
+### Step 3: Create First Commit
 
 ```bash
 git commit -m "Initial commit: Trajectory Clustering Analysis Tool with all 7 steps"
 ```
 
-### ✅ Step 4: Link to GitHub Repository
+### Step 4: Link to GitHub Repository
 
 ```bash
 git branch -M main
 git remote add origin https://github.com/nvdewegh/spatiotemporal-analysis-tool.git
 ```
 
-### ✅ Step 5: Push to GitHub
+### Step 5: Push to GitHub
 
 ```bash
 git push -u origin main
@@ -93,11 +93,11 @@ streamlit run streamlit_deploy/streamlit_visualization.py
 
 ## Files Created for GitHub
 
-✅ `README.md` - Main documentation with feature overview
-✅ `INSTALLATION.md` - Step-by-step guide for students
-✅ `requirements.txt` - Python package dependencies
-✅ `.gitignore` - Files to exclude from git (like .venv)
-✅ `streamlit_visualization.py` - Your complete application
+`README.md` - Main documentation with feature overview
+`INSTALLATION.md` - Step-by-step guide for students
+`requirements.txt` - Python package dependencies
+`.gitignore` - Files to exclude from git (like .venv)
+`streamlit_visualization.py` - Your complete application
 
 ---
 
@@ -144,4 +144,4 @@ git push
 
 ---
 
-**Ready to publish!** 🚀
+**Ready to publish!**

@@ -21,8 +21,8 @@ import warnings
 
 # Set page config first (must be first Streamlit command)
 st.set_page_config(
-    page_title="🚀 PDP Analysis Dashboard",
-    page_icon="🎾",
+    page_title="PDP Analysis Dashboard",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -108,7 +108,7 @@ def calculate_progress(output_text, params):
     
     # Determine current stage
     if 'ALL PDP PROCESSING COMPLETE' in output_text:
-        current_stage = "✅ Analysis Complete!"
+        current_stage = "Analysis Complete!"
         progress = 100
     elif 'STARTING PDP: BUFFER' in output_text:
         current_stage = "Processing Buffer PDP..."
@@ -150,7 +150,7 @@ def check_password():
         <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                     padding: 40px; border-radius: 12px; color: white; margin-bottom: 20px;
                     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4); text-align: center;'>
-            <h1 style='margin: 0 0 16px 0; font-size: 42px;'>🔒 SAM Analysis Platform</h1>
+            <h1 style='margin: 0 0 16px 0; font-size: 42px;'>SAM Analysis Platform</h1>
             <p style='font-size: 18px; opacity: 0.95; margin: 0;'>
                 Please enter your password to access the dashboard
             </p>
@@ -161,30 +161,30 @@ def check_password():
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown("### 🔐 Login")
+        st.markdown("### Login")
         
         # Password input
         password = st.text_input("Password", type="password", key="password_input")
         
         col_login, col_space = st.columns([1, 1])
         with col_login:
-            if st.button("🚀 Login", type="primary", use_container_width=True):
+            if st.button("Login", type="primary", use_container_width=True):
                 if password == CORRECT_PASSWORD:
                     st.session_state.authenticated = True
-                    st.success("✅ Login successful!")
+                    st.success("Login successful!")
                     time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("❌ Incorrect password. Please try again.")
+                    st.error("Incorrect password. Please try again.")
         
         st.markdown("---")
-        st.info("💡 **Tip:** Contact your administrator if you've forgotten your password.")
+        st.info("**Tip:** Contact your administrator if you've forgotten your password.")
         
         # Optional: Show environment hint for deployment
         if os.environ.get('APP_PASSWORD'):
-            st.caption("🔒 Password is configured via environment variable")
+            st.caption("Password is configured via environment variable")
         else:
-            st.caption("⚠️ Using default password. Set APP_PASSWORD environment variable for production.")
+            st.caption("Using default password. Set APP_PASSWORD environment variable for production.")
     
     return False
 
@@ -198,7 +198,7 @@ if not check_password():
 # Logout button in sidebar
 with st.sidebar:
     st.markdown("---")
-    if st.button("🚪 Logout", type="secondary", use_container_width=True):
+    if st.button("Logout", type="secondary", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
 
@@ -223,18 +223,18 @@ def run_moving_objects_in_background(params):
         
         with open(log_file_path, 'w', encoding='utf-8') as debug_log:
             debug_log.write("="*60 + "\n")
-            debug_log.write("🔍 DEBUG: Function started\n")
-            debug_log.write(f"📂 Results dir: {results_dir}\n")
-            debug_log.write(f"📊 Dataset param: {params.get('dataset_name', 'N_C_Dataset.csv')}\n")
-            debug_log.write(f"🗂️ Current working dir: {os.getcwd()}\n")
+            debug_log.write("DEBUG: Function started\n")
+            debug_log.write(f"Results dir: {results_dir}\n")
+            debug_log.write(f"Dataset param: {params.get('dataset_name', 'N_C_Dataset.csv')}\n")
+            debug_log.write(f"Current working dir: {os.getcwd()}\n")
             debug_log.write("="*60 + "\n")
         
         # Validate dataset file exists
         dataset_name = params.get('dataset_name', 'N_C_Dataset.csv')
         if not os.path.isfile(dataset_name):
             with open(log_file_path, 'a', encoding='utf-8') as debug_log:
-                debug_log.write(f'❌ ERROR: Dataset file not found: {dataset_name}\n')
-                debug_log.write(f'📂 Looking in: {os.path.abspath(dataset_name)}\n')
+                debug_log.write(f'ERROR: Dataset file not found: {dataset_name}\n')
+                debug_log.write(f'Looking in: {os.path.abspath(dataset_name)}\n')
             with open(status_file_path, 'w', encoding='utf-8') as f:
                 f.write('error')
             return
@@ -272,10 +272,10 @@ def run_moving_objects_in_background(params):
         
         try:
             print("="*60)
-            print("🚀 STARTING ANALYSIS")
+            print("STARTING ANALYSIS")
             print("="*60)
-            print(f"📊 Dataset: {params.get('dataset_name', 'N_C_Dataset.csv')}")
-            print(f"📂 Results: {results_dir}")
+            print(f"Dataset: {params.get('dataset_name', 'N_C_Dataset.csv')}")
+            print(f"Results: {results_dir}")
             print("="*60)
             
             # Reload av so it processes the dataset with the provided environment
@@ -287,20 +287,20 @@ def run_moving_objects_in_background(params):
                 if hasattr(av, key):
                     setattr(av, key, value)
             
-            print(f'✅ Configuration loaded successfully')
-            print(f'🔢 Configurations: {av.con}, Timestamps: {av.tst}, Points: {av.poi}')
+            print(f'Configuration loaded successfully')
+            print(f'Configurations: {av.con}, Timestamps: {av.tst}, Points: {av.poi}')
             print('='*60)
             
             # Import and run N_Moving_Objects
             import N_Moving_Objects
             importlib.reload(N_Moving_Objects)
             
-            print('\n✅ Analysis completed successfully!')
+            print('\nAnalysis completed successfully!')
             with open(status_file_path, 'w', encoding='utf-8') as f:
                 f.write('finished')
                 
         except Exception as e:
-            print(f'\n❌ ERROR during analysis:\n{str(e)}')
+            print(f'\nERROR during analysis:\n{str(e)}')
             import traceback
             traceback.print_exc()
             with open(status_file_path, 'w', encoding='utf-8') as f:
@@ -335,9 +335,9 @@ st.markdown("""
     <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                 padding: 24px; border-radius: 12px; color: white; margin-bottom: 20px;
                 box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);'>
-        <h1 style='margin: 0 0 8px 0; font-size: 32px;'>🚀 Moving Objects Analysis Dashboard</h1>
+        <h1 style='margin: 0 0 8px 0; font-size: 32px;'>Moving Objects Analysis Dashboard</h1>
         <p style='font-size: 16px; opacity: 0.95; margin: 0;'>
-            ⚙️ Configureer parameters, selecteer modules en start de analyse
+            Configureer parameters, selecteer modules en start de analyse
         </p>
     </div>
 """, unsafe_allow_html=True)
@@ -349,20 +349,20 @@ col1, col2, col3 = st.columns([1, 1, 1])
 # COLUMN 1: PDP Types & Core Parameters
 # ============================================================================
 with col1:
-    st.markdown("### 📊 PDP Types")
+    st.markdown("### PDP Types")
     
     # Fundamental is always required (disabled checkbox)
-    st.checkbox("🔹 Fundamental (required)", value=True, disabled=True, key='pdp_fundamental')
+    st.checkbox("Fundamental (required)", value=True, disabled=True, key='pdp_fundamental')
     
     # Optional PDP types
-    pdp_buffer = st.checkbox("🔸 Buffer", value=getattr(av, 'PDPg_buffer', 1) == 1, key='pdp_buffer')
-    pdp_rough = st.checkbox("🔶 Rough", value=getattr(av, 'PDPg_rough', 0) == 1, key='pdp_rough')
-    pdp_bufferrough = st.checkbox("🔷 Buffer + Rough", value=getattr(av, 'PDPg_bufferrough', 0) == 1, key='pdp_bufferrough')
+    pdp_buffer = st.checkbox("Buffer", value=getattr(av, 'PDPg_buffer', 1) == 1, key='pdp_buffer')
+    pdp_rough = st.checkbox("Rough", value=getattr(av, 'PDPg_rough', 0) == 1, key='pdp_rough')
+    pdp_bufferrough = st.checkbox("Buffer + Rough", value=getattr(av, 'PDPg_bufferrough', 0) == 1, key='pdp_bufferrough')
     
-    st.markdown("### 🔢 Core Parameters")
-    window_length_tst = st.number_input("⏱️ window_length_tst", value=getattr(av, 'window_length_tst', 3), min_value=1, step=1)
+    st.markdown("### Core Parameters")
+    window_length_tst = st.number_input("window_length_tst", value=getattr(av, 'window_length_tst', 3), min_value=1, step=1)
     
-    st.markdown("### 📏 Buffer / Rough Parameters")
+    st.markdown("### Buffer / Rough Parameters")
     col1a, col1b = st.columns(2)
     with col1a:
         buffer_x = st.number_input("↔️ buffer_x", value=getattr(av, 'buffer_x', 1), disabled=not pdp_buffer and not pdp_bufferrough)
@@ -375,7 +375,7 @@ with col1:
 # COLUMN 2: Visualization & Analysis Modules
 # ============================================================================
 with col2:
-    st.markdown("### 🎨 Visualization & Analysis Modules")
+    st.markdown("### Visualization & Analysis Modules")
     
     # Create multiselect for all modules
     module_options = {
@@ -386,7 +386,7 @@ with col2:
         'N_VA_Mds': 'MDS',
         'N_VA_InequalityMatrices': 'Inequality Matrices',
         'N_VA_TopK': 'Top K',
-        'N_VA_TennisCourt': '🎾 Tennis Court',
+        'N_VA_TennisCourt': 'Tennis Court',
     }
     
     # Get default selected modules
@@ -399,10 +399,10 @@ with col2:
         format_func=lambda x: module_options[x]
     )
     
-    st.markdown("### 💾 Dataset & Output")
+    st.markdown("### Dataset & Output")
     
     # Dataset file selection
-    dataset_name = st.text_input("📁 Dataset file (CSV path)", 
+    dataset_name = st.text_input("Dataset file (CSV path)", 
                                  value=getattr(av, 'dataset_name', 'N_C_Dataset.csv'),
                                  help="Enter full path to CSV file or use file uploader below")
     
@@ -414,26 +414,26 @@ with col2:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             dataset_name = tmp_file.name
-            st.success(f"✅ File uploaded: {uploaded_file.name}")
+            st.success(f"File uploaded: {uploaded_file.name}")
     
     # Results directory selection
-    results_dir = st.text_input("📂 Results directory", 
+    results_dir = st.text_input("Results directory", 
                                 value=os.environ.get('AV_RESULTS_DIR', os.getcwd()),
                                 help="Enter full path to output directory")
     
     # Quick path suggestions
-    with st.expander("💡 Common Paths"):
+    with st.expander("Common Paths"):
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📁 Current Directory"):
+            if st.button("Current Directory"):
                 st.info(f"Current: {os.getcwd()}")
-            if st.button("📁 User Home"):
+            if st.button("User Home"):
                 st.info(f"Home: {os.path.expanduser('~')}")
         with col2:
-            if st.button("📁 Desktop"):
+            if st.button("Desktop"):
                 desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
                 st.info(f"Desktop: {desktop}")
-            if st.button("📁 Documents"):
+            if st.button("Documents"):
                 docs = os.path.join(os.path.expanduser('~'), 'Documents')
                 st.info(f"Documents: {docs}")
 
@@ -441,36 +441,36 @@ with col2:
 # COLUMN 3: Advanced Settings
 # ============================================================================
 with col3:
-    with st.expander("⚙️ Advanced Settings", expanded=False):
-        st.markdown("### 🎞️ Interpolation")
+    with st.expander("Advanced Settings", expanded=False):
+        st.markdown("### Interpolation")
         num_frames = st.number_input("num_frames", value=getattr(av, 'num_frames', 20), min_value=1)
         
-        st.markdown("### 🗺️ Spatial Bounds")
+        st.markdown("### Spatial Bounds")
         col3a, col3b = st.columns(2)
         with col3a:
-            min_boundary_x = st.number_input("⬅️ min_x", value=getattr(av, 'min_boundary_x', -5))
-            min_boundary_y = st.number_input("⬇️ min_y", value=getattr(av, 'min_boundary_y', -5))
+            min_boundary_x = st.number_input("min_x", value=getattr(av, 'min_boundary_x', -5))
+            min_boundary_y = st.number_input("min_y", value=getattr(av, 'min_boundary_y', -5))
         with col3b:
-            max_boundary_x = st.number_input("➡️ max_x", value=getattr(av, 'max_boundary_x', 15))
-            max_boundary_y = st.number_input("⬆️ max_y", value=getattr(av, 'max_boundary_y', 30))
+            max_boundary_x = st.number_input("max_x", value=getattr(av, 'max_boundary_x', 15))
+            max_boundary_y = st.number_input("max_y", value=getattr(av, 'max_boundary_y', 30))
         
-        st.markdown("### 🔧 Other Parameters")
-        DD = st.number_input("📐 DD", value=getattr(av, 'DD', 2), min_value=1)
-        des = st.number_input("📊 des", value=getattr(av, 'des', 2), min_value=1)
-        dim = st.number_input("📏 dim", value=getattr(av, 'dim', 2), min_value=1)
+        st.markdown("### Other Parameters")
+        DD = st.number_input("DD", value=getattr(av, 'DD', 2), min_value=1)
+        des = st.number_input("des", value=getattr(av, 'des', 2), min_value=1)
+        dim = st.number_input("dim", value=getattr(av, 'dim', 2), min_value=1)
         
-        num_similar_configurations = st.number_input("🔢 num_similar_configurations", 
+        num_similar_configurations = st.number_input("num_similar_configurations", 
                                                      value=getattr(av, 'num_similar_configurations', 5), min_value=1)
-        new_configuration_step = st.number_input("➕ new_configuration_step", 
+        new_configuration_step = st.number_input("new_configuration_step", 
                                                  value=getattr(av, 'new_configuration_step', 3), min_value=1)
-        division_factor = st.number_input("➗ division_factor", 
+        division_factor = st.number_input("division_factor", 
                                          value=getattr(av, 'division_factor', 5), min_value=1)
 
 # ============================================================================
 # RUN CONTROL SECTION
 # ============================================================================
 st.markdown("---")
-st.markdown("### 🎮 Analysis Control")
+st.markdown("### Analysis Control")
 
 col_run1, col_run2, col_run3, col_run4 = st.columns(4)
 
@@ -527,8 +527,8 @@ with col_run1:
                 daemon=True
             )
             st.session_state.run_thread.start()
-            st.success("✅ Analysis started in background!")
-            st.info(f"📂 Results will be saved to: {results_dir}")
+            st.success("Analysis started in background!")
+            st.info(f"Results will be saved to: {results_dir}")
             
             # Initialize status tracking
             status_file = os.path.join(results_dir, 'analysis_status.txt')
@@ -538,21 +538,21 @@ with col_run1:
             time.sleep(0.5)
             st.rerun()
         else:
-            st.warning("⚠️ Analysis already running!")
+            st.warning("Analysis already running!")
 
 with col_run2:
-    if st.button("⏹️ Stop Analysis", type="secondary", use_container_width=True):
+    if st.button("Stop Analysis", type="secondary", use_container_width=True):
         st.session_state.stop_requested = True
-        st.warning("⏹️ Stop requested. Waiting for safe termination point...")
+        st.warning("Stop requested. Waiting for safe termination point...")
         time.sleep(0.5)
         st.rerun()
 
 with col_run3:
-    if st.button("🔄 Refresh Status", use_container_width=True):
+    if st.button("Refresh Status", use_container_width=True):
         st.rerun()
 
 with col_run4:
-    if st.button("📈 View Results", 
+    if st.button("View Results", 
                  disabled=not st.session_state.analysis_finished,
                  use_container_width=True):
         # Launch Streamlit viewer
@@ -571,20 +571,20 @@ with col_run4:
                     env=env,
                     creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
                 )
-                st.success(f"✅ Results viewer launched! Check your browser.")
+                st.success(f"Results viewer launched! Check your browser.")
             except Exception as e:
-                st.error(f"❌ Could not launch viewer: {e}")
+                st.error(f"Could not launch viewer: {e}")
         else:
-            st.error(f"❌ Viewer not found at: {viewer_path}")
+            st.error(f"Viewer not found at: {viewer_path}")
 
 # ============================================================================
 # STATUS DISPLAY
 # ============================================================================
 st.markdown("---")
-st.markdown("### 📊 Analysis Status")
+st.markdown("### Analysis Status")
 
 # EXTENSIVE DEBUGGING
-st.markdown("#### 🔍 Debug Information")
+st.markdown("#### Debug Information")
 debug_col1, debug_col2 = st.columns(2)
 with debug_col1:
     st.write(f"**Results Dir Set:** {st.session_state.results_directory is not None}")
@@ -644,12 +644,12 @@ st.markdown("---")
 
 # Status indicator
 status_emoji = {
-    'idle': '💤',
-    'starting': '🔄',
-    'running': '⚙️',
-    'finished': '✅',
-    'stopped': '⏹️',
-    'error': '❌'
+    'idle': '',
+    'starting': '',
+    'running': '',
+    'finished': '',
+    'stopped': '',
+    'error': ''
 }
 
 status_color = {
@@ -661,15 +661,15 @@ status_color = {
     'error': 'red'
 }
 
-st.markdown(f"**Status:** :{status_color.get(current_status, 'gray')}[{status_emoji.get(current_status, '❓')} {current_status.upper()}]")
+st.markdown(f"**Status:** :{status_color.get(current_status, 'gray')}[{status_emoji.get(current_status, '')} {current_status.upper()}]")
 
 # Manual refresh button
-if st.button("🔄 Force Refresh", type="secondary"):
+if st.button("Force Refresh", type="secondary"):
     st.rerun()
 
 # Show files in results directory if it exists
 if st.session_state.results_directory and os.path.exists(st.session_state.results_directory):
-    with st.expander("📁 Files in Results Directory", expanded=False):
+    with st.expander("Files in Results Directory", expanded=False):
         try:
             files = os.listdir(st.session_state.results_directory)
             st.write(f"**Total files:** {len(files)}")
@@ -688,17 +688,17 @@ if st.session_state.analysis_params and st.session_state.last_output:
         st.session_state.analysis_params
     )
     
-    st.markdown("### 📊 Progress")
+    st.markdown("### Progress")
     
     # If finished, show 100%, otherwise show calculated progress
     if current_status == 'finished':
-        st.progress(1.0, text="100% - ✅ Analysis Complete!")
+        st.progress(1.0, text="100% - Analysis Complete!")
     else:
         st.progress(progress / 100, text=f"{progress}% - {current_stage}")
         
         # Show detailed module completion
         if completed > 0:
-            st.caption(f"✅ Completed {completed} unique modules")
+            st.caption(f"Completed {completed} unique modules")
     
     st.markdown("---")
 
@@ -715,10 +715,10 @@ if should_refresh:
         elapsed_times = [l for l in lines if 'Time elapsed for running module' in l or 'Total time elapsed' in l]
         if elapsed_times:
             last_time = elapsed_times[-1]
-            time_info = f"⏱️ {last_time.strip()}"
+            time_info = f"{last_time.strip()}"
     
     # Show live output in expander with time info
-    expander_title = "📟 Live Output Log"
+    expander_title = "Live Output Log"
     if time_info:
         expander_title += f" - {time_info}"
     
@@ -730,13 +730,13 @@ if should_refresh:
             
             # Add helpful info about progress
             if 'STARTING PDP: FUNDAMENTAL' in st.session_state.last_output:
-                st.info("🔄 Processing Fundamental PDP - This may take a few minutes...")
+                st.info("Processing Fundamental PDP - This may take a few minutes...")
             elif 'STARTING PDP: BUFFER' in st.session_state.last_output:
-                st.info("🔄 Processing Buffer PDP - About halfway through...")
+                st.info("Processing Buffer PDP - About halfway through...")
             elif 'ALL PDP PROCESSING COMPLETE' in st.session_state.last_output:
-                st.success("✅ All processing complete!")
+                st.success("All processing complete!")
         else:
-            st.info("⏳ Waiting for output...")
+            st.info("Waiting for output...")
     
     time.sleep(2)  # Refresh every 2 seconds
     st.rerun()
@@ -754,7 +754,7 @@ elif st.session_state.last_output:
         if total_time_lines:
             time_info = f" - {total_time_lines[-1].strip()}"
     
-    expander_title = "📄 Analysis Output Log" + time_info
+    expander_title = "Analysis Output Log" + time_info
     
     with st.expander(expander_title, expanded=expand_by_default):
         st.code(st.session_state.last_output, language='text')
@@ -781,9 +781,9 @@ if show_results:
     # Header with expand/collapse button
     col_title, col_button = st.columns([3, 1])
     with col_title:
-        st.markdown("## 🎨 Analysis Results - Visualizations")
+        st.markdown("## Analysis Results - Visualizations")
     with col_button:
-        button_label = "📦 Collapse All" if st.session_state.expand_all_images else "📂 Expand All"
+        button_label = "Collapse All" if st.session_state.expand_all_images else "Expand All"
         if st.button(button_label, use_container_width=True):
             st.session_state.expand_all_images = not st.session_state.expand_all_images
             st.rerun()
@@ -865,7 +865,7 @@ if show_results:
                 
                 with col_info:
                     total_size = sum(os.path.getsize(fp) for _, fp in all_files_for_download)
-                    st.info(f"📊 {len(all_files_for_download)} files ready • 💾 {total_size / 1024 / 1024:.2f} MB total")
+                    st.info(f"{len(all_files_for_download)} files ready • {total_size / 1024 / 1024:.2f} MB total")
             
             st.markdown("---")
             
@@ -887,19 +887,19 @@ if show_results:
                     
                     st.markdown("---")
             else:
-                st.info("📭 No visualization files (PNG) found. Other results may be available in the download.")
+                st.info("No visualization files (PNG) found. Other results may be available in the download.")
         
         except Exception as e:
-            st.error(f"❌ Error loading results: {e}")
+            st.error(f"Error loading results: {e}")
             import traceback
             st.code(traceback.format_exc())
     else:
-        st.warning(f"⚠️ Results directory does not exist: {browse_results_dir}")
+        st.warning(f"Results directory does not exist: {browse_results_dir}")
 
 # Footer
 st.markdown("---")
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 12px;'>
-        🎾 SAM Tennis Analysis Module | Built with Streamlit
+        SAM Tennis Analysis Module | Built with Streamlit
     </div>
 """, unsafe_allow_html=True)

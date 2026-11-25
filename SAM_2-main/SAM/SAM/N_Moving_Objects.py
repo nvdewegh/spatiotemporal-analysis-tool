@@ -30,13 +30,13 @@ if av.N_VA_StaticAbsolute == 1:
     try:
         import N_VA_StaticAbsolute
     except ImportError:
-        print("⚠️ N_VA_StaticAbsolute not found in SAM folder")
+        print("N_VA_StaticAbsolute not found in SAM folder")
 
 if av.N_VA_TennisCourt == 1:
     try:
         import N_VA_TennisCourt
     except ImportError:
-        print("⚠️ N_VA_TennisCourt not found in SAM folder")
+        print("N_VA_TennisCourt not found in SAM folder")
 
 
 # ---------------- Helper: robust CSV loader (5 columns) ----------------
@@ -107,7 +107,7 @@ def SetDataForPDPType(data_filename, D_point_mapping, curr_point_id, window_leng
 # ---------------- PDP: Fundamental ----------------
 if av.PDPg_fundamental == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: FUNDAMENTAL")
+    print("STARTING PDP: FUNDAMENTAL")
     print("="*60)
     av.PDPg_fundamental_active = 1
 
@@ -146,59 +146,59 @@ if av.PDPg_fundamental == 1:
     N_VA_TopK_imported = False
     
     # Debug: Print current directory and Python path
-    print(f"📂 Current working directory: {os.getcwd()}")
-    print(f"🐍 Python path includes: {os.getcwd() in __import__('sys').path}")
-    print(f"🔧 AV_SKIP_LOAD env var: {os.environ.get('AV_SKIP_LOAD', 'NOT SET')}")
-    print(f"📊 AV_DATASET env var: {os.environ.get('AV_DATASET', 'NOT SET')}")
-    print(f"📂 av.dataset_name: {av.dataset_name}")
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Python path includes: {os.getcwd() in __import__('sys').path}")
+    print(f"AV_SKIP_LOAD env var: {os.environ.get('AV_SKIP_LOAD', 'NOT SET')}")
+    print(f"AV_DATASET env var: {os.environ.get('AV_DATASET', 'NOT SET')}")
+    print(f"av.dataset_name: {av.dataset_name}")
     
     # IMPORTANT: Reload av module to ensure it has the latest environment settings
     # This is crucial when running from GUI where env vars are set after initial import
-    print("🔄 Reloading av module to pick up environment changes...")
+    print("Reloading av module to pick up environment changes...")
     importlib.reload(av)
-    print(f"✅ av reloaded. New dataset_name: {av.dataset_name}")
+    print(f"av reloaded. New dataset_name: {av.dataset_name}")
     
     if av.N_PDP == 1:
         try:
             import N_PDP
             N_PDP_imported = True
-            print("✅ N_PDP imported successfully")
+            print("N_PDP imported successfully")
         except ImportError as e:
-            print(f"⚠️ N_PDP import failed (ImportError): {e}")
+            print(f"N_PDP import failed (ImportError): {e}")
         except Exception as e:
-            print(f"⚠️ N_PDP import failed (Other error): {type(e).__name__}: {e}")
+            print(f"N_PDP import failed (Other error): {type(e).__name__}: {e}")
     if av.N_VA_HeatMap == 1:
         try:
             import N_VA_HeatMap
             N_VA_HeatMap_imported = True
         except ImportError:
-            print("⚠️ N_VA_HeatMap not found in SAM folder")
+            print("N_VA_HeatMap not found in SAM folder")
     if av.N_VA_HClust == 1:
         try:
             import N_VA_HClust
             N_VA_HClust_imported = True
         except ImportError as e:
-            print(f"⚠️ N_VA_HClust import failed (ImportError): {e}")
+            print(f"N_VA_HClust import failed (ImportError): {e}")
         except Exception as e:
-            print(f"⚠️ N_VA_HClust import failed (Other error): {e}")
+            print(f"N_VA_HClust import failed (Other error): {e}")
     
     if av.N_VA_Mds == 1:
         try:
             import N_VA_Mds
             N_VA_Mds_imported = True
         except ImportError as e:
-            print(f"⚠️ N_VA_Mds import failed (ImportError): {e}")
+            print(f"N_VA_Mds import failed (ImportError): {e}")
         except Exception as e:
-            print(f"⚠️ N_VA_Mds import failed (Other error): {e}")
+            print(f"N_VA_Mds import failed (Other error): {e}")
 
     if av.N_VA_TopK == 1:
         try:
             import N_VA_TopK
             N_VA_TopK_imported = True
         except ImportError as e:
-            print(f"⚠️ N_VA_TopK import failed (ImportError): {e}")
+            print(f"N_VA_TopK import failed (ImportError): {e}")
         except Exception as e:
-            print(f"⚠️ N_VA_TopK import failed (Other error): {e}")
+            print(f"N_VA_TopK import failed (Other error): {e}")
     
 
     av.PDPg_fundamental_active = 0
@@ -207,7 +207,7 @@ if av.PDPg_fundamental == 1:
 # ---------------- PDP: Buffer ----------------
 if av.PDPg_buffer == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: BUFFER")
+    print("STARTING PDP: BUFFER")
     print("="*60)
     av.PDPg_buffer_active = 1
 
@@ -219,9 +219,9 @@ if av.PDPg_buffer == 1:
         buffer_dataset_path = os.path.join(results_dir, "N_C_PDPg_buffer_Dataset.csv")
         
         if not os.path.exists(buffer_dataset_path):
-            raise FileNotFoundError(f"❌ Buffer dataset not created: {buffer_dataset_path}")
+            raise FileNotFoundError(f"Buffer dataset not created: {buffer_dataset_path}")
         
-        print(f"✅ Buffer dataset created: {buffer_dataset_path}")
+        print(f"Buffer dataset created: {buffer_dataset_path}")
         
         av.dataset_name = buffer_dataset_path
         av.dataset_name_exclusive = os.path.splitext(av.dataset_name)[0]
@@ -255,13 +255,13 @@ if av.PDPg_buffer == 1:
             importlib.reload(N_VA_TopK)
         
     except ImportError as e:
-        print(f"⚠️ N_T_OB import error: {e}")
+        print(f"N_T_OB import error: {e}")
         print("Skipping buffer transformation")
     except FileNotFoundError as e:
-        print(f"❌ {e}")
+        print(f"{e}")
         print("Buffer transformation failed - dataset not created")
     except Exception as e:
-        print(f"❌ Error during buffer transformation: {e}")
+        print(f"Error during buffer transformation: {e}")
         import traceback
         traceback.print_exc()
 
@@ -271,7 +271,7 @@ if av.PDPg_buffer == 1:
 # ---------------- PDP: Rough ----------------
 if av.PDPg_rough == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: ROUGH")
+    print("STARTING PDP: ROUGH")
     print("="*60)
     av.PDPg_rough_active = 1
 
@@ -314,7 +314,7 @@ if av.PDPg_rough == 1:
 # ---------------- PDP: Buffer + Rough ----------------
 if av.PDPg_bufferrough == 1:
     print("\n" + "="*60)
-    print("🚀 STARTING PDP: BUFFER + ROUGH")
+    print("STARTING PDP: BUFFER + ROUGH")
     print("="*60)
     av.PDPg_bufferrough_active = 1
 
@@ -361,7 +361,7 @@ if av.PDPg_bufferrough == 1:
             importlib.reload(N_VA_TopK)
         
     except ImportError:
-        print("⚠️ N_T_OB not found in SAM folder - skipping buffer+rough transformation")
+        print("N_T_OB not found in SAM folder - skipping buffer+rough transformation")
 
     av.PDPg_bufferrough_active = 0
 
@@ -370,8 +370,8 @@ if av.PDPg_bufferrough == 1:
 if not _already_printed:
     elapsed = time.time() - t_start
     print("\n" + "="*60)
-    print("✅ ALL PDP PROCESSING COMPLETE!")
+    print("ALL PDP PROCESSING COMPLETE!")
     print("="*60)
-    print(f'⏱️  Total time elapsed: {elapsed:.3f} sec ({elapsed/60:.2f} min)')
+    print(f' Total time elapsed: {elapsed:.3f} sec ({elapsed/60:.2f} min)')
     print("="*60 + "\n")
     av._moving_objects_printed = True  # Set flag to prevent duplicate print on reload

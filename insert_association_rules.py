@@ -54,7 +54,7 @@ def initialize_association_rules_session_state():
     with open(filepath, 'w') as f:
         f.writelines(lines)
     
-    print(f"✅ Inserted association rules functions at line {insert_line}")
+    print(f"Inserted association rules functions at line {insert_line}")
     return True
 
 def insert_association_rules_section(filepath):
@@ -86,7 +86,7 @@ def insert_association_rules_section(filepath):
     with open(filepath, 'w') as f:
         f.writelines(lines)
     
-    print(f"✅ Inserted association rules section at line {insert_line}")
+    print(f"Inserted association rules section at line {insert_line}")
     return True
 
 if __name__ == "__main__":
@@ -100,6 +100,6 @@ if __name__ == "__main__":
     if not insert_association_rules_section(filepath):
         sys.exit(1)
     
-    print("\n✅ All insertions complete!")
+    print("\nAll insertions complete!")
     print("Note: You still need to copy the functions from association_rules_functions.py")
     print("      to the ASSOCIATION RULES INFRASTRUCTURE FUNCTIONS section.")

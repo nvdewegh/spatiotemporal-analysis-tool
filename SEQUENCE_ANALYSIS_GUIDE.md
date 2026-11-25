@@ -98,9 +98,9 @@ This allows us to:
 
 #### Sequence Alignment Display
 - Color-coded alignment visualization:
-  - 🟢 Green: Matching positions
-  - 🟠 Orange: Mismatches
-  - 🔴 Red: Gaps (insertions/deletions)
+  - Green: Matching positions
+  - Orange: Mismatches
+  - Red: Gaps (insertions/deletions)
 - Alignment statistics (matches, mismatches, gaps)
 
 #### Spatial Grid Overlay

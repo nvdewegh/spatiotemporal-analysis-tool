@@ -3,12 +3,12 @@
 ## Summary
 
 I've successfully:
-1. ✅ Added `mlxtend>=0.21.0` and `networkx>=3.0` to `requirements.txt`
-2. ✅ Added necessary imports to `streamlit_visualization.py`
-3. ✅ Added "Association Rules" to the analysis method dropdown
-4. ✅ Created helper functions in `association_rules_functions.py`
-5. ✅ Created the UI section in `association_rules_section.py`
-6. ✅ Verified that mlxtend and networkx are already installed
+1. Added `mlxtend>=0.21.0` and `networkx>=3.0` to `requirements.txt`
+2. Added necessary imports to `streamlit_visualization.py`
+3. Added "Association Rules" to the analysis method dropdown
+4. Created helper functions in `association_rules_functions.py`
+5. Created the UI section in `association_rules_section.py`
+6. Verified that mlxtend and networkx are already installed
 
 ## What Needs to Be Done
 

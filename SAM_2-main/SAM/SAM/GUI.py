@@ -83,14 +83,14 @@ def run_moving_objects_in_background(params):
 
         # Check if stop was requested during execution
         if stop_requested:
-            last_output = buf.getvalue() + "\n⚠️ Analysis stopped by user.\n"
+            last_output = buf.getvalue() + "\nAnalysis stopped by user.\n"
             last_status = "stopped"
         else:
             last_output = buf.getvalue()
             last_status = "finished"
     except Exception as e:
         if stop_requested:
-            last_output = buf.getvalue() + f"\n⚠️ Analysis stopped by user.\n"
+            last_output = buf.getvalue() + f"\nAnalysis stopped by user.\n"
             last_status = "stopped"
         else:
             last_output = buf.getvalue() + f"\nERROR: {e}\n"
@@ -136,19 +136,19 @@ BUTTON_STYLE = {
 app.layout = html.Div([
     # Header with gradient
     html.Div([
-        html.H1('🚀 Moving Objects Analysis Dashboard', style={'margin': '0 0 8px 0', 'fontSize': '32px'}),
-        html.Div('⚙️ Configureer parameters, selecteer modules en start de analyse', 
+        html.H1('Moving Objects Analysis Dashboard', style={'margin': '0 0 8px 0', 'fontSize': '32px'}),
+        html.Div('Configureer parameters, selecteer modules en start de analyse', 
                 style={'fontSize': '16px', 'opacity': '0.95'})
     ], style=HEADER_STYLE),
 
     html.Div([
         # Left column: main parameters
         html.Div([
-            html.H4('📊 PDP Types', style={'color': '#667eea', 'marginTop': '0'}),
+            html.H4('PDP Types', style={'color': '#667eea', 'marginTop': '0'}),
             html.Div([
                 dcc.Checklist(
                     id='pdp-fundamental',
-                    options=[{'label': ' 🔹 Fundamental (required)', 'value': 'fundamental'}],
+                    options=[{'label': ' Fundamental (required)', 'value': 'fundamental'}],
                     value=['fundamental'],
                     style={'fontSize': '14px', 'color': '#999'},
                     inputStyle={'cursor': 'not-allowed'},
@@ -157,23 +157,23 @@ app.layout = html.Div([
                 dcc.Checklist(
                     id='pdp-types',
                     options=[
-                        {'label': ' 🔸 Buffer', 'value': 'buffer'},
-                        {'label': ' 🔶 Rough', 'value': 'rough'},
-                        {'label': ' 🔷 Buffer + Rough', 'value': 'bufferrough'},
+                        {'label': ' Buffer', 'value': 'buffer'},
+                        {'label': ' Rough', 'value': 'rough'},
+                        {'label': ' Buffer + Rough', 'value': 'bufferrough'},
                     ],
                     value=[k for k, v in [('buffer', av.PDPg_buffer), ('rough', av.PDPg_rough), ('bufferrough', av.PDPg_bufferrough)] if v == 1],
                     style={'fontSize': '14px', 'marginTop': '8px'}
                 ),
             ]),
 
-            html.H4('🔢 Core Numeric Parameters', style={'marginTop': '20px', 'color': '#667eea'}),
+            html.H4('Core Numeric Parameters', style={'marginTop': '20px', 'color': '#667eea'}),
             html.Div([
-                html.Label('⏱️ window_length_tst', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('window_length_tst', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='window_length_tst', type='number', value=av.window_length_tst, 
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
 
-            html.H4('📏 Buffer / Rough Parameters', style={'marginTop': '20px', 'color': '#667eea'}),
+            html.H4('Buffer / Rough Parameters', style={'marginTop': '20px', 'color': '#667eea'}),
             html.Div(style={'display': 'flex', 'gap': '8px'}, children=[
                 html.Div([
                     html.Label('↔️ buffer_x', style={'fontWeight': '500', 'fontSize': '13px'}), 
@@ -203,7 +203,7 @@ app.layout = html.Div([
 
         # Right column: toggles / advanced
         html.Div([
-            html.H4('📈 Visualization & Report Modules', style={'marginTop': '0', 'color': '#667eea'}),
+            html.H4('Visualization & Report Modules', style={'marginTop': '0', 'color': '#667eea'}),
             dcc.Checklist(
                 id='nva-options',
                 options=[
@@ -217,7 +217,7 @@ app.layout = html.Div([
                     {'label': 'UMAP', 'value': 'N_VA_UMAP'},
                     {'label': 'Inequality Matrices', 'value': 'N_VA_InequalityMatrices'},
                     {'label': 'Top K', 'value': 'N_VA_TopK'},
-                    {'label': ' 🎾 Tennis Court', 'value': 'N_VA_TennisCourt'},
+                    {'label': ' Tennis Court', 'value': 'N_VA_TennisCourt'},
                     {'label': 'Generate PDF Report', 'value': 'N_VA_Report'},
                     {'label': 'MDS Autoencoder', 'value': 'N_VA_Mds_autoencoder'},
                     {'label': 'Static Relative', 'value': 'N_VA_StaticRelative'},
@@ -229,35 +229,35 @@ app.layout = html.Div([
                 style={'fontSize': '14px', 'lineHeight': '1.8'}
             ),
 
-            html.H4('💾 Dataset & Run', style={'marginTop': '20px', 'color': '#667eea'}),
+            html.H4('Dataset & Run', style={'marginTop': '20px', 'color': '#667eea'}),
             html.Div([
-                html.Label('📁 dataset_name (CSV path)', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('dataset_name (CSV path)', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='dataset_name', type='text', value=getattr(av, 'dataset_name', 'N_C_Dataset.csv'), 
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
             html.Div([
-                html.Label('📂 results_dir (output folder)', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('results_dir (output folder)', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='results_dir', type='text', value=os.environ.get('AV_RESULTS_DIR', ''), 
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '8px'}),
 
             html.Div(style={'marginTop': '16px', 'display': 'flex', 'gap': '10px', 'flexDirection': 'column'}, children=[
                 html.Button('▶️ Run Analysis', id='run-button', n_clicks=0, style=BUTTON_STYLE),
-                html.Button('⏹️ Stop Analysis', id='stop-button', n_clicks=0, 
+                html.Button('Stop Analysis', id='stop-button', n_clicks=0, 
                            style={**BUTTON_STYLE, 'backgroundColor': '#e53e3e'}),
-                html.Button('📊 Get Status & Output', id='status-button', n_clicks=0, 
+                html.Button('Get Status & Output', id='status-button', n_clicks=0, 
                            style={**BUTTON_STYLE, 'backgroundColor': '#48bb78'}),
                 html.Div([
-                    html.Label('🔗 Results viewer script (path to .py or Streamlit script):', style={'fontSize': '12px', 'fontWeight': '500', 'marginBottom': '6px'}),
+                    html.Label('Results viewer script (path to .py or Streamlit script):', style={'fontSize': '12px', 'fontWeight': '500', 'marginBottom': '6px'}),
                     dcc.Input(
                         id='viewer-script-path',
                         type='text',
                         value=os.path.abspath(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'visualisations', 'app_PDP_results.py'))),
                         style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px', 'marginBottom': '8px'}
                     ),
-                    html.Button('📈 View Results', id='view-results-button', n_clicks=0, disabled=True,
+                    html.Button('View Results', id='view-results-button', n_clicks=0, disabled=True,
                                style={**BUTTON_STYLE, 'backgroundColor': '#805ad5'}),
-                    html.Button('📂 Open Existing Results', id='open-existing-button', n_clicks=0,
+                    html.Button('Open Existing Results', id='open-existing-button', n_clicks=0,
                                title='Open viewer using existing results folder without rerunning the analysis',
                                style={**BUTTON_STYLE, 'backgroundColor': '#4299e1'})
                 ], style={'display': 'flex', 'flexDirection': 'column'})
@@ -270,72 +270,72 @@ app.layout = html.Div([
 
     # Collapsible advanced submenu
     html.Details([
-        html.Summary('⚙️ Advanced Settings (click to expand)', 
+        html.Summary('Advanced Settings (click to expand)', 
                     style={'fontSize': '16px', 'fontWeight': 'bold', 'color': '#667eea', 
                            'cursor': 'pointer', 'padding': '12px', 'backgroundColor': '#f5f5f5', 
                            'borderRadius': '8px', 'marginTop': '16px'}),
         html.Div([
             html.Div([
-                html.Label('🎞️ num_frames', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('num_frames', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='num_frames', type='number', value=getattr(av,'num_frames',20), 
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '8px'}),
 
-            html.H4('🗺️ Spatial Bounds', style={'marginTop': '16px', 'color': '#667eea'}),
+            html.H4('Spatial Bounds', style={'marginTop': '16px', 'color': '#667eea'}),
             html.Div(style={'display': 'flex', 'gap': '8px'}, children=[
                 html.Div([
-                    html.Label('⬅️ min_x', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                    html.Label('min_x', style={'fontWeight': '500', 'fontSize': '13px'}), 
                     dcc.Input(id='min_boundary_x', type='number', value=av.min_boundary_x,
                              style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
                 ], style={'flex': '1'}),
                 html.Div([
-                    html.Label('➡️ max_x', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                    html.Label('max_x', style={'fontWeight': '500', 'fontSize': '13px'}), 
                     dcc.Input(id='max_boundary_x', type='number', value=av.max_boundary_x,
                              style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
                 ], style={'flex': '1'})
             ]),
             html.Div(style={'display': 'flex', 'gap': '8px', 'marginTop': '6px'}, children=[
                 html.Div([
-                    html.Label('⬇️ min_y', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                    html.Label('min_y', style={'fontWeight': '500', 'fontSize': '13px'}), 
                     dcc.Input(id='min_boundary_y', type='number', value=av.min_boundary_y,
                              style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
                 ], style={'flex': '1'}),
                 html.Div([
-                    html.Label('⬆️ max_y', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                    html.Label('max_y', style={'fontWeight': '500', 'fontSize': '13px'}), 
                     dcc.Input(id='max_boundary_y', type='number', value=av.max_boundary_y,
                              style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
                 ], style={'flex': '1'})
             ]),
 
-            html.H4('🔧 Other Advanced Parameters', style={'marginTop': '16px', 'color': '#667eea'}),
+            html.H4('Other Advanced Parameters', style={'marginTop': '16px', 'color': '#667eea'}),
             html.Div([
-                html.Label('📐 DD', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('DD', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='DD', type='number', value=getattr(av,'DD',2),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
             html.Div([
-                html.Label('📊 des', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('des', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='des', type='number', value=getattr(av,'des',2),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
             html.Div([
-                html.Label('📏 dim', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('dim', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='dim', type='number', value=getattr(av,'dim',2),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
 
             html.Div([
-                html.Label('🔄 num_similar_configurations', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('num_similar_configurations', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='num_similar_configurations', type='number', value=getattr(av,'num_similar_configurations',5),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
             html.Div([
-                html.Label('⚡ new_configuration_step', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('new_configuration_step', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='new_configuration_step', type='number', value=getattr(av,'new_configuration_step',3),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
             html.Div([
-                html.Label('➗ division_factor', style={'fontWeight': '500', 'fontSize': '13px'}), 
+                html.Label('division_factor', style={'fontWeight': '500', 'fontSize': '13px'}), 
                 dcc.Input(id='division_factor', type='number', value=getattr(av,'division_factor',5),
                          style={'width': '100%', 'padding': '6px', 'borderRadius': '6px', 'border': '1px solid #ddd', 'fontSize': '13px'})
             ], style={'marginTop': '6px'}),
@@ -355,7 +355,7 @@ app.layout = html.Div([
         'fontFamily': 'Consolas, monospace',
         'fontSize': '13px',
         'boxShadow': '0 2px 8px rgba(0,0,0,0.08)'
-    }, children='💡 Ready to start. Configure parameters and click "Run Analysis".'),
+    }, children='Ready to start. Configure parameters and click "Run Analysis".'),
     # Background interval to auto-check status and enable View Results when finished
     dcc.Interval(id='auto-status-interval', interval=2000, n_intervals=0),
 
@@ -429,11 +429,11 @@ def launch_results_viewer(n_clicks, script_path, dataset_name, results_dir):
     if n_clicks and n_clicks > 0:
         try:
             if not script_path:
-                return '❌ No script path provided. Please fill the "Results viewer script" field.'
+                return 'No script path provided. Please fill the "Results viewer script" field.'
 
             app_path = os.path.abspath(os.path.expanduser(script_path))
             if not os.path.exists(app_path):
-                return f'❌ Error: script not found at {app_path}'
+                return f'Error: script not found at {app_path}'
 
             # Use the script's directory as cwd so relative imports/resources resolve
             script_dir = os.path.dirname(app_path) or os.getcwd()
@@ -458,24 +458,24 @@ def launch_results_viewer(n_clicks, script_path, dataset_name, results_dir):
                 if has_streamlit:
                     # Launch via `python -m streamlit run <script>` using the same interpreter
                     subprocess.Popen([sys.executable, '-m', 'streamlit', 'run', app_path], cwd=script_dir, env=env)
-                    return (f'✅ Streamlit started using {sys.executable} -m streamlit run {app_path} (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")}, AV_DATASET={env.get("AV_DATASET")}). '
+                    return (f'Streamlit started using {sys.executable} -m streamlit run {app_path} (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")}, AV_DATASET={env.get("AV_DATASET")}). '
                             "Open http://localhost:8501/ if it does not open automatically.")
                 else:
                     # Fall back to launching the script as a plain Python program
                     subprocess.Popen([sys.executable, app_path], cwd=script_dir, env=env)
-                    return (f'⚠️ `streamlit` is not installed in the Python environment ({sys.executable}). '
+                    return (f'`streamlit` is not installed in the Python environment ({sys.executable}). '
                             f'Launched with `python {app_path}` instead (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")}, AV_DATASET={env.get("AV_DATASET")} ).\n\nInstall Streamlit in this environment to use the interactive viewer:\n'
                             f'    {sys.executable} -m pip install streamlit')
             except Exception as e:
                 # Final fallback: try plain python and report the error
                 try:
                     subprocess.Popen([sys.executable, app_path], cwd=script_dir)
-                    return f'⚠️ Failed to start via streamlit ({str(e)}). Launched with python instead.'
+                    return f'Failed to start via streamlit ({str(e)}). Launched with python instead.'
                 except Exception as e2:
-                    return f'❌ Error launching results viewer: {str(e2)}'
+                    return f'Error launching results viewer: {str(e2)}'
 
         except Exception as e:
-            return f'❌ Error launching results viewer: {str(e)}'
+            return f'Error launching results viewer: {str(e)}'
     return ''
 
 
@@ -490,11 +490,11 @@ def open_existing_results(n_clicks, script_path, results_dir, dataset_name):
     if n_clicks and n_clicks > 0:
         try:
             if not script_path:
-                return '❌ No script path provided. Please fill the "Results viewer script" field.'
+                return 'No script path provided. Please fill the "Results viewer script" field.'
 
             app_path = os.path.abspath(os.path.expanduser(script_path))
             if not os.path.exists(app_path):
-                return f'❌ Error: script not found at {app_path}'
+                return f'Error: script not found at {app_path}'
 
             script_dir = os.path.dirname(app_path) or os.getcwd()
 
@@ -515,22 +515,22 @@ def open_existing_results(n_clicks, script_path, results_dir, dataset_name):
 
                 if has_streamlit:
                     subprocess.Popen([sys.executable, '-m', 'streamlit', 'run', app_path], cwd=script_dir, env=env)
-                    return (f'✅ Streamlit started using {sys.executable} -m streamlit run {app_path} (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")} ). '
+                    return (f'Streamlit started using {sys.executable} -m streamlit run {app_path} (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")} ). '
                             "Open http://localhost:8501/ if it does not open automatically.")
                 else:
                     subprocess.Popen([sys.executable, app_path], cwd=script_dir, env=env)
-                    return (f'⚠️ `streamlit` is not installed in the Python environment ({sys.executable}). '
+                    return (f'`streamlit` is not installed in the Python environment ({sys.executable}). '
                             f'Launched with `python {app_path}` instead (AV_RESULTS_DIR={env.get("AV_RESULTS_DIR")} ).\n\nInstall Streamlit in this environment to use the interactive viewer:\n'
                             f'    {sys.executable} -m pip install streamlit')
             except Exception as e:
                 try:
                     subprocess.Popen([sys.executable, app_path], cwd=script_dir, env=env)
-                    return f'⚠️ Failed to start via streamlit ({str(e)}). Launched with python instead.'
+                    return f'Failed to start via streamlit ({str(e)}). Launched with python instead.'
                 except Exception as e2:
-                    return f'❌ Error launching results viewer: {str(e2)}'
+                    return f'Error launching results viewer: {str(e2)}'
 
         except Exception as e:
-            return f'❌ Error launching results viewer: {str(e)}'
+            return f'Error launching results viewer: {str(e)}'
     return ''
 
 
@@ -633,31 +633,31 @@ def control_runner(run_clicks, stop_clicks, status_clicks, pdp_list, nva_list, w
             run_thread.start()
             import datetime
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-            return f'✅ [{timestamp}] Analysis STARTED in background.\n\n⏳ Processing... Click "Get Status & Output" to check progress.'
+            return f'[{timestamp}] Analysis STARTED in background.\n\nProcessing... Click "Get Status & Output" to check progress.'
         else:
-            return '⚠️ A run is already in progress. Use "Stop Analysis" to cancel or "Get Status & Output" to check progress.'
+            return 'A run is already in progress. Use "Stop Analysis" to cancel or "Get Status & Output" to check progress.'
 
     elif trigger_id == 'stop-button':
         stop_requested = True
         if run_thread and run_thread.is_alive():
             import datetime
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-            return f'⏹️ [{timestamp}] STOP requested.\n\n⏳ Waiting for analysis to terminate at next safe point...\n\nClick "Get Status & Output" to confirm termination.'
+            return f'[{timestamp}] STOP requested.\n\nWaiting for analysis to terminate at next safe point...\n\nClick "Get Status & Output" to confirm termination.'
         else:
-            return '⚠️ No analysis is currently running.'
+            return 'No analysis is currently running.'
 
     elif trigger_id == 'status-button':
         # Show last status and captured output with emoji
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         status_emoji = {
-            'idle': '💤',
-            'running': '⚙️',
-            'finished': '✅',
-            'stopped': '⏹️',
-            'error': '❌'
+            'idle': '',
+            'running': '',
+            'finished': '',
+            'stopped': '',
+            'error': ''
         }
-        emoji = status_emoji.get(last_status, '❓')
+        emoji = status_emoji.get(last_status, '')
         header = f'[{timestamp}] {emoji} Status: {last_status.upper()}\n'
         separator = '='*60 + '\n'
         body = last_output or '(no output captured yet)'

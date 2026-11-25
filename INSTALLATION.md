@@ -49,7 +49,7 @@ cd ~/Documents/tennis_infer_rf
 cd C:\Users\YourName\Documents\tennis_infer_rf
 ```
 
-💡 **Tip**: You can drag the folder into Terminal (macOS/Linux) to auto-fill the path!
+**Tip**: You can drag the folder into Terminal (macOS/Linux) to auto-fill the path!
 
 ### Step 5: Create a Virtual Environment
 
@@ -63,7 +63,7 @@ python3 -m venv .venv
 python -m venv .venv
 ```
 
-⏱️ This takes 30-60 seconds.
+This takes 30-60 seconds.
 
 ### Step 6: Activate the Virtual Environment
 
@@ -77,7 +77,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 ```
 
-✅ You should see `(.venv)` at the beginning of your command prompt.
+You should see `(.venv)` at the beginning of your command prompt.
 
 ### Step 7: Install Required Packages
 
@@ -85,7 +85,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-⏱️ This takes 2-5 minutes depending on your internet connection.
+This takes 2-5 minutes depending on your internet connection.
 
 ### Step 8: Launch the Application
 
@@ -93,7 +93,7 @@ pip install -r requirements.txt
 streamlit run streamlit_deploy/streamlit_visualization.py
 ```
 
-🎉 **Success!** The application should open automatically in your web browser at http://localhost:8501
+**Success!** The application should open automatically in your web browser at http://localhost:8501
 
 ---
 
@@ -174,4 +174,4 @@ trajectory_id,x,y
 
 ---
 
-**Ready to start analyzing trajectories!** 🚀
+**Ready to start analyzing trajectories!**

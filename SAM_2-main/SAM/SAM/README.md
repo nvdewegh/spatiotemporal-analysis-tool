@@ -1,4 +1,4 @@
-# 🎾 SAM - Tennis Court Analysis Module
+# SAM - Tennis Court Analysis Module
 
 ## Overzicht
 Deze module visualiseert tennis data op een realistische tennisbaan met behulp van Plotly.
@@ -123,7 +123,7 @@ if av.N_VA_TennisCourt == 1:
 3. **Update GUI.py** (optioneel):
 Voeg checkbox toe in visualization section:
 ```python
-{'label': ' 🎾 Tennis Court', 'value': 'N_VA_TennisCourt'}
+{'label': ' Tennis Court', 'value': 'N_VA_TennisCourt'}
 ```
 
 ## Voorbeeld Data Formaat

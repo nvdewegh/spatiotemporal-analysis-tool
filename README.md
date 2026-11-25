@@ -4,7 +4,7 @@
 
 A comprehensive Streamlit-based web application for analyzing and clustering spatiotemporal trajectory data using hierarchical clustering methods.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
@@ -15,11 +15,11 @@ A comprehensive Streamlit-based web application for analyzing and clustering spa
 - [Troubleshooting](#troubleshooting)
 - [Requirements](#requirements)
 
-## 🎯 Overview
+## Overview
 
 This tool provides a complete workflow for trajectory clustering analysis, from data loading to result export. It's designed for researchers and students working with spatiotemporal data, such as GPS trajectories, movement patterns, or time-series spatial data.
 
-## ✨ Features
+## Features
 
 ### 7-Step Analysis Workflow
 
@@ -43,7 +43,7 @@ This tool provides a complete workflow for trajectory clustering analysis, from 
    - View comprehensive analysis summaries
    - Access complete documentation
 
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
 
@@ -79,7 +79,7 @@ This tool provides a complete workflow for trajectory clustering analysis, from 
    pip install streamlit pandas numpy plotly scikit-learn umap-learn matplotlib pyarrow
    ```
 
-## 🎬 Quick Start
+## Quick Start
 
 1. **Activate the virtual environment** (if not already activated):
    ```bash
@@ -100,7 +100,7 @@ This tool provides a complete workflow for trajectory clustering analysis, from 
 
 4. The application will open automatically in your default browser!
 
-## 📖 Usage Guide
+## Usage Guide
 
 ### Data Format Requirements
 
@@ -125,10 +125,10 @@ trajectory_id,x,y
 
 #### Step 1-2: Data Loading
 
-1. Click **"📁 Upload your trajectory data"**
+1. Click **"Upload your trajectory data"**
 2. Select your CSV or Excel file
 3. Verify the data preview shows correctly
-4. Click **"✅ Confirm Data Upload"**
+4. Click **"Confirm Data Upload"**
 
 #### Step 3: Compute Distance Matrix
 
@@ -138,13 +138,13 @@ Choose one of three distance metrics:
 - **Spatial (Chamfer)**: Best for comparing spatial shapes
 - **DTW**: Best for comparing temporal patterns and sequences
 
-Click the corresponding **"🔄 Compute"** button and wait for processing.
+Click the corresponding **"Compute"** button and wait for processing.
 
 #### Step 4: View Dendrogram & Assign Clusters
 
 1. The dendrogram shows how trajectories group together
 2. Use the **slider** to select number of clusters (1-20)
-3. Click **"🎯 Assign Clusters"**
+3. Click **"Assign Clusters"**
 4. View the cluster assignment table
 
 #### Step 5: Analyze Results
@@ -173,7 +173,7 @@ Generate three types of visualizations:
 - View comprehensive summary with charts
 - Read complete documentation
 
-## 📊 Distance Metrics
+## Distance Metrics
 
 ### Feature-Based Distance
 
@@ -198,7 +198,7 @@ Aligns trajectories in time to find optimal matching, accounting for different s
 
 Best for: Comparing temporal sequences and patterns.
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Issue: "command not found: streamlit"
 
@@ -229,7 +229,7 @@ pip install streamlit pandas numpy plotly scikit-learn umap-learn matplotlib pya
 - Reducing the dataset size
 - Using a computer with more RAM
 
-## 📦 Requirements
+## Requirements
 
 ```
 streamlit>=1.20.0
@@ -243,7 +243,7 @@ pyarrow>=10.0.0
 scipy>=1.10.0  (installed automatically with scikit-learn)
 ```
 
-## 💡 Tips for Students
+## Tips for Students
 
 1. **Start small**: Test with a small dataset (10-50 trajectories) first
 2. **Save your work**: Use the export feature to download results
@@ -251,7 +251,7 @@ scipy>=1.10.0  (installed automatically with scikit-learn)
 4. **Interpret carefully**: Check silhouette scores to validate cluster quality
 5. **Document**: The tool generates configuration files - save these with your results
 
-## 🎓 Educational Use
+## Educational Use
 
 This tool is designed for teaching and learning spatiotemporal data analysis. It provides:
 - Interactive visualizations for better understanding
@@ -259,11 +259,11 @@ This tool is designed for teaching and learning spatiotemporal data analysis. It
 - Step-by-step workflow for systematic analysis
 - Export capabilities for reports and presentations
 
-## 📄 License
+## License
 
 This tool is provided for educational and research purposes.
 
-## 🆘 Support
+## Support
 
 If you encounter issues:
 1. Check the Troubleshooting section above
@@ -271,7 +271,7 @@ If you encounter issues:
 3. Verify your data format matches the requirements
 4. Contact your instructor for assistance
 
-## 🎉 Getting Started Checklist
+## Getting Started Checklist
 
 - [ ] Python 3.10+ installed
 - [ ] Virtual environment created
@@ -282,4 +282,4 @@ If you encounter issues:
 
 ---
 
-**Happy Clustering!** 🚀
+**Happy Clustering!**

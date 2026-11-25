@@ -24,7 +24,7 @@ from vibe_coding import (
 # Page configuration
 st.set_page_config(
     page_title="Space-Time Prisms Explorer",
-    page_icon="🌐",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -43,7 +43,7 @@ if 'current_query' not in st.session_state:
 def main():
     """Main application"""
     
-    st.title("🌐 Space-Time Prisms: Interactive Vibe Coding Environment")
+    st.title("Space-Time Prisms: Interactive Vibe Coding Environment")
     
     st.markdown("""
     **Uncertainty-based trajectory analysis with qualitative interpretation**
@@ -57,28 +57,28 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select Module",
-        ["📥 Scenario Manager", "🔬 Uncertainty Analysis", "👁️ Visualization", 
-         "💭 Vibe Coding", "📝 Narrative Workspace", "📤 Export"]
+        ["Scenario Manager", "Uncertainty Analysis", "Visualization", 
+         "Vibe Coding", "Narrative Workspace", "Export"]
     )
     
-    if page == "📥 Scenario Manager":
+    if page == "Scenario Manager":
         scenario_manager()
-    elif page == "🔬 Uncertainty Analysis":
+    elif page == "Uncertainty Analysis":
         uncertainty_analysis()
-    elif page == "👁️ Visualization":
+    elif page == "Visualization":
         visualization_module()
-    elif page == "💭 Vibe Coding":
+    elif page == "Vibe Coding":
         vibe_coding_module()
-    elif page == "📝 Narrative Workspace":
+    elif page == "Narrative Workspace":
         narrative_workspace()
-    elif page == "📤 Export":
+    elif page == "Export":
         export_module()
 
 
 def scenario_manager():
     """Scenario creation and upload interface"""
     
-    st.header("📥 Scenario Manager")
+    st.header("Scenario Manager")
     
     st.markdown("""
     Create or upload movement scenarios (trajectory samples).
@@ -183,7 +183,7 @@ def upload_data_interface():
                 traj = create_trajectory_from_df(traj_df, f"object_{len(st.session_state.trajectories)}", vmax)
                 st.session_state.trajectories.append(traj)
             
-            st.success(f"✅ Loaded {len(st.session_state.trajectories)} trajectory/trajectories")
+            st.success(f"Loaded {len(st.session_state.trajectories)} trajectory/trajectories")
             st.rerun()
 
 
@@ -216,7 +216,7 @@ def manual_creation_interface():
     if st.button("Create Trajectory", type="primary"):
         traj = TrajectorySample(object_id, anchors, vmax)
         st.session_state.trajectories.append(traj)
-        st.success(f"✅ Created trajectory '{object_id}'")
+        st.success(f"Created trajectory '{object_id}'")
         st.rerun()
 
 
@@ -258,7 +258,7 @@ def example_scenarios_interface():
     
     if st.button("Load Example", type="primary"):
         load_example_scenario(scenario)
-        st.success(f"✅ Loaded '{scenario}'")
+        st.success(f"Loaded '{scenario}'")
         st.rerun()
 
 
@@ -332,10 +332,10 @@ def load_example_scenario(scenario: str):
 def uncertainty_analysis():
     """Uncertainty modeling and computation"""
     
-    st.header("🔬 Uncertainty Analysis")
+    st.header("Uncertainty Analysis")
     
     if not st.session_state.trajectories:
-        st.warning("⚠️ No trajectories loaded. Please add scenarios first.")
+        st.warning("No trajectories loaded. Please add scenarios first.")
         return
     
     tab1, tab2, tab3 = st.tabs(["Space-Time Prisms", "Alibi Queries", "Visit Probability"])
@@ -398,7 +398,7 @@ def prism_analysis():
             with col2:
                 st.metric("Distance", f"{prism.spatial_distance():.1f} m")
             with col3:
-                st.metric("Feasible", "✅" if prism.is_feasible() else "❌")
+                st.metric("Feasible", "" if prism.is_feasible() else "")
             with col4:
                 constraint = prism.spatial_distance() / (prism.vmax * prism.time_budget())
                 st.metric("Constraint", f"{constraint:.2%}")
@@ -430,7 +430,7 @@ def alibi_query_analysis():
     """)
     
     if len(st.session_state.trajectories) < 2:
-        st.warning("⚠️ Need at least 2 trajectories for alibi query.")
+        st.warning("Need at least 2 trajectories for alibi query.")
         return
     
     # Select trajectories
@@ -473,7 +473,7 @@ def alibi_query_analysis():
         with col1:
             st.metric(
                 "Intersection Exists",
-                "✅ Yes" if result['intersection_exists'] else "❌ No"
+                "Yes" if result['intersection_exists'] else "No"
             )
         with col2:
             st.metric(
@@ -570,7 +570,7 @@ def visit_probability_analysis():
             vp = VisitProbability(prism, resolution)
             prob_field = vp.compute_probability_field()
         
-        st.success("✅ Computation complete")
+        st.success("Computation complete")
         
         # Visualize
         fig = px.density_heatmap(
@@ -615,10 +615,10 @@ def visit_probability_analysis():
 def visualization_module():
     """Visualization of prisms and trajectories"""
     
-    st.header("👁️ Visualization")
+    st.header("Visualization")
     
     if not st.session_state.trajectories:
-        st.warning("⚠️ No trajectories loaded.")
+        st.warning("No trajectories loaded.")
         return
     
     tab1, tab2, tab3 = st.tabs(["2D View", "3D Space-Time", "Potential Path Areas"])
@@ -808,7 +808,7 @@ def plot_ppas():
 def vibe_coding_module():
     """Vibe coding interface"""
     
-    st.header("💭 Vibe Coding")
+    st.header("Vibe Coding")
     
     st.markdown("""
     View and edit qualitative annotations on analytical results.
@@ -858,13 +858,13 @@ def vibe_coding_module():
             if st.button("Update", key=f"update_{i}"):
                 annotation.narrative = new_narrative
                 annotation.author = "user"
-                st.success("✅ Updated")
+                st.success("Updated")
 
 
 def narrative_workspace():
     """Narrative workspace for researcher notes"""
     
-    st.header("📝 Narrative Workspace")
+    st.header("Narrative Workspace")
     
     st.markdown("""
     A notebook-like interface for writing interpretations, hypotheses, and reflections.
@@ -872,14 +872,14 @@ def narrative_workspace():
     """)
     
     # Add new entry
-    with st.expander("➕ Add New Entry", expanded=False):
+    with st.expander("Add New Entry", expanded=False):
         title = st.text_input("Title")
         content = st.text_area("Content", height=200)
         
         if st.button("Add Entry", type="primary"):
             if title and content:
                 st.session_state.narrative.add_entry(title, content)
-                st.success("✅ Entry added")
+                st.success("Entry added")
                 st.rerun()
     
     # Display entries
@@ -899,7 +899,7 @@ def narrative_workspace():
 def export_module():
     """Export results and annotations"""
     
-    st.header("📤 Export")
+    st.header("Export")
     
     st.markdown("""
     Export your analysis, visualizations, and vibe annotations.
@@ -985,7 +985,7 @@ def export_report():
     st.info("Generate a comprehensive HTML report with all visualizations and annotations.")
     
     if st.button("Generate Report", type="primary"):
-        st.success("✅ Report generation (HTML export would be implemented here)")
+        st.success("Report generation (HTML export would be implemented here)")
         st.info("This would create an interactive HTML page with all analyses, plots, and vibe annotations.")
 
 

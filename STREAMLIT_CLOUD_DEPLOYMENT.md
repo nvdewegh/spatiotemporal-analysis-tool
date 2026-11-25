@@ -1,6 +1,6 @@
 # Streamlit Cloud Deployment Guide
 
-## 🌐 Deploy Your App to Streamlit Cloud (FREE!)
+## Deploy Your App to Streamlit Cloud (FREE!)
 
 Your students can access the app online without installing anything!
 
@@ -44,21 +44,21 @@ Click "Advanced settings" and set:
 
 ---
 
-## 🎓 Sharing with Students
+## Sharing with Students
 
 Once deployed, share this link with your students:
 
 **Your app URL**: `https://[your-app-name].streamlit.app`
 
 They can:
-- ✅ Use it directly in their browser
-- ✅ Upload their own trajectory data
-- ✅ Run all analyses without installing anything
-- ✅ Download results as CSV files
+- Use it directly in their browser
+- Upload their own trajectory data
+- Run all analyses without installing anything
+- Download results as CSV files
 
 ---
 
-## ⚙️ Managing Your App
+## Managing Your App
 
 ### View App Dashboard
 
@@ -79,7 +79,7 @@ Whenever you push changes to GitHub, Streamlit Cloud will:
 
 ---
 
-## 📊 Resource Limits (Free Tier)
+## Resource Limits (Free Tier)
 
 Streamlit Community Cloud is free but has limits:
 
@@ -92,7 +92,7 @@ Streamlit Community Cloud is free but has limits:
 
 ---
 
-## 🔒 Making Repository Public (Required)
+## Making Repository Public (Required)
 
 Streamlit Cloud requires **public** GitHub repositories for free hosting.
 
@@ -105,7 +105,7 @@ To check/make your repo public:
 
 ---
 
-## 🎯 Two Options for Students
+## Two Options for Students
 
 ### Option A: Use Cloud Version (Recommended for most)
 **Pros**: No installation, instant access
@@ -121,7 +121,7 @@ You can offer both options!
 
 ---
 
-## 📝 Example Student Instructions
+## Example Student Instructions
 
 ### For Cloud Version:
 
@@ -142,7 +142,7 @@ You can offer both options!
 
 ---
 
-## 🐛 Troubleshooting Deployment
+## Troubleshooting Deployment
 
 ### App won't deploy
 
@@ -170,7 +170,7 @@ You can offer both options!
 
 ---
 
-## 🎉 Success Checklist
+## Success Checklist
 
 - [ ] GitHub repository is public
 - [ ] Code pushed to GitHub successfully
@@ -183,7 +183,7 @@ You can offer both options!
 
 ---
 
-## 📧 Sample Email to Students
+## Sample Email to Students
 
 ```
 Subject: Trajectory Clustering Analysis Tool - Now Available!
@@ -192,12 +192,12 @@ Dear Students,
 
 I'm excited to share our new Trajectory Clustering Analysis Tool!
 
-🌐 ONLINE VERSION (No Installation):
+ONLINE VERSION (No Installation):
 https://[your-app-url].streamlit.app
 
 Simply upload your trajectory data and follow the 7-step workflow.
 
-💻 LOCAL VERSION (For advanced users):
+LOCAL VERSION (For advanced users):
 https://github.com/nvdewegh/spatiotemporal-analysis-tool
 Download and follow INSTALLATION.md
 
@@ -209,4 +209,4 @@ Best regards,
 
 ---
 
-**Your app is now accessible worldwide!** 🚀
+**Your app is now accessible worldwide!**

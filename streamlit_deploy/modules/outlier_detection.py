@@ -1342,7 +1342,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             render_interactive_chart(st, fig_court, f"Trajectories{' on the ' + court_word.lower() if court_word else ' (x, y in metres)'}")
             
             st.caption("""
-            **Legend**: 🔴 Red = Outlier trajectories | 🔵 Light Blue = Normal trajectories | 
+            **Legend**: Red = Outlier trajectories | Light Blue = Normal trajectories | 
             ● Circle = Start | ■ Square = End
             """)
         else:

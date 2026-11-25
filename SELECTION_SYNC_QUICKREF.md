@@ -115,11 +115,11 @@ When entering a method:
 
 ## Benefits
 
-✅ **Consistency**: Same selections across all methods
-✅ **Efficiency**: No need to reselect data in each method
-✅ **Workflow**: Natural analysis flow
-✅ **Safety**: Invalid selections automatically filtered
-✅ **Extensible**: New methods automatically inherit behavior
+**Consistency**: Same selections across all methods
+**Efficiency**: No need to reselect data in each method
+**Workflow**: Natural analysis flow
+**Safety**: Invalid selections automatically filtered
+**Extensible**: New methods automatically inherit behavior
 
 ## Example Workflows
 

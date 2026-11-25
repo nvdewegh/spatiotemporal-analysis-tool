@@ -4707,7 +4707,7 @@ def main():
                         alignment_html += "</div></div>"
                         
                         st.markdown(alignment_html, unsafe_allow_html=True)
-                        st.caption("🟢 Match | 🟠 Mismatch | 🔴 Gap")
+                        st.caption("Match | Mismatch | Gap")
                         
                         # Compute statistics
                         total_len = len(aligned1)
@@ -6002,7 +6002,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         **What you're seeing:**
                         - Each colour represents a different configuration
                         - Trajectories show the movement paths of all selected objects
-                        - Start points: ⭕ (circles), End points: ◼️ (squares)
+                        - Start points: circles, end points: squares
                         
                         **Compare with the distance matrix:**
                         - **Small distances** → Similar trajectory patterns (paths overlap or follow similar patterns)
@@ -6422,7 +6422,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     # ===============================================================
                     st.markdown("---")
                     st.markdown('### Trajectory Comparison',
-                                help='Visualise and compare actual trajectories:  \n  \n• Select configurations to overlay their movement patterns  \n• Compare similar or dissimilar configurations side-by-side  \n• Start points marked with circles ⭕, end points with squares ◼️')
+                                help='Visualise and compare actual trajectories:  \n  \n• Select configurations to overlay their movement patterns  \n• Compare similar or dissimilar configurations side-by-side  \n• Start points marked with circles, end points with squares')
                     
                     col_traj1, col_traj2 = st.columns([1, 1])
                     
@@ -6490,7 +6490,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                     
                     # Info about object selection
                     if 'shared_selected_objects' in st.session_state and st.session_state.shared_selected_objects:
-                        st.info(f"ℹUsing {len(globally_selected_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
+                        st.info(f"Using {len(globally_selected_objects)} object(s) from **Data Selection Interface**. To change, go to the sidebar.")
                     else:
                         st.warning("No objects selected in **Data Selection Interface**. All objects from dataset will be used.")
                     
@@ -8280,7 +8280,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         if same_cluster == k_similar:
                             st.success("All similar trajectories are in the same cluster - excellent clustering!")
                         elif same_cluster >= k_similar * 0.7:
-                            st.info("ℹ️ Most similar trajectories are in the same cluster - good clustering quality")
+                            st.info("Most similar trajectories are in the same cluster - good clustering quality")
                         else:
                             st.warning("Many similar trajectories are in different clusters - consider adjusting cluster count")
             
@@ -8325,7 +8325,7 @@ Each window captures a snapshot of spatial relationships at different points in 
                         elif overall_score > 0.5:
                             st.success("**Good** clustering quality")
                         elif overall_score > 0.3:
-                            st.info("ℹ️ **Moderate** clustering quality")
+                            st.info("**Moderate** clustering quality")
                         else:
                             st.warning("**Poor** clustering - consider different parameters")
                         

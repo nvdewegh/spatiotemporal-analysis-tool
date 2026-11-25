@@ -1,10 +1,10 @@
 # Sequence Analysis Implementation Summary
 
-## ✅ Implementation Complete
+## Implementation Complete
 
 I have successfully implemented a comprehensive **Sequence Analysis** feature for your spatiotemporal analysis tool, directly aligned with your course text on sequence analysis methods.
 
-## 🎯 What Was Implemented
+## What Was Implemented
 
 ### Core Functionality
 
@@ -52,7 +52,7 @@ I have successfully implemented a comprehensive **Sequence Analysis** feature fo
    - Spatial grid overlay
    - Zone visit heatmap
 
-## 📊 User Interface
+## User Interface
 
 The feature is accessible via:
 ```
@@ -66,7 +66,7 @@ Main Menu → Analysis Method → "Sequence Analysis"
 3. **N-gram Patterns**: Discover frequent movement patterns
 4. **Spatial Grid View**: Visualize zone definitions and coverage
 
-## 🎓 Educational Value
+## Educational Value
 
 This implementation supports several course concepts:
 
@@ -76,7 +76,7 @@ This implementation supports several course concepts:
 - **Pattern Discovery**: Find recurring tactical patterns
 - **Symbolic Abstraction**: Transform continuous space-time to discrete tokens
 
-## 📝 Example Student Exercise
+## Example Student Exercise
 
 Using the tool, students can:
 
@@ -88,7 +88,7 @@ Using the tool, students can:
 6. **Discuss scale**: How does grid resolution affect discovered patterns?
 7. **Compression effects**: Compare AB vs. AAABBB—what information is lost/gained?
 
-## 🔧 Technical Details
+## Technical Details
 
 ### Algorithms Implemented
 
@@ -113,7 +113,7 @@ Optional compression (ABCDEF...)
 Analysis (distances, alignments, patterns)
 ```
 
-## 📖 Documentation
+## Documentation
 
 Complete documentation provided in `SEQUENCE_ANALYSIS_GUIDE.md`:
 - Feature overview
@@ -124,7 +124,7 @@ Complete documentation provided in `SEQUENCE_ANALYSIS_GUIDE.md`:
 - Troubleshooting
 - Technical implementation details
 
-## 🚀 How to Use
+## How to Use
 
 1. **Start app**: `streamlit run streamlit_deploy/streamlit_visualization.py`
 2. **Upload data**: CSV files with trajectory data
@@ -134,38 +134,38 @@ Complete documentation provided in `SEQUENCE_ANALYSIS_GUIDE.md`:
 6. **Explore tabs**: Distance matrix, alignment, patterns, grid view
 7. **Export**: Download sequences as CSV
 
-## ✨ Key Features
+## Key Features
 
-- ✅ Spatial discretization with configurable grids
-- ✅ Event-based and equal-interval sampling
-- ✅ Per-entity and multi-entity sequences
-- ✅ Run-length compression
-- ✅ Levenshtein distance (regular and normalized)
-- ✅ Global alignment (Needleman-Wunsch)
-- ✅ Local alignment (Smith-Waterman)
-- ✅ N-gram pattern mining
-- ✅ Hierarchical clustering
-- ✅ Interactive visualizations
-- ✅ CSV export
-- ✅ Complete documentation
+- Spatial discretization with configurable grids
+- Event-based and equal-interval sampling
+- Per-entity and multi-entity sequences
+- Run-length compression
+- Levenshtein distance (regular and normalized)
+- Global alignment (Needleman-Wunsch)
+- Local alignment (Smith-Waterman)
+- N-gram pattern mining
+- Hierarchical clustering
+- Interactive visualizations
+- CSV export
+- Complete documentation
 
-## 🎯 Alignment with Requirements
+## Alignment with Requirements
 
 Your request asked for:
-- ✅ Spatial discretization into zones
-- ✅ Event-based or equal-interval sequences
-- ✅ Per-entity sequences (ball_seq, p1_seq, p2_seq)
-- ✅ Optional compression (AB vs AABBB)
-- ✅ Edit distances (Levenshtein)
-- ✅ Global/local alignment
-- ✅ Pattern mining (n-grams)
-- ✅ Comparison between rallies
-- ✅ Scale effects analysis
-- ✅ Student exercise support
+- Spatial discretization into zones
+- Event-based or equal-interval sequences
+- Per-entity sequences (ball_seq, p1_seq, p2_seq)
+- Optional compression (AB vs AABBB)
+- Edit distances (Levenshtein)
+- Global/local alignment
+- Pattern mining (n-grams)
+- Comparison between rallies
+- Scale effects analysis
+- Student exercise support
 
 **All requirements met!**
 
-## 📦 Files Changed
+## Files Changed
 
 1. `streamlit_deploy/streamlit_visualization.py` (+549 lines)
    - Added sequence analysis functions
@@ -181,13 +181,13 @@ Your request asked for:
    - Implementation summary
    - Feature list
 
-## 🐛 Issues Fixed
+## Issues Fixed
 
-- ✅ Initial error with Ward linkage on precomputed distances
-- ✅ Changed to average linkage (compatible with distance matrices)
-- ✅ All functions tested and working
+- Initial error with Ward linkage on precomputed distances
+- Changed to average linkage (compatible with distance matrices)
+- All functions tested and working
 
-## 🎉 Status
+## Status
 
 **COMPLETE AND TESTED**
 
@@ -204,4 +204,4 @@ Students can now:
 
 **Implementation Date**: November 1, 2025  
 **Version**: 1.0  
-**Status**: ✅ Production Ready
+**Status**: Production Ready
