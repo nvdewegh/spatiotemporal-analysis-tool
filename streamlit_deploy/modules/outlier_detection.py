@@ -749,7 +749,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     st.caption(time_window_text(*window, filtered_df))
     
     # Extract features for all trajectories
-    st.subheader("1️⃣ Feature Extraction")
+    st.subheader("1. Feature Extraction")
     
     with st.spinner("Extracting trajectory features..."):
         features_list = []
@@ -774,7 +774,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         st.dataframe(features_df[numeric_cols].describe())
     
     # Select features for outlier detection
-    st.subheader("2️⃣ Select Features for Analysis")
+    st.subheader("2. Select Features for Analysis")
     
     available_features = [
         'total_distance', 'duration', 'avg_speed', 'max_speed', 'std_speed',
@@ -793,7 +793,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         return
     
     # Select detection method
-    st.subheader("3️⃣ Select Detection Method")
+    st.subheader("3. Select Detection Method")
     
     st.info("""
     **Choose from 5 main categories** (aligned with theoretical framework):
@@ -817,12 +817,12 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
     )
     
     # Method-specific parameters
-    st.subheader("4️⃣ Configure Parameters")
+    st.subheader("4. Configure Parameters")
     
     col1, col2 = st.columns(2)
     
     if method == "Graphical: Box Plots":
-        st.subheader("5️⃣ Box Plot Visualisation")
+        st.subheader("5. Box Plot Visualisation")
         st.markdown("""
         **Graphical Method**: Visual identification of outliers using box plots.
         
@@ -932,7 +932,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         """)
         
         # Visualize convex hull layers
-        st.subheader("5️⃣ Convex Hull Visualisation")
+        st.subheader("5. Convex Hull Visualisation")
         fig_hull = plot_convex_hull_layers(result_df, hull_features[0], hull_features[1])
         render_interactive_chart(st, fig_hull, "Convex Hull Depth Layers")
     
@@ -983,7 +983,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         """)
     
     # Display results (for non-graphical methods)
-    st.subheader("5️⃣ Detection Results")
+    st.subheader("5. Detection Results")
     
     n_outliers = result_df[outlier_col].sum()
     n_total = len(result_df)
@@ -1004,7 +1004,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         st.dataframe(outliers_df.style.format({score_col: '{:.3f}'}))
     
     # Visualizations
-    st.subheader("6️⃣ Visualisations")
+    st.subheader("6. Visualisations")
     
     # For methods other than Convex Hull, offer MDS projection when data is high-dimensional
     if method != "Depth-Based: Convex Hull Layers" and len(selected_features) >= 3:
@@ -1179,7 +1179,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 
                 if not traj_data.empty:
                     trajectories_to_plot.append(traj_data)
-                    colors.append('red')
+                    colors.append('outlier')
                     labels.append(f"OUTLIER: {traj_id}")
         
         elif viz_mode == "Outliers + Sample of Normal":
@@ -1207,7 +1207,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 
                 if not traj_data.empty:
                     trajectories_to_plot.append(traj_data)
-                    colors.append('red')
+                    colors.append('outlier')
                     labels.append(f"OUTLIER: {traj_id}")
             
             # Add random sample of normal
@@ -1225,7 +1225,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 
                 if not traj_data.empty:
                     trajectories_to_plot.append(traj_data)
-                    colors.append('lightblue')
+                    colors.append('normal')
                     labels.append(f"Normal: {traj_id}")
         
         else:  # Compare Selected
@@ -1262,7 +1262,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 
                 if not traj_data.empty:
                     trajectories_to_plot.append(traj_data)
-                    colors.append('red')
+                    colors.append('outlier')
                     labels.append(f"OUTLIER: {traj_id}")
             
             # Add selected normal
@@ -1278,7 +1278,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                 
                 if not traj_data.empty:
                     trajectories_to_plot.append(traj_data)
-                    colors.append('lightblue')
+                    colors.append('normal')
                     labels.append(f"Normal: {traj_id}")
         
         # Plot trajectories on tennis court
@@ -1294,19 +1294,32 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             
             fig_court = create_pitch_figure(court_type)
             
+            # Each outlier gets its own colour; normal trajectories stay grey and dashed
+            outlier_palette = px.colors.qualitative.Dark24
+            n_outliers_drawn = 0
+
             # Add each trajectory
-            for traj_data, color, label in zip(trajectories_to_plot, colors, labels):
+            for traj_data, kind, label in zip(trajectories_to_plot, colors, labels):
+                if kind == 'outlier':
+                    color = outlier_palette[n_outliers_drawn % len(outlier_palette)]
+                    n_outliers_drawn += 1
+                    line_style = dict(color=color, width=2.5)
+                else:
+                    color = '#9AA0A6'
+                    line_style = dict(color=color, width=1.5, dash='dash')
+
                 # Sort by timestamp
                 if 'tst' in traj_data.columns:
                     traj_data = traj_data.sort_values('tst')
-                
+
                 # Add trajectory line
                 fig_court.add_trace(go.Scatter(
                     x=traj_data['x'],
                     y=traj_data['y'],
                     mode='lines+markers',
                     name=label,
-                    line=dict(color=color, width=2),
+                    legendgroup=label,
+                    line=line_style,
                     marker=dict(size=4, color=color),
                     hovertemplate=f'<b>{label}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>'
                 ))
@@ -1317,6 +1330,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                     y=[traj_data['y'].iloc[0]],
                     mode='markers',
                     name=f'{label} (start)',
+                    legendgroup=label,
                     marker=dict(size=10, color=color, symbol='circle', line=dict(width=2, color='white')),
                     showlegend=False,
                     hovertemplate=f'<b>{label} START</b><extra></extra>'
@@ -1327,6 +1341,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
                     y=[traj_data['y'].iloc[-1]],
                     mode='markers',
                     name=f'{label} (end)',
+                    legendgroup=label,
                     marker=dict(size=10, color=color, symbol='square', line=dict(width=2, color='white')),
                     showlegend=False,
                     hovertemplate=f'<b>{label} END</b><extra></extra>'
@@ -1342,7 +1357,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
             render_interactive_chart(st, fig_court, f"Trajectories{' on the ' + court_word.lower() if court_word else ' (x, y in metres)'}")
             
             st.caption("""
-            **Legend**: Red = Outlier trajectories | Light Blue = Normal trajectories | 
+            **Legend**: Each outlier trajectory has its own colour (see the legend; click an entry to hide it) | Grey dashed = Normal trajectories |
             ● Circle = Start | ■ Square = End
             """)
         else:
@@ -1357,7 +1372,7 @@ def render_outlier_detection_section(data, selected_configs, selected_objects):
         render_interactive_chart(st, fig_scores, "Outlier scores")
     
     # Download results
-    st.subheader("7️⃣ Export Results")
+    st.subheader("7. Export Results")
     
     csv = result_df.to_csv(index=False)
     st.download_button(
