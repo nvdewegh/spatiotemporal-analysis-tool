@@ -1,5 +1,5 @@
-# INSERT THIS SECTION BEFORE "elif analysis_method == 'Sequence Analysis':" (around line 2837)
-
+if False:  # Snippet wrapper so this file compiles. INSERT FROM LINE 3 BEFORE "elif analysis_method == 'Sequence Analysis':"
+    if False: pass  # Lines 1-2 are skipped by insert_association_rules.py
     elif analysis_method == "Association Rules":
         st.header("Association Rule Learning")
         
